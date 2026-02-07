@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light only" />
+  <title>SATO WebR Add-in</title>
+
+  <!-- Office.js（必須）-->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+
+  <style>
+    :root { color-scheme: only light; }
+    html, body { height:100%; background:#fff; color:#111; }
+    body { margin:0; font:14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans JP", Arial, "Hiragino Kaku Gothic ProN", Meiryo, sans-serif; }
+    .container { padding: 12px; width: 540px; }
+    h1 { font-size: 18px; margin: 0 0 8px; }
+    .row { display:flex; align-items:center; gap:8px; margin:10px 0; }
+    .row label { width:140px; font-weight:600; }
+    .row.actions { gap:6px; flex-wrap:wrap; }
+    select, button, input[type="text"], input[type="number"], textarea { font-size:14px; }
+    input[type="text"], input[type="number"], textarea { padding:5px 6px; border:1px solid #ccc; border-radius:6px; width:280px; }
+    textarea { resize: vertical; }
+    button { padding:6px 10px; border-radius:8px; border:1px solid #ccc; background:#fafafa; cursor:pointer; }
+    button:hover { background:#f0f0f0; }
+    #status { margin:8px 0; color:#444; min-height:1.2em; }
+    canvas { border:1px solid #ddd; background:#fff; display:block; width:500px; height:500px; }
+
+    /* 折りたたみ */
+    #advPanel { padding:8px 10px; border:1px solid #e5e5e5; border-radius:8px; background:#fcfcfc; }
+    #advPanel[hidden] { display:none; }
+    .half { display:grid; grid-template-columns: 1fr 1fr; gap:8px 12px; align-items:center; }
+    .half label { width:auto; }
+    
+    /* 書式設定ボタン */
+    .format-buttons { 
+      display:flex; 
+      gap:2px; 
+      flex-wrap:wrap; 
+    }
+    .format-buttons button { 
+      padding:2px 6px; 
+      font-size:11px; 
+      border:1px solid #ddd; 
+      background:#f8f8f8; 
+      border-radius:4px; 
+      cursor:pointer;
+      min-width:24px;
+      height:22px;
+    }
+    .format-buttons button:hover { 
+      background:#e8e8e8; 
+      border-color:#bbb;
+    }
+    .format-buttons button:active { 
+      background:#d8d8d8; 
+    }
+    
+    /* Group color controls */
+    .group-color-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 2px 0;
+    }
+    .group-color-item label {
+      width: 80px;
+      font-size: 12px;
+    }
+    .group-color-item input[type="text"] {
+      width: 120px;
+      font-size: 11px;
+      padding: 3px 4px;
+    }
+    .group-color-item input[type="color"] {
+      width: 32px;
+      height: 24px;
+      padding: 0;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>OPEN FIGURE</h1>
+
+    <div class="row">
+      <label for="chartType">グラフ種類</label>
+      <select id="chartType">
+        <option value="histogram" >Histogram</option>
+        <option value="box">Box plot</option>
+        <option value="box_dot">Box plot + dots</option>
+        <option value="violin">Violin plot</option>
+        <option value="violin_dot">Violin plot + dots</option>
+        <option value="dot">Dot plot</option>
+        <option value="bar">Bar plot</option>
+        <option value="bar_error">Bar plot with error</option>
+        <option value="bar_error_dot" selected>Bar + error + dots</option>
+        <option value="bar_grouped">Grouped bar plot</option>
+        <option value="bar_grouped_error">Grouped bar plot with error</option>
+        <option value="bar_grouped_error_dot">Grouped bar + dot plot with error</option>
+        <option value="box_grouped">Grouped box plot</option>
+        <option value="box_grouped_dot">Grouped box plot with dots</option>
+        <option value="violin_grouped">Grouped violin plot</option>
+        <option value="violin_grouped_dot">Grouped violin plot with dots</option>
+        <option value="line">Line plot</option>
+        <option value="line_grouped">Grouped line plot</option>
+        <option value="line_grouped_error">Grouped line (mean±error)</option>
+        <option value="line_grouped_error_raw">Grouped line with error (raw data)</option>
+        <!-- 今後 boxplot / scatter / 4PL を追加予定 -->
+      </select>
+    </div>
+
+    <!-- Group column selector (only for grouped charts) -->
+    <div class="row" id="groupColumnRow" style="display:none;">
+      <label for="groupColumn">Group列</label>
+      <select id="groupColumn"></select>
+    </div>
+
+    <div class="row">
+      <label for="xColumn">X 軸</label>
+      <select id="xColumn"></select>
+    </div>
+
+    <div class="row">
+      <label for="yColumn">Y 軸（数値列）</label>
+      <select id="yColumn"></select>
+    </div>
+
+    <!-- Error column selector (only for pre-calculated error charts) -->
+    <div class="row" id="errorColumnRow" style="display:none;">
+      <label for="errorColumn">Error列</label>
+      <select id="errorColumn"></select>
+    </div>
+
+    <div class="row">
+      <label for="template">テンプレート</label>
+      <select id="template">
+        <option value="Default">Default</option>
+        <option value="Slide">Slide</option>
+        <option value="Figure">Figure</option>
+      </select>
+    </div>
+
+    <div class="row actions">
+      <button id="load">選択範囲を読み込み</button>
+      <button id="preview">プレビュー</button>
+      <button id="insert">Excelに挿入</button>
+      <input id="satoName" type="text" placeholder="sato file name" style="width:160px">
+      <button id="saveSato">.sato に保存</button>
+
+
+      <!-- テンプレ保存/読込 -->
+      <input id="tplName" type="text" placeholder="template name" style="width:140px">
+      <button id="tplSave">テンプレ保存</button>
+      <button id="tplLoad">テンプレ読込</button>
+      <input id="tplFile" type="file" accept="application/json,.json,.sato,.tpl" hidden>
+      <button id="satoLoad">.sato を読込</button>
+      <!-- 選択セルの .sato を読み込む -->
+      <button id="loadSatoFromCell">選択セルの .sato を読込</button>
+      <button id="exportPng">PNGを書き出し</button>
+      <button id="exportPngAndWrplot">PNG と .wrplot を書き出し</button>
+
+      <div style="margin-top:10px">
+        <button id="copyPng">PNGをクリップボードへ</button>
+        <button id="insertIntoSheet">シートに貼り付ける</button>
+        </div>
+
+
+      <button id="toggleAdv" style="margin-left:auto;" type="button">Advanced ▸</button>
+    </div>
+
+    <!-- 出力サイズ指定（ggsave風） -->
+    <div id="export-settings" style="margin-top:8px;font-size:12px;line-height:1.6">
+    <label>Width <input id="expWidth" type="number" step="0.1" value="6"></label>
+    <label>Height <input id="expHeight" type="number" step="0.1" value="4"></label>
+    <label>Units
+        <select id="expUnits">
+        <option value="in" selected>in</option>
+        <option value="cm">cm</option>
+        <option value="mm">mm</option>
+        </select>
+    </label>
+    <label>DPI <input id="expDpi" type="number" step="1" value="300"></label>
+    <label><input id="expUseGgsave" type="checkbox" checked> use ggsave when possible</label>
+    </div>
+
+
+    <!-- ★ Advanced パネル（ここは必ず id="advPanel" でラップする） -->
+    <div id="advPanel" hidden>
+      <div style="font-weight:700;margin:0 0 8px">Advanced settings</div>
+
+      <!-- Title -->
+      <div class="row">
+        <label>Title</label>
+        <div style="display:flex; flex-direction:column; gap:4px; width:280px;">
+          <textarea id="titleText" rows="2" placeholder="Title (multi-line allowed)"></textarea>
+          <div class="format-buttons">
+            <button type="button" onclick="formatText('titleText', 'italic')" title="Make selected text italic">*I*</button>
+            <button type="button" onclick="formatText('titleText', 'super')" title="Make selected text superscript">X²</button>
+            <button type="button" onclick="formatText('titleText', 'sub')" title="Make selected text subscript">X₂</button>
+            <button type="button" onclick="insertSymbol('titleText', 'log₂')" title="Insert log base 2">log₂</button>
+            <button type="button" onclick="insertSymbol('titleText', 'log₁₀')" title="Insert log base 10">log₁₀</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- X axis -->
+      <div class="row">
+        <label>X axis</label>
+        <div style="display:flex; flex-direction:column; gap:4px; width:280px;">
+          <textarea id="xLabel" rows="2" placeholder="X label (multi-line allowed)"></textarea>
+          <div class="format-buttons">
+            <button type="button" onclick="formatText('xLabel', 'italic')" title="Make selected text italic">*I*</button>
+            <button type="button" onclick="formatText('xLabel', 'super')" title="Make selected text superscript">X²</button>
+            <button type="button" onclick="formatText('xLabel', 'sub')" title="Make selected text subscript">X₂</button>
+            <button type="button" onclick="insertSymbol('xLabel', 'log₂')" title="Insert log base 2">log₂</button>
+            <button type="button" onclick="insertSymbol('xLabel', 'log₁₀')" title="Insert log base 10">log₁₀</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Y axis -->
+      <div class="row">
+        <label>Y axis</label>
+        <div style="display:flex; flex-direction:column; gap:4px; width:280px;">
+          <textarea id="yLabel" rows="2" placeholder="Y label (multi-line allowed)"></textarea>
+          <div class="format-buttons">
+            <button type="button" onclick="formatText('yLabel', 'italic')" title="Make selected text italic">*I*</button>
+            <button type="button" onclick="formatText('yLabel', 'super')" title="Make selected text superscript">X²</button>
+            <button type="button" onclick="formatText('yLabel', 'sub')" title="Make selected text subscript">X₂</button>
+            <button type="button" onclick="insertSymbol('yLabel', 'log₂')" title="Insert log base 2">log₂</button>
+            <button type="button" onclick="insertSymbol('yLabel', 'log₁₀')" title="Insert log base 10">log₁₀</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- bins -->
+      <div class="row">
+        <label for="bins">Number of bins</label>
+        <input type="number" id="bins" value="20" min="1" max="100">
+      </div>
+
+      <!-- 軸のスケール設定 -->
+      <div class="row">
+        <label for="xScale">X axis scale</label>
+        <select id="xScale">
+          <option value="linear" selected>Linear</option>
+          <option value="log10">Log₁₀</option>
+          <option value="log2">Log₂</option>
+          <option value="log">Natural log (ln)</option>
+          <option value="-log10">-Log₁₀</option>
+          <option value="-log2">-Log₂</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="yScale">Y axis scale</label>
+        <select id="yScale">
+          <option value="linear" selected>Linear</option>
+          <option value="log10">Log₁₀</option>
+          <option value="log2">Log₂</option>
+          <option value="log">Natural log (ln)</option>
+          <option value="-log10">-Log₁₀</option>
+          <option value="-log2">-Log₂</option>
+        </select>
+      </div>
+
+      <!-- タイトル/軸ラベルの表示・非表示 -->
+      <div class="row">
+        <label for="showTitle">Show title</label>
+        <input type="checkbox" id="showTitle" checked>
+      </div>
+      <div class="row">
+        <label for="showXLabel">Show X axis label</label>
+        <input type="checkbox" id="showXLabel" checked>
+      </div>
+      <div class="row">
+        <label for="showYLabel">Show Y axis label</label>
+        <input type="checkbox" id="showYLabel" checked>
+      </div>
+
+      <!-- タイトル/軸ラベルの太さ -->
+      <div class="row">
+        <label for="titleWeight">Title weight</label>
+        <select id="titleWeight">
+          <option value="plain" selected>plain</option>
+          <option value="bold">bold</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="axisWeight">Axis label weight</label>
+        <select id="axisWeight">
+          <option value="plain" selected>plain</option>
+          <option value="bold">bold</option>
+        </select>
+      </div>
+
+      <!-- 軸線の太さ -->
+      <div class="row">
+        <label>Axis line width</label>
+        <input id="axisLineWidth" type="number" min="0" step="0.1" value="0.7">
+      </div>
+
+      <!-- 表示範囲（空なら自動） -->
+      <div class="row">
+        <label>X range</label>
+        <input id="xMin" type="number" step="any" placeholder="auto" style="width:100px;">
+        〜
+        <input id="xMax" type="number" step="any" placeholder="auto" style="width:100px;">
+      </div>
+      <div class="row">
+        <label>Y range</label>
+        <input id="yMin" type="number" step="any" placeholder="auto" style="width:100px;">
+        〜
+        <input id="yMax" type="number" step="any" placeholder="auto" style="width:100px;">
+      </div>
+
+      <!-- ggtheme / Font -->
+      <div class="row">
+        <label>ggtheme</label>
+        <select id="ggtheme" style="width:280px">
+          <option value="gray">gray (default)</option>
+          <option value="bw">bw</option>
+          <option value="linedraw">linedraw</option>
+          <option value="light">light</option>
+          <option value="dark">dark</option>
+          <option value="minimal" selected>minimal</option>
+          <option value="classic">classic</option>
+          <option value="void">void</option>
+          <option value="test">test</option>
+        </select>
+      </div>
+      <div class="row">
+        <label>Font family</label>
+        <select id="fontFam" style="width:280px">
+
+          <option>Arial</option>
+          <option>Times New Roman</option>
+          
+          <!-- 必要なら以下を追加 -->
+          <option>Georgia</option>
+          <option>Verdana</option>
+          <option>Courier New</option>
+          <option>Noto Sans JP</option>
+          <option>Noto Serif JP</option>
+        </select>
+      </div>
+
+      <!-- 色と線幅（カラー入力 + ピッカー + 透明度） -->
+      <div class="row">
+        <label>Fill / Stroke</label>
+        <div class="half" style="width:280px">
+          <label for="fillColor">fill</label>
+          <input id="fillColor" type="text" placeholder="#4C78A8 or steelblue" />
+          <input id="fillPicker" type="color" value="#4C78A8" />
+          <label for="fillAlpha">fill α</label>
+          <input id="fillAlpha" type="range" min="0" max="1" step="0.05" value="1" style="width:100%;">
+
+          <label for="strokeColor">stroke</label>
+          <input id="strokeColor" type="text" placeholder="#1f2937 or gray20" />
+          <input id="strokePicker" type="color" value="#1f2937" />
+        </div>
+      </div>
+
+      <!-- グループ別カラー設定（Grouped Bar Chart用） -->
+      <div class="row" id="groupColorRow" style="display:none;">
+        <label>Group Colors</label>
+        <div style="display:flex; flex-direction:column; gap:6px; width:280px;">
+          <!-- Dynamic group color controls -->
+          <div id="groupColorControls">
+            <div class="group-color-item" data-group="1">
+              <label for="groupColor1">1st group</label>
+              <input id="groupColor1" type="text" placeholder="#4C78A8" />
+              <input id="groupPicker1" type="color" value="#4C78A8" />
+            </div>
+            <div class="group-color-item" data-group="2">
+              <label for="groupColor2">2nd group</label>
+              <input id="groupColor2" type="text" placeholder="#E15759" />
+              <input id="groupPicker2" type="color" value="#E15759" />
+            </div>
+            <div class="group-color-item" data-group="3" style="display:none;">
+              <label for="groupColor3">3rd group</label>
+              <input id="groupColor3" type="text" placeholder="#57C4AD" />
+              <input id="groupPicker3" type="color" value="#57C4AD" />
+            </div>
+            <div class="group-color-item" data-group="4" style="display:none;">
+              <label for="groupColor4">4th group</label>
+              <input id="groupColor4" type="text" placeholder="#E9C46A" />
+              <input id="groupPicker4" type="color" value="#E9C46A" />
+            </div>
+            <div class="group-color-item" data-group="5" style="display:none;">
+              <label for="groupColor5">5th group</label>
+              <input id="groupColor5" type="text" placeholder="#F76C6C" />
+              <input id="groupPicker5" type="color" value="#F76C6C" />
+            </div>
+            <div class="group-color-item" data-group="6" style="display:none;">
+              <label for="groupColor6">6th group</label>
+              <input id="groupColor6" type="text" placeholder="#A8DADC" />
+              <input id="groupPicker6" type="color" value="#A8DADC" />
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:4px;">
+            <label for="numGroups" style="font-size:12px; width:auto;">Groups:</label>
+            <select id="numGroups" style="width:60px; font-size:12px;">
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+              <option value="5">5</option>
+              <option value="6">6</option>
+            </select>
+            <div style="font-size:11px; color:#666; line-height:1.3;">
+              Adjust based on your data
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="row">
+        <label for="lineWidth">線幅（枠線）</label>
+        <input id="lineWidth" type="number" min="0" max="4" step="0.1" value="0.8" />
+      </div>
+
+      <div class="row">
+        <label for="barWidth">バー幅</label>
+        <input id="barWidth" type="number" min="0.1" max="1.0" step="0.1" value="0.4" />
+      </div>
+
+      <div class="row">
+        <label for="dodgeWidth">グループ間隔</label>
+        <input id="dodgeWidth" type="number" min="0.3" max="1.5" step="0.1" value="0.9" />
+      </div>
+
+      <div class="row">
+        <label for="rotation">図の回転</label>
+        <select id="rotation">
+          <option value="0" selected>0° (なし)</option>
+          <option value="90">90° (右回転)</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label for="errorBarType">エラーバー種類</label>
+        <select id="errorBarType">
+          <option value="sd" selected>Standard Deviation (SD)</option>
+          <option value="se">Standard Error (SE)</option>
+          <option value="ci95">95% Confidence Interval (CI)</option>
+        </select>
+      </div>
+
+      <!-- Dot customization controls -->
+      <div class="row">
+        <label>Dot Settings</label>
+        <div class="half" style="width:280px">
+          <label for="dotSize">size</label>
+          <input id="dotSize" type="number" min="0.5" max="10" step="0.5" value="4" />
+          <label for="dotColor">color</label>
+          <input id="dotColor" type="text" placeholder="#333333 or black" />
+          <input id="dotColorPicker" type="color" value="#333333" />
+          <label for="dotShape">shape</label>
+          <select id="dotShape">
+            <option value="16" selected>● Circle (filled)</option>
+            <option value="1">○ Circle (open)</option>
+            <option value="15">■ Square (filled)</option>
+            <option value="0">□ Square (open)</option>
+            <option value="17">▲ Triangle (filled)</option>
+            <option value="2">△ Triangle (open)</option>
+            <option value="18">♦ Diamond (filled)</option>
+            <option value="5">◇ Diamond (open)</option>
+            <option value="19">● Large circle</option>
+            <option value="3">+ Plus</option>
+            <option value="4">× Cross</option>
+          </select>
+          <label for="dotAlpha">alpha</label>
+          <input id="dotAlpha" type="range" min="0" max="1" step="0.05" value="1.0" style="width:100%;">
+        </div>
+      </div>
+
+      <!-- データ順序制御 -->
+      <div class="row">
+        <label>データ順序</label>
+        <div style="display:flex; flex-direction:column; gap:6px; width:280px;">
+          <select id="dataOrder">
+            <option value="original" selected>Original order (as in Excel)</option>
+            <option value="default">Default (Alphabetical)</option>
+            <option value="custom">Custom order</option>
+          </select>
+          <div id="customOrderContainer" style="display:none;">
+            <!-- Group Order List -->
+            <div style="margin-bottom:12px;">
+              <div style="font-size:11px; color:#666; font-weight:bold; margin-bottom:4px;">Group order:</div>
+              <div id="customOrderGroupList" style="border:1px solid #ddd; padding:8px; min-height:60px; border-radius:4px; background:#fafafa;">
+                <div style="font-size:11px; color:#999; text-align:center;">Load data to see groups</div>
+              </div>
+            </div>
+
+            <!-- Category Order List -->
+            <div>
+              <div style="font-size:11px; color:#666; font-weight:bold; margin-bottom:4px;">Category order:</div>
+              <div id="customOrderCategoryList" style="border:1px solid #ddd; padding:8px; min-height:60px; border-radius:4px; background:#fafafa;">
+                <div style="font-size:11px; color:#999; text-align:center;">Load data to see categories</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- フォントサイズ -->
+      <div class="row">
+        <label>フォントサイズ</label>
+        <div class="half" style="width:280px">
+          <label for="titleSize">title</label>
+          <input id="titleSize" type="number" min="3" max="36" value="24" />
+          <label for="axisTitleSize">axis title</label>
+          <input id="axisTitleSize" type="number" min="3" max="36" value="20" />
+          <label for="axisTextSize">axis text</label>
+          <input id="axisTextSize" type="number" min="3" max="36" value="18" />
+          <label for="legendTextSize">legend</label>
+          <input id="legendTextSize" type="number" min="3" max="36" value="18" />
+        </div>
+      </div>
+
+      <!-- Axis Text Positioning -->
+      <div class="row">
+        <label>軸テキスト位置調整</label>
+        <div class="half" style="width:280px">
+          <label for="xAxisRotation">X軸回転</label>
+          <input id="xAxisRotation" type="number" min="-90" max="90" step="15" value="0" />
+          <label for="yAxisRotation">Y軸回転</label>
+          <input id="yAxisRotation" type="number" min="-90" max="90" step="15" value="0" />
+          <label for="xAxisHjust">X軸 hjust</label>
+          <input id="xAxisHjust" type="number" min="0" max="1" step="0.1" value="0.5" />
+          <label for="xAxisVjust">X軸 vjust</label>
+          <input id="xAxisVjust" type="number" min="0" max="1" step="0.1" value="0.5" />
+          <label for="yAxisHjust">Y軸 hjust</label>
+          <input id="yAxisHjust" type="number" min="0" max="1" step="0.1" value="0.5" />
+          <label for="yAxisVjust">Y軸 vjust</label>
+          <input id="yAxisVjust" type="number" min="0" max="1" step="0.1" value="0.5" />
+        </div>
+      </div>
+
+      <!-- Statistical Analysis -->
+      <div class="row">
+        <label>統計解析</label>
+        <div style="display:flex; flex-direction:column; gap:6px; width:280px;">
+          <div style="display:flex; align-items:center; gap:10px;">
+            <input type="checkbox" id="addStatistics" />
+            <label for="addStatistics">統計的有意差を表示</label>
+          </div>
+          <select id="statisticalTest">
+            <option value="auto" selected>最適な検定を自動選択 (正規性検定→t-test/Wilcoxon/ANOVA/Kruskal-Wallis)</option>
+            <option value="t.test">t-test (parametric)</option>
+            <option value="wilcox.test">Wilcoxon test (non-parametric)</option>
+            <option value="anova">ANOVA (multiple groups)</option>
+            <option value="kruskal.test">Kruskal-Wallis (non-parametric)</option>
+          </select>
+          <select id="varianceTest">
+            <option value="levene" selected>Levene検定 (等分散性検定)</option>
+            <option value="ftest">F-test (等分散性検定)</option>
+          </select>
+          <div style="display:flex; gap:10px; margin-top:5px;">
+            <label style="font-size:12px;">Symbol Type:</label>
+            <select id="statSymbolType" style="width:120px;">
+              <option value="stars" selected>Stars (*, **, ***)</option>
+              <option value="letters">Letters (ns, a, b, c)</option>
+              <option value="pvalue">P-value only</option>
+            </select>
+          </div>
+          <div style="display:flex; gap:10px; margin-top:5px;">
+            <label style="font-size:12px;">Post-hoc Test (3+ groups):</label>
+            <select id="postHocTest" style="width:120px;">
+              <option value="tukey" selected>Tukey HSD</option>
+              <option value="bonferroni">Bonferroni</option>
+              <option value="holm">Holm</option>
+              <option value="dunnett">Dunnett</option>
+              <option value="dunn">Dunn (non-parametric)</option>
+            </select>
+          </div>
+          <div id="dunnettControlGroup" style="display:none; margin-top:5px; margin-left:20px;">
+            <label style="font-size:12px;">Control Group:</label>
+            <select id="dunnettControl" style="width:120px; margin-left:10px;">
+              <!-- Options will be populated dynamically -->
+            </select>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:5px; margin-top:8px; border-top:1px solid #ddd; padding-top:8px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <input type="checkbox" id="showMainStatSymbol" />
+              <label for="showMainStatSymbol" style="font-size:12px;">Show overall test symbol (ANOVA/Kruskal-Wallis)</label>
+            </div>
+            <div style="display:flex; align-items:center; gap:10px;">
+              <input type="checkbox" id="showPairwiseComparisons" checked />
+              <label for="showPairwiseComparisons" style="font-size:12px;">Show pairwise comparison lines</label>
+            </div>
+            <div id="pairwiseControls" style="margin-top:5px; padding-left:20px;">
+              <div style="font-size:11px; color:#666; margin-bottom:5px;">Select which comparisons to show:</div>
+              <div id="pairwiseSelection" style="display:flex; flex-direction:column; gap:3px; max-height:100px; overflow-y:auto;">
+                <!-- Dynamically populated with checkboxes for each comparison -->
+              </div>
+            </div>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <label style="font-size:12px;">Significance levels:</label>
+            <div style="display:flex; gap:5px; font-size:11px;">
+              <span>* p&lt;0.05</span>
+              <span>** p&lt;0.01</span>
+              <span>*** p&lt;0.001</span>
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
+            <label for="statSymbolSize" style="font-size:12px;">Symbol size:</label>
+            <input type="number" id="statSymbolSize" value="7" min="6" max="20" step="1" style="width:60px;" />
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
+            <label for="statLineSize" style="font-size:12px;">線の太さ:</label>
+            <input type="number" id="statLineSize" value="1.0" min="0.5" max="3.0" step="0.1" style="width:60px;" />
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
+            <label for="statTipLength" style="font-size:12px;">棒グラフからの距離:</label>
+            <input type="number" id="statTipLength" value="0.04" min="0.01" max="0.1" step="0.01" style="width:60px;" />
+          </div>
+          <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
+            <label for="statVjust" style="font-size:12px;">縦位置微調整:</label>
+            <input type="number" id="statVjust" value="-0.3" min="-1.0" max="1.0" step="0.1" style="width:60px;" />
+          </div>
+          <div style="margin-top:8px;">
+            <button id="resetStatParams" style="font-size:11px; padding:4px 8px;">デフォルト値に戻す</button>
+          </div>
+
+          <!-- Comparison Selection Controls -->
+          <div style="margin-top:10px; border-top:1px solid #ddd; padding-top:8px;">
+            <label style="font-size:12px; font-weight:bold;">表示する比較:</label>
+            <div style="margin-top:5px;">
+              <label style="display:flex; align-items:center; gap:5px; font-size:11px;">
+                <input type="radio" name="comparisonMode" id="significantOnly" value="significant" checked />
+                有意差のみ表示
+              </label>
+              <label style="display:flex; align-items:center; gap:5px; font-size:11px; margin-top:3px;">
+                <input type="radio" name="comparisonMode" id="allComparisons" value="all" />
+                すべての比較表示
+              </label>
+              <label style="display:flex; align-items:center; gap:5px; font-size:11px; margin-top:3px;">
+                <input type="radio" name="comparisonMode" id="customSelection" value="custom" />
+                カスタム選択
+              </label>
+            </div>
+
+            <!-- Custom selection area (hidden by default) -->
+            <div id="customComparisonArea" style="margin-top:8px; padding:8px; background:#f9f9f9; border:1px solid #ddd; border-radius:4px; display:none;">
+              <div style="font-size:11px; margin-bottom:5px; display:flex; align-items:center;">
+                <span style="flex:1;">Comparisons:</span>
+                <span style="color:#666; font-size:10px; width:50px; text-align:center;">Y Position</span>
+              </div>
+              <div id="comparisonCheckboxes" style="max-height:120px; overflow-y:auto;">
+                <!-- Dynamically populated checkboxes will go here -->
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top:8px;">
+            <button id="exportStatResults" style="width:100%; padding:4px 8px; font-size:12px;">
+              📊 選択セルに統計結果を出力
+            </button>
+            <div style="font-size:10px; color:#666; margin-top:2px; text-align:center;">
+              ※先にExcelでセルを選択してください
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- /#advPanel -->
+
+    <div id="status"></div>
+    
+    <!-- Persistent Debug Panel -->
+    <div id="debugPanel" style="background: #ffe8a3; border: 2px solid #e4c769; padding: 10px; margin: 10px 0; border-radius: 6px; font-family: monospace; font-size: 12px; display: none;">
+      <strong>🔥 DEBUG INFO:</strong>
+      <div id="debugContent">Ready...</div>
+    </div>
+    
+    <canvas id="plot" width="1008" height="1008" aria-label="プレビュー"></canvas>
+  </div>
+
+  <!-- WebR をグローバルへ登録 -->
+    <!-- WebR をグローバルへ登録 -->
+    <script type="module">
+    import { WebR } from "https://webr.r-wasm.org/latest/webr.mjs";
+    window.WebR = WebR; // グローバルへ退避して taskpane.js から使う
+    </script>
+
+    <!-- taskpane.js は「普通の script」として読み込む -->
+    <script src="./taskpane.js"></script>
+
+
+</body>
+</html>
