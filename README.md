@@ -1,8 +1,8 @@
-# FigDR
+# Figra
 
 **Publication-Quality Scientific Figures from Excel Data**
 
-FigDR is an Excel Office Add-in that creates publication-ready scientific visualizations using R and ggplot2 — directly in your browser, with no R installation required.
+Figra is an Excel Office Add-in that creates publication-ready scientific visualizations using R and ggplot2 — directly in your browser, with no R installation required.
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Excel%20(Windows%20%7C%20Mac%20%7C%20Web)-green.svg)
@@ -15,6 +15,58 @@ FigDR is an Excel Office Add-in that creates publication-ready scientific visual
 - **Grouped charts**: Grouped bar, box, violin (with/without dots)
 - **Line plots**: Simple, grouped, with error ribbons
 - **Dose-response**: 4-Parameter Logistic (4PL) IC50 curves
+
+## Chart Examples
+
+### Distribution Charts
+
+| Histogram | Box Plot | Box Plot + Dots |
+|:---------:|:--------:|:---------------:|
+| ![Histogram](docs/images/histogram.png) | ![Box Plot](docs/images/box.png) | ![Box Plot + Dots](docs/images/box_dot.png) |
+
+| Violin Plot | Violin Plot + Dots | Dot Plot |
+|:-----------:|:------------------:|:--------:|
+| ![Violin Plot](docs/images/violin.png) | ![Violin Plot + Dots](docs/images/violin_dot.png) | ![Dot Plot](docs/images/dot.png) |
+
+### Bar Charts
+
+| Bar Plot | Bar + Error | Bar + Error + Dots |
+|:--------:|:-----------:|:------------------:|
+| ![Bar Plot](docs/images/bar.png) | ![Bar + Error](docs/images/bar_error.png) | ![Bar + Error + Dots](docs/images/bar_error_dot.png) |
+
+### Grouped Bar Charts
+
+| Grouped Bar | Grouped Bar + Error | Grouped Bar + Error + Dots |
+|:-----------:|:-------------------:|:--------------------------:|
+| ![Grouped Bar](docs/images/bar_grouped.png) | ![Grouped Bar + Error](docs/images/bar_grouped_error.png) | ![Grouped Bar + Error + Dots](docs/images/bar_grouped_error_dot.png) |
+
+### Grouped Box & Violin Charts
+
+| Grouped Box | Grouped Box + Dots | Grouped Violin + Dots |
+|:-----------:|:------------------:|:---------------------:|
+| ![Grouped Box](docs/images/box_grouped.png) | ![Grouped Box + Dots](docs/images/box_grouped_dot.png) | ![Grouped Violin + Dots](docs/images/violin_grouped_dot.png) |
+
+### Line Charts
+
+| Line Plot | Grouped Line | Grouped Line + Error |
+|:---------:|:------------:|:--------------------:|
+| ![Line Plot](docs/images/line.png) | ![Grouped Line](docs/images/line_grouped.png) | ![Grouped Line + Error](docs/images/line_grouped_error.png) |
+
+| Grouped Line + Error (Raw Data) |
+|:-------------------------------:|
+| ![Grouped Line + Error Raw](docs/images/line_grouped_error_raw.png) |
+
+### Dose-Response Curve
+
+| IC50 Dose-Response (4PL) |
+|:------------------------:|
+| ![IC50 Dose-Response](docs/images/ic50_dose_response.png) |
+
+### Statistical Analysis Examples
+
+| Pairwise Comparisons | VBracket Legend (3+ groups) |
+|:--------------------:|:---------------------------:|
+| ![Stats Brackets](docs/images/stats_brackets.png) | ![VBracket Legend](docs/images/vbracket_legend.png) |
 
 ### Statistical Analysis
 - **Automatic test selection** based on data normality and group count
@@ -39,7 +91,7 @@ FigDR is an Excel Office Add-in that creates publication-ready scientific visual
 
 ## How It Works
 
-FigDR uses [webR](https://webr.r-wasm.org/) to run R code directly in your browser via WebAssembly. This means:
+Figra uses [webR](https://webr.r-wasm.org/) to run R code directly in your browser via WebAssembly. This means:
 
 - **No R installation required** on your computer
 - **No server needed** — all processing happens locally
@@ -52,8 +104,8 @@ FigDR uses [webR](https://webr.r-wasm.org/) to run R code directly in your brows
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/FigDR.git
-   cd FigDR/addin
+   git clone https://github.com/yourusername/Figra.git
+   cd Figra/addin
    ```
 
 2. Install dependencies:
@@ -79,7 +131,7 @@ FigDR uses [webR](https://webr.r-wasm.org/) to run R code directly in your brows
 ## Quick Start
 
 1. **Select your data** in Excel (with headers)
-2. **Click "Load Data"** in the FigDR panel
+2. **Click "Load Data"** in the Figra panel
 3. **Choose a chart type** from the visual dropdown
 4. **Map your columns** (Group, X, Y, Error as needed)
 5. **Customize** colors, fonts, and themes
@@ -99,7 +151,7 @@ FigDR uses [webR](https://webr.r-wasm.org/) to run R code directly in your brows
 
 ## Statistical Analysis
 
-FigDR automatically performs appropriate statistical tests:
+Figra automatically performs appropriate statistical tests:
 
 | Groups | Normal Data | Non-normal Data |
 |--------|-------------|-----------------|
@@ -114,7 +166,7 @@ Results are displayed as:
 ## Project Structure
 
 ```
-FigDR/
+Figra/
 ├── addin/                 # Excel Add-in source code
 │   ├── src/
 │   │   ├── taskpane/     # Main UI and logic
@@ -175,4 +227,4 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 ---
 
-**FigDR** — From Data to Publication-Ready Figures
+**Figra** — From Data to Publication-Ready Figures

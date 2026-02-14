@@ -6,6 +6,166 @@ const ADDIN_VERSION = "1.0.0";
 // Grouped chart types constant (used throughout the file)
 const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw"];
 
+// ========= Registration System =========
+const REGISTRATION_KEY = "figra_registered";
+const GOOGLE_FORM_URL = "https://docs.google.com/forms/d/e/1FAIpQLSczQzQZmWDl0JBtTyy0mv-5h5FsRmSyFDEIXfWXet_vs6WvKQ/formResponse";
+
+// Google Form entry IDs (extracted from form)
+const FORM_FIELDS = {
+  email: "entry.650578732",
+  country: "entry.838311149",
+  jobTitle: "entry.16463827",
+  affiliation: "entry.810594215",
+  agreement: "entry.438747924"
+};
+
+function isRegistered() {
+  try {
+    return localStorage.getItem(REGISTRATION_KEY) === "true";
+  } catch (e) {
+    console.warn("localStorage not available:", e);
+    return true; // If localStorage fails, skip registration
+  }
+}
+
+function setRegistered() {
+  try {
+    localStorage.setItem(REGISTRATION_KEY, "true");
+  } catch (e) {
+    console.warn("Could not save registration status:", e);
+  }
+}
+
+function showRegistrationOverlay() {
+  const overlay = document.getElementById("registrationOverlay");
+  if (overlay) {
+    overlay.classList.remove("hidden");
+  }
+}
+
+function hideRegistrationOverlay() {
+  const overlay = document.getElementById("registrationOverlay");
+  if (overlay) {
+    overlay.classList.add("hidden");
+  }
+}
+
+async function submitRegistration() {
+  const email = document.getElementById("regEmail")?.value?.trim();
+  const jobTitle = document.getElementById("regJobTitle")?.value?.trim();
+  const affiliation = document.getElementById("regAffiliation")?.value?.trim();
+  const country = document.getElementById("regCountry")?.value;
+  const termsAccepted = document.getElementById("regTerms")?.checked;
+  const errorEl = document.getElementById("regError");
+  const submitBtn = document.getElementById("regSubmitBtn");
+
+  // Validation
+  if (!email || !jobTitle || !affiliation || !country) {
+    errorEl.textContent = "Please fill in all required fields.";
+    errorEl.style.display = "block";
+    return;
+  }
+
+  if (!termsAccepted) {
+    errorEl.textContent = "Please accept the Terms of Service.";
+    errorEl.style.display = "block";
+    return;
+  }
+
+  // Email validation
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(email)) {
+    errorEl.textContent = "Please enter a valid email address.";
+    errorEl.style.display = "block";
+    return;
+  }
+
+  errorEl.style.display = "none";
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Submitting...";
+
+  try {
+    // Submit to Google Forms using hidden iframe (more reliable in Office Add-in)
+    const params = new URLSearchParams();
+    params.append(FORM_FIELDS.email, email);
+    params.append(FORM_FIELDS.jobTitle, jobTitle);
+    params.append(FORM_FIELDS.affiliation, affiliation);
+    params.append(FORM_FIELDS.country, country);
+    params.append(FORM_FIELDS.agreement, termsAccepted ? "I have read and agree to the Terms of Use and Privacy Policy." : "No");
+
+    // Create hidden iframe for form submission
+    const iframe = document.createElement("iframe");
+    iframe.name = "hidden_iframe";
+    iframe.style.display = "none";
+    document.body.appendChild(iframe);
+
+    // Create and submit form
+    const form = document.createElement("form");
+    form.method = "POST";
+    form.action = GOOGLE_FORM_URL;
+    form.target = "hidden_iframe";
+
+    for (const [key, value] of params) {
+      const input = document.createElement("input");
+      input.type = "hidden";
+      input.name = key;
+      input.value = value;
+      form.appendChild(input);
+    }
+
+    document.body.appendChild(form);
+    form.submit();
+
+    // Cleanup after a delay
+    setTimeout(() => {
+      form.remove();
+      iframe.remove();
+    }, 2000);
+
+    // Mark as registered and hide overlay
+    setRegistered();
+    hideRegistrationOverlay();
+
+    console.log("✅ Registration submitted successfully");
+
+  } catch (error) {
+    console.error("Registration error:", error);
+    // Even if submission fails, allow user to proceed (mark as registered)
+    // This prevents blocking users due to network issues
+    setRegistered();
+    hideRegistrationOverlay();
+  }
+}
+
+function initRegistration() {
+  if (isRegistered()) {
+    hideRegistrationOverlay();
+  } else {
+    showRegistrationOverlay();
+
+    // Attach submit handler
+    const submitBtn = document.getElementById("regSubmitBtn");
+    if (submitBtn) {
+      submitBtn.addEventListener("click", submitRegistration);
+    }
+
+    // Allow Enter key to submit
+    const inputs = document.querySelectorAll("#registrationOverlay input, #registrationOverlay select");
+    inputs.forEach(input => {
+      input.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") {
+          submitRegistration();
+        }
+      });
+    });
+  }
+}
+
+// Initialize registration when DOM is ready
+document.addEventListener("DOMContentLoaded", () => {
+  initRegistration();
+});
+
 // ========= PNG Metadata Utilities =========
 // Lightweight PNG chunk reader/writer for embedding metadata
 
@@ -276,7 +436,7 @@ async function saveFigureWithMetadata() {
     const metadata = {
       version: 1,
       addinVersion: ADDIN_VERSION,
-      generator: "FigDR",
+      generator: "Figra",
       created_utc: new Date().toISOString(),
 
       data: {
@@ -429,7 +589,7 @@ async function downloadMetadataJson() {
     // Collect metadata
     const metadata = {
       version: 1,
-      generator: "FigDR",
+      generator: "Figra",
       created_utc: new Date().toISOString(),
 
       data: {
@@ -566,10 +726,10 @@ async function loadFromFigure() {
             return;
           }
 
-          // Check if this is an FigDR PNG
+          // Check if this is an Figra PNG
           if (!metadata || !metadata.data) {
             console.error("🔍 DEBUG: Invalid metadata - missing data field");
-            setStatus("❌ This PNG was not created by FigDR (no metadata found)\n\nTip: Use '📦 Download Metadata (JSON)' button to save metadata separately!");
+            setStatus("❌ This PNG was not created by Figra (no metadata found)\n\nTip: Use '📦 Download Metadata (JSON)' button to save metadata separately!");
             return;
           }
         }
@@ -579,7 +739,7 @@ async function loadFromFigure() {
         let versionMessage = "";
 
         if (!metadata.addinVersion) {
-          versionMessage = `⚠️ Version info: This figure was created with an older version of FigDR (before version tracking).\nCurrent version: ${ADDIN_VERSION}\n\nThe figure may not reproduce exactly. Proceed with caution.\n\n`;
+          versionMessage = `⚠️ Version info: This figure was created with an older version of Figra (before version tracking).\nCurrent version: ${ADDIN_VERSION}\n\nThe figure may not reproduce exactly. Proceed with caution.\n\n`;
           console.warn("⚠️ No version info in metadata - created with older add-in");
         } else if (savedVersion === ADDIN_VERSION) {
           versionMessage = `✅ Version match: Figure created with same version (${ADDIN_VERSION})\n\n`;
@@ -17316,7 +17476,7 @@ async function insertIntoExcelFixed() {
     // Collect metadata
     const metadata = {
       version: 1,
-      generator: "FigDR",
+      generator: "Figra",
       created_utc: new Date().toISOString(),
 
       data: {

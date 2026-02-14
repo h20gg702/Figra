@@ -49,6 +49,105 @@
     .dialog-content input { width:100%; box-sizing:border-box; margin-bottom:16px; }
     .dialog-buttons { display:flex; gap:8px; justify-content:flex-end; }
 
+    /* Registration Overlay */
+    #registrationOverlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      z-index: 2000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    #registrationOverlay.hidden { display: none; }
+    .registration-card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+      padding: 32px;
+      max-width: 420px;
+      width: 100%;
+    }
+    .registration-card h2 {
+      margin: 0 0 8px;
+      font-size: 24px;
+      color: #333;
+    }
+    .registration-card .subtitle {
+      color: #666;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+    .registration-card .form-group {
+      margin-bottom: 16px;
+    }
+    .registration-card label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: #333;
+      font-size: 13px;
+    }
+    .registration-card input,
+    .registration-card select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      font-size: 14px;
+      box-sizing: border-box;
+    }
+    .registration-card input:focus,
+    .registration-card select:focus {
+      outline: none;
+      border-color: #667eea;
+      box-shadow: 0 0 0 3px rgba(102,126,234,0.1);
+    }
+    .registration-card .checkbox-group {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .registration-card .checkbox-group input[type="checkbox"] {
+      width: auto;
+      margin-top: 3px;
+    }
+    .registration-card .checkbox-group label {
+      font-weight: normal;
+      margin-bottom: 0;
+      font-size: 13px;
+      color: #555;
+    }
+    .registration-card .checkbox-group a {
+      color: #667eea;
+    }
+    .registration-card .submit-btn {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    .registration-card .submit-btn:hover {
+      opacity: 0.9;
+    }
+    .registration-card .submit-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .registration-card .error-msg {
+      color: #e53e3e;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
     /* 折りたたみ */
     #advPanel { padding:8px 10px; border:1px solid #e5e5e5; border-radius:8px; background:#fcfcfc; }
     #advPanel[hidden] { display:none; }
@@ -270,8 +369,65 @@
     </div>
   </div>
 
+  <!-- Registration Overlay -->
+  <div id="registrationOverlay">
+    <div class="registration-card">
+      <h2>Welcome to Figra</h2>
+      <p class="subtitle">Please register to start creating publication-quality figures.</p>
+
+      <div class="form-group">
+        <label for="regEmail">Email *</label>
+        <input type="email" id="regEmail" placeholder="your@email.com" required>
+      </div>
+
+      <div class="form-group">
+        <label for="regJobTitle">Job Title / Role *</label>
+        <input type="text" id="regJobTitle" placeholder="e.g., PhD Student, Professor, Researcher" required>
+      </div>
+
+      <div class="form-group">
+        <label for="regAffiliation">Affiliation / Organization *</label>
+        <input type="text" id="regAffiliation" placeholder="e.g., University of Tokyo" required>
+      </div>
+
+      <div class="form-group">
+        <label for="regCountry">Country *</label>
+        <select id="regCountry" required>
+          <option value="">Select your country</option>
+          <option value="Japan">Japan</option>
+          <option value="United States">United States</option>
+          <option value="United Kingdom">United Kingdom</option>
+          <option value="Germany">Germany</option>
+          <option value="France">France</option>
+          <option value="China">China</option>
+          <option value="South Korea">South Korea</option>
+          <option value="Australia">Australia</option>
+          <option value="Canada">Canada</option>
+          <option value="India">India</option>
+          <option value="Brazil">Brazil</option>
+          <option value="Italy">Italy</option>
+          <option value="Spain">Spain</option>
+          <option value="Netherlands">Netherlands</option>
+          <option value="Switzerland">Switzerland</option>
+          <option value="Sweden">Sweden</option>
+          <option value="Singapore">Singapore</option>
+          <option value="Taiwan">Taiwan</option>
+          <option value="Other">Other</option>
+        </select>
+      </div>
+
+      <div class="checkbox-group">
+        <input type="checkbox" id="regTerms" required>
+        <label for="regTerms">I agree to the <a href="https://h20gg702.github.io/figra-pages/terms.html" target="_blank">Terms of Use</a> and <a href="https://h20gg702.github.io/figra-pages/privacy.html" target="_blank">Privacy Policy</a> *</label>
+      </div>
+
+      <button type="button" id="regSubmitBtn" class="submit-btn">Start Using Figra</button>
+      <p id="regError" class="error-msg" style="display:none;"></p>
+    </div>
+  </div>
+
   <div class="container">
-    <h1>FigDR <span id="appVersion" style="font-size:14px; color:#666; font-weight:normal;"></span></h1>
+    <h1>Figra <span id="appVersion" style="font-size:14px; color:#666; font-weight:normal;"></span></h1>
 
     <!-- Tab Navigation -->
     <div class="tab-nav">
