@@ -729,7 +729,7 @@ async function loadFromFigure() {
           // Check if this is an Figra PNG
           if (!metadata || !metadata.data) {
             console.error("🔍 DEBUG: Invalid metadata - missing data field");
-            setStatus("❌ This PNG was not created by Figra (no metadata found)\n\nTip: Use '📦 Download Metadata (JSON)' button to save metadata separately!");
+            setStatus("❌ This PNG was not created by Figra (no metadata found) or saved by un-supported environment like Mac.");
             return;
           }
         }
