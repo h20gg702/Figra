@@ -4031,8 +4031,12 @@ function collectCurrentSettings() {
     // Statistics
     addStatistics: el("addStatistics")?.checked ? "true" : "false",
     errorBarType: el("errorBarType")?.value || "sd",
-    statisticalTest: el("statisticalTest")?.value || "auto",
-    varianceTest: el("varianceTest")?.value || "auto",
+    statisticalTestMode: el("statisticalTestMode")?.value || "auto",
+    // When manual mode, use dataType to determine test; when auto, use "auto"
+    statisticalTest: (el("statisticalTestMode")?.value || "auto") === "auto"
+      ? "auto"
+      : (el("dataTypeSelect")?.value === "nonparametric" ? "nonparametric" : "parametric"),
+    varianceTest: el("varianceTest")?.value || "levene",
     statSymbolType: el("statSymbolType")?.value || "stars",
     customSymbol05: el("customSymbol05")?.value || "*",
     customSymbol01: el("customSymbol01")?.value || "**",
@@ -4041,7 +4045,8 @@ function collectCurrentSettings() {
     statSymbolSize: el("statSymbolSize")?.value || "6",
     significanceLevel: el("significanceLevel")?.value || "0.05",
     comparisonMode: document.querySelector('input[name="comparisonMode"]:checked')?.value || "significant",
-    postHocTest: el("postHocTest")?.value || "tukey",
+    postHocTest: (el("dataTypeSelect")?.value === "nonparametric" ? el("postHocTestNonparam")?.value : el("postHocTest")?.value) || "tukey",
+    dataType: el("dataTypeSelect")?.value || "parametric",
     customComparisons: (typeof getSelectedCustomComparisons === 'function') ? JSON.stringify(getSelectedCustomComparisons()) : "[]",
     customPositions: (typeof getCustomBracketPositions === 'function') ? JSON.stringify(getCustomBracketPositions()) : "{}",
 
@@ -5240,21 +5245,108 @@ Office.onReady(() => {
     }
   });
 
-  // Show/hide Dunnett control group selection when Dunnett is selected
-  document.getElementById("postHocTest")?.addEventListener("change", function() {
-    const postHocTest = this.value;
+  // Show/hide manual test options based on statistical test mode selection
+  document.getElementById("statisticalTestMode")?.addEventListener("change", function() {
+    const mode = this.value;
+    const manualTestOptions = document.getElementById("manualTestOptions");
+    const autoModeExplanation = document.getElementById("autoModeExplanation");
+
+    if (mode === "auto") {
+      // Auto mode - hide manual options, show explanation
+      manualTestOptions.style.display = "none";
+      if (autoModeExplanation) autoModeExplanation.style.display = "block";
+    } else {
+      // Manual mode - show manual options, hide explanation
+      manualTestOptions.style.display = "block";
+      if (autoModeExplanation) autoModeExplanation.style.display = "none";
+    }
+
+    // Auto-update if statistics are enabled
+    const addStatistics = document.getElementById("addStatistics")?.checked;
+    if (addStatistics && window.lastRender) {
+      previewPlotWithDebug().catch(e => console.error("Auto-update failed:", e));
+    }
+  });
+
+  // Auto-update when manual test type changes
+  document.getElementById("statisticalTest")?.addEventListener("change", function() {
+    const addStatistics = document.getElementById("addStatistics")?.checked;
+    if (addStatistics && window.lastRender) {
+      previewPlotWithDebug().catch(e => console.error("Auto-update failed:", e));
+    }
+  });
+
+  // Switch between parametric and non-parametric post-hoc options
+  document.getElementById("dataTypeSelect")?.addEventListener("change", function() {
+    const dataType = this.value;
+    const parametricPostHoc = document.getElementById("parametricPostHoc");
+    const nonparametricPostHoc = document.getElementById("nonparametricPostHoc");
+    const dataTypeHint = document.getElementById("dataTypeHint");
+
+    const varianceTestSection = document.getElementById("varianceTestSection");
+
+    if (dataType === "parametric") {
+      parametricPostHoc.style.display = "block";
+      nonparametricPostHoc.style.display = "none";
+      if (varianceTestSection) varianceTestSection.style.display = "block";
+      dataTypeHint.textContent = "2 groups: t-test, 3+ groups: ANOVA";
+    } else {
+      parametricPostHoc.style.display = "none";
+      nonparametricPostHoc.style.display = "block";
+      if (varianceTestSection) varianceTestSection.style.display = "none";
+      dataTypeHint.textContent = "2 groups: Wilcoxon, 3+ groups: Kruskal-Wallis";
+    }
+
+    // Update control group visibility based on current post-hoc selection
+    updateControlGroupVisibility();
+
+    // Auto-update if statistics are enabled
+    const addStatistics = document.getElementById("addStatistics")?.checked;
+    if (addStatistics && window.lastRender) {
+      previewPlotWithDebug().catch(e => console.error("Auto-update failed:", e));
+    }
+  });
+
+  // Helper function to get the currently active post-hoc test value
+  function getActivePostHocTest() {
+    const dataType = document.getElementById("dataTypeSelect")?.value || "parametric";
+    if (dataType === "parametric") {
+      return document.getElementById("postHocTest")?.value || "tukey";
+    } else {
+      return document.getElementById("postHocTestNonparam")?.value || "dunn";
+    }
+  }
+
+  // Helper function to update control group visibility
+  function updateControlGroupVisibility() {
+    const postHocTest = getActivePostHocTest();
     const dunnettControlGroup = document.getElementById("dunnettControlGroup");
 
-    if (postHocTest === "dunnett") {
+    if (postHocTest === "dunnett" || postHocTest === "steel") {
       dunnettControlGroup.style.display = "block";
-      // Populate control group dropdown with available groups from data
       populateDunnettControl();
     } else {
       dunnettControlGroup.style.display = "none";
     }
 
-    // Repopulate comparison checkboxes based on new post-hoc test selection
+    // Repopulate comparison checkboxes
     populateComparisonCheckboxes();
+  }
+
+  // Show/hide control group selection when Dunnett is selected (parametric)
+  document.getElementById("postHocTest")?.addEventListener("change", function() {
+    updateControlGroupVisibility();
+
+    // Auto-update if statistics are enabled
+    const addStatistics = document.getElementById("addStatistics")?.checked;
+    if (addStatistics && window.lastRender) {
+      previewPlotWithDebug().catch(e => console.error("Auto-update failed:", e));
+    }
+  });
+
+  // Show/hide control group selection when Steel is selected (non-parametric)
+  document.getElementById("postHocTestNonparam")?.addEventListener("change", function() {
+    updateControlGroupVisibility();
 
     // Auto-update if statistics are enabled
     const addStatistics = document.getElementById("addStatistics")?.checked;
@@ -5559,12 +5651,15 @@ function populateComparisonCheckboxes() {
     }
   } else {
     // Standard grouped chart comparisons
-    const postHocTest = document.getElementById("postHocTest")?.value || "tukey";
-    const isDunnett = postHocTest === "dunnett";
+    const dataType = document.getElementById("dataTypeSelect")?.value || "parametric";
+    const postHocTest = dataType === "nonparametric"
+      ? (document.getElementById("postHocTestNonparam")?.value || "dunn")
+      : (document.getElementById("postHocTest")?.value || "tukey");
+    const isVsControl = postHocTest === "dunnett" || postHocTest === "steel";
     const controlGroup = document.getElementById("dunnettControl")?.value || "";
 
-    if (isDunnett && controlGroup) {
-      // For Dunnett: only show comparisons with the control group
+    if (isVsControl && controlGroup) {
+      // For Dunnett/Steel: only show comparisons with the control group
       for (let i = 0; i < actualGroups.length; i++) {
         if (actualGroups[i] !== controlGroup) {
           combinations.push([controlGroup, actualGroups[i]]);
@@ -5843,9 +5938,14 @@ function getStatSymbolSize() {
 
 // Get statistical results as formatted text (shared by export and display functions)
 async function getStatisticalResultsText() {
-  const statisticalTest = document.getElementById("statisticalTest")?.value || "auto";
+  // Check mode first: if "auto", use auto; otherwise use selected test
+  const testMode = document.getElementById("statisticalTestMode")?.value || "auto";
+  const statisticalTest = testMode === "auto" ? "auto" : (document.getElementById("statisticalTest")?.value || "auto");
   const varianceTest = document.getElementById("varianceTest")?.value || "levene";
-  const postHocTest = document.getElementById("postHocTest")?.value || "tukey";
+  const dataType = document.getElementById("dataTypeSelect")?.value || "parametric";
+  const postHocTest = dataType === "nonparametric"
+    ? (document.getElementById("postHocTestNonparam")?.value || "dunn")
+    : (document.getElementById("postHocTest")?.value || "tukey");
   const dunnettControl = document.getElementById("dunnettControl")?.value || "";
 
   // Get selected columns from UI
@@ -5955,8 +6055,13 @@ async function getStatisticalResultsText() {
           # Replace the post-hoc test name with "not performed"
           test_name <- gsub("\\\\(post-hoc: [^)]+\\\\)", "(post-hoc: not performed)", test_name)
         } else if (grepl("Kruskal-Wallis", test_name)) {
-          # For Kruskal-Wallis when significant, automatically use Dunn test
-          test_name <- gsub("\\\\(post-hoc: [^)]+\\\\)", "(post-hoc: dunn)", test_name)
+          # For Kruskal-Wallis when significant, use appropriate non-parametric post-hoc
+          # Dunnett → Steel (vs control), others → Dunn (pairwise)
+          if ("${postHocTest}" == "dunnett" || "${postHocTest}" == "steel") {
+            test_name <- gsub("\\\\(post-hoc: [^)]+\\\\)", "(post-hoc: steel)", test_name)
+          } else {
+            test_name <- gsub("\\\\(post-hoc: [^)]+\\\\)", "(post-hoc: dunn)", test_name)
+          }
         }
 
         # Add group statistics (FIRST - Summary of data)
@@ -5999,40 +6104,120 @@ async function getStatisticalResultsText() {
         # Add post-hoc results with detailed pairwise comparisons
         posthoc_results <- ""
         if (grepl("Kruskal-Wallis", test_name) && !is.na(p_val) && p_val < 0.05 && length(groups) > 2) {
-          # For Kruskal-Wallis, use Dunn's test (non-parametric post-hoc)
+          # For Kruskal-Wallis, use appropriate non-parametric post-hoc
+          # Dunnett or Steel → Steel, others → Dunn
+          cat("DEBUG (path 1): selected_posthoc_test =", "${postHocTest}", "\\n")
+          actual_posthoc <- if ("${postHocTest}" == "dunnett" || "${postHocTest}" == "steel") "steel" else "dunn"
+          cat("DEBUG (path 1): actual_posthoc =", actual_posthoc, "\\n")
+
           tryCatch({
-            # Load dunn.test package (same as plot statistics use)
-            if (!requireNamespace("dunn.test", quietly = TRUE)) {
-              cat("Installing dunn.test package...\\n")
-              webr::install("dunn.test")
-            }
-            library(dunn.test)
+            if (actual_posthoc == "steel") {
+              # Steel test - non-parametric equivalent of Dunnett
+              # Try kSamples::Steel.test
+              steel_available <- tryCatch({
+                if (!requireNamespace("kSamples", quietly = TRUE)) {
+                  cat("Attempting to install kSamples package for Steel test\\n")
+                  webr::install("kSamples")
+                }
+                library(kSamples)
+                TRUE
+              }, error = function(e) {
+                cat("kSamples not available in webR:", e$message, "\\n")
+                FALSE
+              })
 
-            # Perform Dunn's test with Bonferroni adjustment
-            dunn_result <- dunn.test(as.numeric(value_col), factor(group_col), method = "bonferroni")
+              if (!steel_available) {
+                # Fallback to Dunn test with message
+                cat("Steel test not available, falling back to Dunn test\\n")
+                actual_posthoc <- "dunn"
+                if ("${postHocTest}" == "dunnett") {
+                  posthoc_results <- "\\n\\n(Note: Data is non-normal. Dunnett test requires normal data. Using Dunn test instead.)"
+                } else {
+                  posthoc_results <- "\\n\\n(Note: Steel test not available in webR, using Dunn test instead)"
+                }
+              } else {
+                # Create data frame and set control group
+                steel_data <- data.frame(
+                  group = factor(group_col),
+                  value = as.numeric(value_col)
+                )
 
-            comparison_names <- dunn_result$comparisons
-            p_values <- dunn_result$P.adjusted
+                cat("🔥 EXPORT Steel DEBUG: steel_data created with", nrow(steel_data), "rows\\n")
+                cat("🔥 EXPORT Steel DEBUG: groups:", paste(levels(steel_data$group), collapse=", "), "\\n")
 
-            posthoc_results <- "\\n\\nDunn's Post-hoc Comparisons (Bonferroni-adjusted p-values):"
+                control_group <- "${dunnettControl}"
+                cat("🔥 EXPORT Steel DEBUG: raw control_group = '", control_group, "'\\n")
+                if (control_group == "" || is.na(control_group)) {
+                  control_group <- levels(steel_data$group)[1]
+                }
+                cat("🔥 EXPORT Steel DEBUG: final control_group = '", control_group, "'\\n")
 
-            # Format detailed results
-            for (i in 1:length(comparison_names)) {
-              p_adj <- p_values[i]
-              comparison <- comparison_names[i]
+                # Get all groups and identify treatment groups
+                all_groups <- levels(steel_data$group)
+                treatment_groups <- all_groups[all_groups != control_group]
+                cat("🔥 EXPORT Steel DEBUG: treatment_groups:", paste(treatment_groups, collapse=", "), "\\n")
 
-              # Determine significance
-              if (!is.na(p_adj)) {
-                if (p_adj < 0.001) sig <- "***"
-                else if (p_adj < 0.01) sig <- "**"
-                else if (p_adj < 0.05) sig <- "*"
-                else sig <- "ns"
+                posthoc_results <- paste0("\\n\\nSteel's Post-hoc Comparisons (vs ", control_group, "):")
 
-                posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", sprintf("%.4f", p_adj), " (", sig, ")")
+                # Run Steel.test for each treatment vs control
+                control_values <- steel_data$value[steel_data$group == control_group]
+                cat("🔥 EXPORT Steel DEBUG: control_values (n=", length(control_values), "):", paste(control_values, collapse=", "), "\\n")
+
+                for (trt in treatment_groups) {
+                  trt_values <- steel_data$value[steel_data$group == trt]
+                  cat("🔥 EXPORT Steel DEBUG: trt '", trt, "' values (n=", length(trt_values), "):", paste(trt_values, collapse=", "), "\\n")
+
+                  # Steel.test compares two samples - p-value is in st[2]
+                  steel_result <- Steel.test(list(control_values, trt_values))
+                  cat("🔥 EXPORT Steel DEBUG: steel_result$st:", paste(steel_result$st, collapse=", "), "\\n")
+                  p_val <- steel_result$st[2]
+                  cat("🔥 EXPORT Steel DEBUG: p_val =", p_val, "\\n")
+
+                  comparison <- paste0(trt, " - ", control_group)
+
+                  if (p_val < 0.001) sig <- "***"
+                  else if (p_val < 0.01) sig <- "**"
+                  else if (p_val < 0.05) sig <- "*"
+                  else sig <- "ns"
+
+                  posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
+                }
+              }
+            }  # end of actual_posthoc == "steel"
+
+            # Run Dunn test if Steel was not available or if Dunn was originally selected
+            if (actual_posthoc == "dunn") {
+              # Dunn test - non-parametric pairwise comparisons
+              if (!requireNamespace("dunn.test", quietly = TRUE)) {
+                cat("Installing dunn.test package...\\n")
+                webr::install("dunn.test")
+              }
+              library(dunn.test)
+
+              dunn_result <- dunn.test(as.numeric(value_col), factor(group_col), method = "bonferroni")
+
+              comparison_names <- dunn_result$comparisons
+              p_values <- dunn_result$P.adjusted
+
+              # Append to existing note (if Steel fallback) or create new
+              posthoc_results <- paste0(posthoc_results, "\\n\\nDunn's Post-hoc Comparisons (Bonferroni-adjusted p-values):")
+
+              for (i in 1:length(comparison_names)) {
+                p_adj <- p_values[i]
+                comparison <- comparison_names[i]
+
+                if (!is.na(p_adj)) {
+                  if (p_adj < 0.001) sig <- "***"
+                  else if (p_adj < 0.01) sig <- "**"
+                  else if (p_adj < 0.05) sig <- "*"
+                  else sig <- "ns"
+
+                  posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", sprintf("%.4f", p_adj), " (", sig, ")")
+                }
               }
             }
           }, error = function(e) {
-            posthoc_results <- paste0("\\n\\nDunn's test Error: ", e$message)
+            posthoc_results <<- paste0("\\n\\nPost-hoc test Error: ", e$message)
           })
         } else if (grepl("ANOVA", test_name) && !is.na(p_val) && p_val < 0.05 && length(groups) > 2) {
           # Perform ANOVA and post-hoc test manually (same as export function)
@@ -6070,18 +6255,73 @@ async function getStatisticalResultsText() {
 
                 posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": diff=", round(diff, 2), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
               }
-            } else {
-              # For other tests: bonferroni and holm are p-value adjustments, not post-hoc tests
-              if (selected_posthoc_test == "bonferroni") {
-                posthoc_results <- "\\n\\nPairwise t-test with Bonferroni correction performed - see brackets on chart"
-              } else if (selected_posthoc_test == "holm") {
-                posthoc_results <- "\\n\\nPairwise t-test with Holm correction performed - see brackets on chart"
-              } else {
-                posthoc_results <- paste0("\\n\\nPost-hoc test (", selected_posthoc_test, ") performed - see brackets on chart")
+            } else if (selected_posthoc_test == "dunnett") {
+              # Dunnett test - parametric vs control comparisons
+              if (!requireNamespace("multcomp", quietly = TRUE)) {
+                cat("Installing multcomp package for Dunnett test\\n")
+                webr::install("multcomp")
               }
+              library(multcomp)
+
+              control_group <- "${dunnettControl}"
+              if (control_group == "" || is.na(control_group)) {
+                control_group <- levels(anova_data$group)[1]
+              }
+              anova_data$group <- relevel(factor(anova_data$group), ref = control_group)
+              anova_result <- aov(value ~ group, data = anova_data)
+
+              posthoc_result <- summary(glht(anova_result, linfct = mcp(group = "Dunnett")))
+              estimates <- posthoc_result$test$coefficients
+              p_values <- posthoc_result$test$pvalues
+              comparison_names <- names(estimates)
+
+              posthoc_results <- paste0("\\n\\nDunnett's Post-hoc Comparisons (vs ", control_group, "):")
+
+              for (i in 1:length(comparison_names)) {
+                p_adj <- p_values[i]
+                comparison <- comparison_names[i]
+                diff <- estimates[i]
+
+                if (!is.na(p_adj)) {
+                  if (p_adj < 0.001) sig <- "***"
+                  else if (p_adj < 0.01) sig <- "**"
+                  else if (p_adj < 0.05) sig <- "*"
+                  else sig <- "ns"
+                } else {
+                  sig <- "ns"
+                }
+
+                posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": diff=", round(diff, 3), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
+              }
+            } else if (selected_posthoc_test == "bonferroni" || selected_posthoc_test == "holm") {
+              # Pairwise t-tests with correction
+              method <- selected_posthoc_test
+              pairwise_result <- pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = method)
+              p_matrix <- pairwise_result$p.value
+
+              posthoc_results <- paste0("\\n\\nPairwise t-test (", method, " correction):")
+
+              groups <- rownames(p_matrix)
+              for (i in 1:nrow(p_matrix)) {
+                for (j in 1:ncol(p_matrix)) {
+                  p_adj <- p_matrix[i, j]
+                  if (!is.na(p_adj)) {
+                    comparison <- paste0(groups[i], " - ", colnames(p_matrix)[j])
+
+                    if (p_adj < 0.001) sig <- "***"
+                    else if (p_adj < 0.01) sig <- "**"
+                    else if (p_adj < 0.05) sig <- "*"
+                    else sig <- "ns"
+
+                    posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", sprintf("%.4f", p_adj), " (", sig, ")")
+                  }
+                }
+              }
+            } else {
+              posthoc_results <- paste0("\\n\\nPost-hoc test (", selected_posthoc_test, ") performed - see brackets on chart")
             }
           }, error = function(e) {
-            posthoc_results <- paste0("\\n\\nPost-hoc Error: ", e$message)
+            posthoc_results <<- paste0("\\n\\nPost-hoc Error: ", e$message)
           })
         } else if (is.na(p_val)) {
           posthoc_results <- "\\n\\nNo post-hoc test performed (statistical test failed - insufficient data)"
@@ -6394,9 +6634,14 @@ async function exportStatisticalResults() {
     }
     
     // Enhanced statistical analysis with normality testing and detailed results
-    const statisticalTest = document.getElementById("statisticalTest")?.value || "auto";
+    // Check mode first: if "auto", use auto; otherwise use selected test
+    const testMode = document.getElementById("statisticalTestMode")?.value || "auto";
+    const statisticalTest = testMode === "auto" ? "auto" : (document.getElementById("statisticalTest")?.value || "auto");
     const varianceTest = document.getElementById("varianceTest")?.value || "levene";
-    const postHocTest = document.getElementById("postHocTest")?.value || "tukey";
+    const dataType = document.getElementById("dataTypeSelect")?.value || "parametric";
+    const postHocTest = dataType === "nonparametric"
+      ? (document.getElementById("postHocTestNonparam")?.value || "dunn")
+      : (document.getElementById("postHocTest")?.value || "tukey");
     const dunnettControl = document.getElementById("dunnettControl")?.value || "";
 
     // Get selected columns from UI
@@ -6727,8 +6972,13 @@ async function exportStatisticalResults() {
               # Replace the post-hoc test name with "not performed"
               test_name <- gsub("\\\\(post-hoc: [^)]+\\\\)", "(post-hoc: not performed)", test_name)
             } else if (grepl("Kruskal-Wallis", test_name)) {
-              # For Kruskal-Wallis when significant, automatically use Dunn test
-              test_name <- gsub("\\\\(post-hoc: [^)]+\\\\)", "(post-hoc: dunn)", test_name)
+              # For Kruskal-Wallis when significant, use appropriate non-parametric post-hoc
+              # Dunnett → Steel (vs control), others → Dunn (pairwise)
+              if (selected_posthoc_test == "dunnett" || selected_posthoc_test == "steel") {
+                test_name <- gsub("\\\\(post-hoc: [^)]+\\\\)", "(post-hoc: steel)", test_name)
+              } else {
+                test_name <- gsub("\\\\(post-hoc: [^)]+\\\\)", "(post-hoc: dunn)", test_name)
+              }
             }
 
             # Create comprehensive result for multiple groups
@@ -6988,6 +7238,53 @@ async function exportStatisticalResults() {
                     posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": diff=", round(diff, 2), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
                   }
 
+                } else if (selected_posthoc_test == "steel") {
+                  # Steel test - non-parametric equivalent of Dunnett (vs control)
+                  # Try kSamples::Steel.test
+                  steel_available <- tryCatch({
+                    if (!requireNamespace("kSamples", quietly = TRUE)) {
+                      cat("Installing kSamples package for Steel test\\n")
+                      webr::install("kSamples")
+                    }
+                    library(kSamples)
+                    TRUE
+                  }, error = function(e) {
+                    cat("kSamples not available:", e$message, "\\n")
+                    FALSE
+                  })
+
+                  if (steel_available) {
+                    # Set control group (from UI selection or default to first group)
+                    control_group <- "${dunnettControl}"
+                    if (control_group == "" || is.na(control_group)) {
+                      control_group <- levels(anova_data$group)[1]
+                    }
+
+                    all_groups <- levels(anova_data$group)
+                    treatment_groups <- all_groups[all_groups != control_group]
+
+                    posthoc_results <- paste0("\\n\\nSteel Post-hoc Comparisons (vs ", control_group, "):")
+
+                    control_values <- anova_data$value[anova_data$group == control_group]
+
+                    for (trt in treatment_groups) {
+                      trt_values <- anova_data$value[anova_data$group == trt]
+                      steel_result <- Steel.test(list(control_values, trt_values))
+                      p_val <- steel_result$st[2]
+
+                      comparison <- paste0(trt, " - ", control_group)
+
+                      if (p_val < 0.001) sig <- "***"
+                      else if (p_val < 0.01) sig <- "**"
+                      else if (p_val < 0.05) sig <- "*"
+                      else sig <- "ns"
+
+                      posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
+                    }
+                  } else {
+                    posthoc_results <- "\\n\\n(Note: Steel test not available in webR)"
+                  }
+
                 } else if (selected_posthoc_test == "dunn") {
                   # Dunn test for non-parametric post-hoc
                   if (!requireNamespace("dunn.test", quietly = TRUE)) {
@@ -7041,12 +7338,120 @@ async function exportStatisticalResults() {
               }, error = function(e) {
                 posthoc_results <<- paste0("\\n\\n", selected_posthoc_test, " Post-hoc Error: ", e$message)
               })
+            } else if (grepl("Kruskal-Wallis", test_name) && p_val < 0.05) {
+              # Kruskal-Wallis is significant - run non-parametric post-hoc test
+              cat("Kruskal-Wallis significant, performing non-parametric post-hoc test\\n")
+              cat("DEBUG: selected_posthoc_test =", selected_posthoc_test, "\\n")
+
+              tryCatch({
+                # Create proper data frame
+                anova_data <- data.frame(
+                  group = factor(group_col),
+                  value = as.numeric(value_col)
+                )
+
+                # Determine which non-parametric post-hoc test to use
+                # Dunnett → Steel, others → Dunn
+                actual_posthoc <- if (selected_posthoc_test == "dunnett" || selected_posthoc_test == "steel") "steel" else "dunn"
+                cat("DEBUG: actual_posthoc =", actual_posthoc, "\\n")
+                cat("Using non-parametric post-hoc:", actual_posthoc, "\\n")
+
+                if (actual_posthoc == "steel") {
+                  # Steel test - non-parametric equivalent of Dunnett
+                  # Try kSamples::Steel.test
+                  steel_available <- tryCatch({
+                    if (!requireNamespace("kSamples", quietly = TRUE)) {
+                      cat("Attempting to install kSamples package for Steel test\\n")
+                      webr::install("kSamples")
+                    }
+                    library(kSamples)
+                    TRUE
+                  }, error = function(e) {
+                    cat("kSamples not available:", e$message, "\\n")
+                    FALSE
+                  })
+
+                  if (steel_available) {
+                    # Set control group
+                    control_group <- "${dunnettControl}"
+                    if (control_group == "" || is.na(control_group)) {
+                      control_group <- levels(anova_data$group)[1]
+                    }
+
+                    # Get all groups and identify treatment groups
+                    all_groups <- levels(anova_data$group)
+                    treatment_groups <- all_groups[all_groups != control_group]
+
+                    posthoc_results <- paste0("\\n\\nSteel's Post-hoc Comparisons (vs ", control_group, "):")
+
+                    # Run Steel.test for each treatment vs control
+                    control_values <- anova_data$value[anova_data$group == control_group]
+
+                    for (trt in treatment_groups) {
+                      trt_values <- anova_data$value[anova_data$group == trt]
+
+                      # Steel.test compares two samples - p-value is in st[2]
+                      steel_result <- Steel.test(list(control_values, trt_values))
+                      p_val <- steel_result$st[2]
+
+                      comparison <- paste0(trt, " - ", control_group)
+
+                      if (p_val < 0.001) sig <- "***"
+                      else if (p_val < 0.01) sig <- "**"
+                      else if (p_val < 0.05) sig <- "*"
+                      else sig <- "ns"
+
+                      posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
+                    }
+                  } else {
+                    # Fallback to Dunn
+                    cat("Steel test not available, falling back to Dunn test\\n")
+                    actual_posthoc <- "dunn"
+                    if (selected_posthoc_test == "dunnett") {
+                      posthoc_results <- "\\n\\n(Note: Data is non-normal. Dunnett test requires normal data. Using Dunn test instead.)"
+                    } else {
+                      posthoc_results <- "\\n\\n(Note: Steel test not available in webR, using Dunn test instead)"
+                    }
+                  }
+                }
+
+                if (actual_posthoc == "dunn") {
+                  # Dunn test - non-parametric pairwise comparisons
+                  if (!requireNamespace("dunn.test", quietly = TRUE)) {
+                    cat("Installing dunn.test package...\\n")
+                    webr::install("dunn.test")
+                  }
+                  library(dunn.test)
+
+                  posthoc_result <- dunn.test(anova_data$value, anova_data$group, method = "bonferroni")
+                  # Append to existing note (if Steel fallback) or create new
+                  posthoc_results <- paste0(posthoc_results, "\\n\\nDunn's Post-hoc Comparisons (Bonferroni-adjusted p-values):")
+
+                  comparison_names <- posthoc_result$comparisons
+                  p_values <- posthoc_result$P.adjusted
+
+                  for (i in seq_along(comparison_names)) {
+                    p_val <- p_values[i]
+                    comparison <- comparison_names[i]
+
+                    if (p_val < 0.001) sig <- "***"
+                    else if (p_val < 0.01) sig <- "**"
+                    else if (p_val < 0.05) sig <- "*"
+                    else sig <- "ns"
+
+                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
+                  }
+                }
+
+              }, error = function(e) {
+                posthoc_results <<- paste0("\\n\\nPost-hoc Error: ", e$message)
+              })
             } else if (is.na(p_val)) {
               posthoc_results <- "\\n\\nNo post-hoc test performed (statistical test failed - insufficient data)"
             } else if (p_val >= 0.05) {
               posthoc_results <- "\\n\\nNo post-hoc test performed (overall test not significant)"
             } else {
-              posthoc_results <- "\\n\\nPost-hoc test not applicable (non-parametric test used)"
+              posthoc_results <- "\\n\\nPost-hoc test not performed"
             }
 
             full_result <- paste0(main_result, normality_text, group_stats, posthoc_results)
@@ -8053,6 +8458,12 @@ async function initWebR() {
                   normality_check <- sato_check_normality(stat_data, "group")
                   two_group_test <- if (normality_check$is_normal) "t.test" else "wilcox.test"
                   cat("🔥 AUTO TEST SELECTION (2 groups): normality =", normality_check$is_normal, "→ using", two_group_test, "🔥\\n")
+                } else if (test_type == "parametric") {
+                  two_group_test <- "t.test"
+                  cat("🔥 MANUAL MODE (2 groups): parametric → using t-test 🔥\\n")
+                } else if (test_type == "nonparametric") {
+                  two_group_test <- "wilcox.test"
+                  cat("🔥 MANUAL MODE (2 groups): non-parametric → using Wilcoxon 🔥\\n")
                 }
 
                 # Perform the 2-sample test
@@ -8092,6 +8503,12 @@ async function initWebR() {
                   normality_check <- sato_check_normality(stat_data, "group")
                   omnibus_test_type <- if (normality_check$is_normal) "anova" else "kruskal.test"
                   cat("🔥 AUTO TEST SELECTION: normality =", normality_check$is_normal, "→ using", omnibus_test_type, "🔥\\n")
+                } else if (test_type == "parametric") {
+                  omnibus_test_type <- "anova"
+                  cat("🔥 MANUAL MODE: parametric → using ANOVA 🔥\\n")
+                } else if (test_type == "nonparametric") {
+                  omnibus_test_type <- "kruskal.test"
+                  cat("🔥 MANUAL MODE: non-parametric → using Kruskal-Wallis 🔥\\n")
                 }
 
                 # Perform omnibus test
@@ -8119,12 +8536,19 @@ async function initWebR() {
                 cat("🔥🔥🔥", omnibus_test_name, "SIGNIFICANT (p =", omnibus_p_value, ") - PROCEEDING WITH POST-HOC TESTS 🔥🔥🔥\\n")
 
                 # Step 4: Select appropriate post-hoc test based on omnibus test type
-                # For Kruskal-Wallis, force Dunn test (non-parametric)
+                # For Kruskal-Wallis, use non-parametric equivalents:
+                #   - Dunnett (vs control, parametric) → Steel (vs control, non-parametric)
+                #   - Tukey/Bonferroni/Holm (pairwise, parametric) → Dunn (pairwise, non-parametric)
                 # For ANOVA, use user-selected post-hoc test
                 actual_posthoc_test <- posthoc_test
-                if (omnibus_test_type == "kruskal.test" && posthoc_test != "dunn") {
-                  actual_posthoc_test <- "dunn"
-                  cat("🔥 Kruskal-Wallis detected - automatically using Dunn test for post-hoc 🔥\\n")
+                if (omnibus_test_type == "kruskal.test") {
+                  if (posthoc_test == "dunnett") {
+                    actual_posthoc_test <- "steel"
+                    cat("🔥 Kruskal-Wallis detected - automatically using Steel test (non-parametric equivalent of Dunnett) 🔥\\n")
+                  } else if (posthoc_test != "dunn" && posthoc_test != "steel") {
+                    actual_posthoc_test <- "dunn"
+                    cat("🔥 Kruskal-Wallis detected - automatically using Dunn test for post-hoc 🔥\\n")
+                  }
                 }
 
                 # Step 5: Perform post-hoc test
@@ -8254,7 +8678,68 @@ async function initWebR() {
                     check.names = FALSE
                   )
                   cat("🔥 Dunnett posthoc_summary created with", nrow(posthoc_summary), "rows 🔥\\n")
-                } else if (actual_posthoc_test == "dunn") {
+                } else if (actual_posthoc_test == "steel") {
+                  # Steel test - non-parametric equivalent of Dunnett (vs control)
+                  # Using kSamples::Steel.test
+                  cat("🔥 STEEL TEST STARTING (kSamples) 🔥\\n")
+
+                  steel_available <- tryCatch({
+                    if (!requireNamespace("kSamples", quietly = TRUE)) {
+                      cat("Installing kSamples package for Steel test\\n")
+                      webr::install("kSamples")
+                    }
+                    library(kSamples)
+                    TRUE
+                  }, error = function(e) {
+                    cat("kSamples not available:", e$message, "\\n")
+                    FALSE
+                  })
+
+                  if (steel_available) {
+                    # Set control group (from UI selection or default to first group)
+                    control_group <- dunnett_control
+                    cat("🔥 steel control parameter value: '", dunnett_control, "' (length:", nchar(dunnett_control), ") 🔥\\n")
+                    if (is.null(control_group) || is.na(control_group) || control_group == "" || nchar(control_group) == 0) {
+                      control_group <- levels(factor(stat_data$group))[1]
+                      cat("🔥 No valid control specified, using first group:", control_group, "🔥\\n")
+                    } else {
+                      cat("🔥 Using specified control group:", control_group, "🔥\\n")
+                    }
+
+                    all_groups <- levels(factor(stat_data$group))
+                    treatment_groups <- all_groups[all_groups != control_group]
+
+                    comparison_names <- c()
+                    p_values <- c()
+
+                    control_values <- stat_data$value[stat_data$group == control_group]
+
+                    for (trt in treatment_groups) {
+                      trt_values <- stat_data$value[stat_data$group == trt]
+                      steel_result <- Steel.test(list(control_values, trt_values))
+                      comparison_names <- c(comparison_names, paste0(trt, " - ", control_group))
+                      p_values <- c(p_values, steel_result$st[2])  # p-value is in st[2]
+                    }
+
+                    cat("🔥 Steel comparison names:", paste(comparison_names, collapse=", "), "🔥\\n")
+
+                    posthoc_summary <- data.frame(
+                      diff = rep(NA, length(p_values)),
+                      lwr = rep(NA, length(p_values)),
+                      upr = rep(NA, length(p_values)),
+                      "p adj" = p_values,
+                      row.names = comparison_names,
+                      check.names = FALSE
+                    )
+                    cat("🔥 Steel posthoc_summary created with", nrow(posthoc_summary), "rows 🔥\\n")
+                  } else {
+                    # Fallback to Dunn
+                    cat("🔥 Steel not available, falling back to Dunn 🔥\\n")
+                    actual_posthoc_test <- "dunn"
+                  }
+                }
+
+                if (actual_posthoc_test == "dunn") {
                   # Dunn test for non-parametric post-hoc
                   if (!requireNamespace("dunn.test", quietly = TRUE)) {
                     cat("Installing dunn.test package...\\n")
@@ -8275,8 +8760,8 @@ async function initWebR() {
                     row.names = comparison_names,
                     check.names = FALSE
                   )
-                } else {
-                  # Default fallback to Tukey
+                } else if (actual_posthoc_test != "dunnett" && actual_posthoc_test != "steel") {
+                  # Default fallback to Tukey (only if not Dunnett or Steel)
                   posthoc_result <- TukeyHSD(anova_result)
                   posthoc_summary <- posthoc_result$group
                 }
@@ -8285,8 +8770,8 @@ async function initWebR() {
                 print(posthoc_summary)
 
                 # Generate combinations based on post-hoc test type
-                if (actual_posthoc_test == "dunnett") {
-                  # For Dunnett: only control vs each treatment group
+                if (actual_posthoc_test == "dunnett" || actual_posthoc_test == "steel") {
+                  # For Dunnett/Steel: only control vs each treatment group
                   control_group <- dunnett_control
                   if (control_group == "" || is.na(control_group)) {
                     control_group <- levels(factor(stat_data$group))[1]
@@ -8299,7 +8784,7 @@ async function initWebR() {
                       combinations[[length(combinations) + 1]] <- c(control_group, grp)
                     }
                   }
-                  cat("🔥 Dunnett comparisons: control (", control_group, ") vs treatments 🔥\\n")
+                  cat("🔥", actual_posthoc_test, "comparisons: control (", control_group, ") vs treatments 🔥\\n")
                 } else {
                   # For other tests: all pairwise combinations
                   combinations <- combn(actual_groups, 2, simplify = FALSE)
@@ -10292,7 +10777,7 @@ async function initWebR() {
 
                 both_normal <- is_group1_normal && is_group2_normal
 
-                # Auto-select test based on normality if requested
+                # Select test based on mode
                 test_to_use <- statistical_test
                 if (statistical_test == "auto") {
                   if (both_normal) {
@@ -10302,6 +10787,12 @@ async function initWebR() {
                     test_to_use <- "wilcoxon"
                     cat("  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
                   }
+                } else if (statistical_test == "parametric") {
+                  test_to_use <- "t-test"
+                  cat("  Manual mode: parametric t-test\\n")
+                } else if (statistical_test == "nonparametric") {
+                  test_to_use <- "wilcoxon"
+                  cat("  Manual mode: non-parametric Wilcoxon test\\n")
                 }
 
                 # Perform variance test (only for parametric tests)
@@ -11438,7 +11929,7 @@ async function initWebR() {
 
                 both_normal <- is_group1_normal && is_group2_normal
 
-                # Auto-select test based on normality
+                # Select test based on mode
                 test_to_use <- statistical_test
                 if (statistical_test == "auto") {
                   if (both_normal) {
@@ -11448,6 +11939,12 @@ async function initWebR() {
                     test_to_use <- "wilcoxon"
                     cat("  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
                   }
+                } else if (statistical_test == "parametric") {
+                  test_to_use <- "t-test"
+                  cat("  Manual mode: parametric t-test\\n")
+                } else if (statistical_test == "nonparametric") {
+                  test_to_use <- "wilcoxon"
+                  cat("  Manual mode: non-parametric Wilcoxon test\\n")
                 }
 
                 # Perform variance test (only for parametric tests)
@@ -12473,7 +12970,7 @@ async function initWebR() {
 
                 both_normal <- is_group1_normal && is_group2_normal
 
-                # Auto-select test based on normality
+                # Select test based on mode
                 test_to_use <- statistical_test
                 if (statistical_test == "auto") {
                   if (both_normal) {
@@ -12483,6 +12980,12 @@ async function initWebR() {
                     test_to_use <- "wilcoxon"
                     cat("  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
                   }
+                } else if (statistical_test == "parametric") {
+                  test_to_use <- "t-test"
+                  cat("  Manual mode: parametric t-test\\n")
+                } else if (statistical_test == "nonparametric") {
+                  test_to_use <- "wilcoxon"
+                  cat("  Manual mode: non-parametric Wilcoxon test\\n")
                 }
 
                 # Perform variance test (only for parametric tests)
@@ -13582,7 +14085,7 @@ async function initWebR() {
 
                 both_normal <- is_group1_normal && is_group2_normal
 
-                # Auto-select test based on normality
+                # Select test based on mode
                 test_to_use <- statistical_test
                 if (statistical_test == "auto") {
                   if (both_normal) {
@@ -13592,6 +14095,12 @@ async function initWebR() {
                     test_to_use <- "wilcoxon"
                     cat("  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
                   }
+                } else if (statistical_test == "parametric") {
+                  test_to_use <- "t-test"
+                  cat("  Manual mode: parametric t-test\\n")
+                } else if (statistical_test == "nonparametric") {
+                  test_to_use <- "wilcoxon"
+                  cat("  Manual mode: non-parametric Wilcoxon test\\n")
                 }
 
                 # Perform variance test (only for parametric tests)
@@ -17071,9 +17580,12 @@ async function loadHeadersFromSelection(){
     populateComparisonCheckboxes();
     console.log("🔥 Updated comparison checkboxes after loading new data 🔥");
 
-    // Update Dunnett control group dropdown
-    const postHocTest = document.getElementById("postHocTest")?.value;
-    if (postHocTest === "dunnett") {
+    // Update Dunnett/Steel control group dropdown
+    const dataType = document.getElementById("dataTypeSelect")?.value || "parametric";
+    const postHocTest = dataType === "nonparametric"
+      ? (document.getElementById("postHocTestNonparam")?.value || "dunn")
+      : (document.getElementById("postHocTest")?.value || "tukey");
+    if (postHocTest === "dunnett" || postHocTest === "steel") {
       populateDunnettControl();
     }
 
@@ -17309,9 +17821,14 @@ function uiOpts(){
     
     // Statistical analysis
     addStatistics: el("addStatistics")?.checked || false,
-    statisticalTest: el("statisticalTest")?.value || "auto",
+    statisticalTestMode: el("statisticalTestMode")?.value || "auto",
+    // When manual mode, use dataType to determine test; when auto, use "auto"
+    statisticalTest: (el("statisticalTestMode")?.value || "auto") === "auto"
+      ? "auto"
+      : (el("dataTypeSelect")?.value === "nonparametric" ? "nonparametric" : "parametric"),
     varianceTest: el("varianceTest")?.value || "levene",
-    postHocTest: el("postHocTest")?.value || "tukey",
+    postHocTest: (el("dataTypeSelect")?.value === "nonparametric" ? el("postHocTestNonparam")?.value : el("postHocTest")?.value) || "tukey",
+    dataType: el("dataTypeSelect")?.value || "parametric",
     dunnettControl: el("dunnettControl")?.value || "",
     statSymbolSize: Number(el("statSymbolSize")?.value) || 7,
     statSymbolType: el("statSymbolType")?.value || "stars",

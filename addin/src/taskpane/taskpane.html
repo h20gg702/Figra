@@ -1067,11 +1067,11 @@
             <div style="margin-top:5px;">
               <label style="display:flex; align-items:center; gap:5px; font-size:11px;">
                 <input type="radio" name="comparisonMode" id="significantOnly" value="significant" checked />
-                Show significant only
+                Significant only
               </label>
               <label style="display:flex; align-items:center; gap:5px; font-size:11px; margin-top:3px;">
                 <input type="radio" name="comparisonMode" id="allComparisons" value="all" />
-                Show all comparisons
+                All comparisons
               </label>
               <label style="display:flex; align-items:center; gap:5px; font-size:11px; margin-top:3px;">
                 <input type="radio" name="comparisonMode" id="customSelection" value="custom" />
@@ -1089,17 +1089,93 @@
             </div>
           </div>
 
-          <select id="statisticalTest" style="width:400px;">
-            <option value="auto" selected>Auto-select test by data distribution</option>
-            <option value="t.test">t-test (parametric)</option>
-            <option value="wilcox.test">Wilcoxon test (non-parametric)</option>
-            <option value="anova">ANOVA (multiple groups)</option>
-            <option value="kruskal.test">Kruskal-Wallis (non-parametric)</option>
+          <div style="display:flex; gap:10px; margin-top:5px;">
+            <label style="font-size:12px;">Statistical Test Mode:</label>
+            <select id="statisticalTestMode" style="width:150px;">
+              <option value="auto" selected>Auto (Recommended)</option>
+              <option value="manual">Manual</option>
+            </select>
+          </div>
+          <!-- Auto mode explanation -->
+          <div id="autoModeExplanation" style="margin-top:5px; padding:8px; background:#e8f4f8; border:1px solid #b8d4e8; border-radius:4px; font-size:11px; color:#2c5282;">
+            <div style="font-weight:bold; margin-bottom:4px;">Auto mode:</div>
+            <div>1. Tests data normality (Shapiro-Wilk test)</div>
+            <div>2. Selects appropriate test based on results:</div>
+            <div style="margin-left:12px;">
+              <div><b>Normal data:</b> t-test (2 groups) or ANOVA (3+ groups)</div>
+              <div><b>Non-normal:</b> Wilcoxon (2 groups) or Kruskal-Wallis (3+ groups)</div>
+            </div>
+            <div style="margin-top:4px;">3. Variance test: Levene test (for t-test equal/unequal variance)</div>
+            <div>4. Post-hoc: ANOVA then Tukey, Kruskal-Wallis then Dunn</div>
+          </div>
+          <!-- Manual test options - hidden when Auto is selected -->
+          <!-- Hidden select for backward compatibility -->
+          <select id="statisticalTest" style="display:none;">
+            <option value="auto" selected>auto</option>
           </select>
-          <select id="varianceTest" style="width:400px;">
-            <option value="levene" selected>Levene test (variance equality)</option>
-            <option value="ftest">F-test (variance equality)</option>
-          </select>
+
+          <div id="manualTestOptions" style="display:none; margin-left:20px; margin-top:8px; padding:8px; background:#f9f9f9; border:1px solid #ddd; border-radius:4px;">
+            <!-- Data Type Selection -->
+            <div style="display:flex; gap:10px; margin-top:5px;">
+              <label style="font-size:12px; font-weight:bold;">Data Type:</label>
+              <select id="dataTypeSelect" style="width:180px;">
+                <option value="parametric" selected>Parametric (normal data)</option>
+                <option value="nonparametric">Non-parametric</option>
+              </select>
+            </div>
+            <div style="font-size:10px; color:#666; margin-left:80px; margin-top:2px;">
+              <span id="dataTypeHint">2 groups: t-test, 3+ groups: ANOVA</span>
+            </div>
+
+            <!-- Variance Test (for 2-group parametric tests) -->
+            <div id="varianceTestSection" style="margin-top:8px;">
+              <div style="display:flex; gap:10px; align-items:center;">
+                <label style="font-size:12px;">Variance Test (2 groups):</label>
+                <select id="varianceTest" style="width:130px;">
+                  <option value="levene" selected>Levene test</option>
+                  <option value="ftest">F-test</option>
+                </select>
+              </div>
+              <div style="font-size:10px; color:#666; margin-left:140px;">
+                Determines equal/unequal variance for t-test
+              </div>
+            </div>
+
+            <!-- Post-hoc Test Selection (for 3+ groups) -->
+            <div id="postHocSection" style="margin-top:10px; padding-top:8px; border-top:1px solid #ddd;">
+              <div style="font-size:11px; font-weight:bold; margin-bottom:5px;">Post-hoc Test (3+ groups):</div>
+
+              <!-- Parametric post-hoc options -->
+              <div id="parametricPostHoc">
+                <select id="postHocTest" style="width:220px;">
+                  <option value="tukey" selected>Tukey HSD (all pairs)</option>
+                  <option value="bonferroni">Bonferroni (all pairs)</option>
+                  <option value="holm">Holm (all pairs)</option>
+                  <option value="dunnett">Dunnett (vs control only)</option>
+                </select>
+              </div>
+
+              <!-- Non-parametric post-hoc options -->
+              <div id="nonparametricPostHoc" style="display:none;">
+                <select id="postHocTestNonparam" style="width:220px;">
+                  <option value="dunn" selected>Dunn (all pairs)</option>
+                  <option value="steel">Steel (vs control only)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Control Group Selection (for Dunnett/Steel) -->
+            <div id="dunnettControlGroup" style="display:none; margin-top:8px; padding:8px; background:#fff; border:1px solid #ccc; border-radius:4px;">
+              <div style="display:flex; align-items:center; gap:10px;">
+                <label style="font-size:12px;">Control Group:</label>
+                <select id="dunnettControl" style="width:140px;">
+                </select>
+              </div>
+              <div style="font-size:10px; color:#666; margin-top:3px;">
+                All other groups will be compared to this control
+              </div>
+            </div>
+          </div>
           <div style="display:flex; gap:10px; margin-top:5px;">
             <label style="font-size:12px;">Symbol Type:</label>
             <select id="statSymbolType" style="width:150px;">
@@ -1140,33 +1216,8 @@
               <span>*** p&lt;0.001</span>
             </div>
           </div>
-          <div style="display:flex; gap:10px; margin-top:5px;">
-            <label style="font-size:12px;">Multiple Comparison Method (3+ groups):</label>
-            <select id="postHocTest" style="width:200px;">
-              <option value="tukey" selected>Tukey HSD (parametric)</option>
-              <option value="bonferroni">Bonferroni (parametric, pairwise)</option>
-              <option value="holm">Holm (parametric, pairwise)</option>
-              <option value="dunnett">Dunnett (parametric, vs control)</option>
-              <option value="dunn">Dunn (non-parametric, pairwise)</option>
-            </select>
-          </div>
-          <div id="dunnettControlGroup" style="display:none; margin-top:5px; margin-left:20px;">
-            <label style="font-size:12px;">Control Group:</label>
-            <select id="dunnettControl" style="width:120px; margin-left:10px;">
-            </select>
-          </div>
           <!-- Traditional statistical annotation controls (for bars, boxes, 2-group line plots) -->
           <div id="traditionalStatControls">
-            <div style="display:flex; flex-direction:column; gap:5px; margin-top:8px; border-top:1px solid #ddd; padding-top:8px;">
-              <div style="display:flex; align-items:center; gap:10px;">
-                <input type="checkbox" id="showPairwiseComparisons" checked />
-                <label for="showPairwiseComparisons" style="font-size:12px;">Show pairwise comparison lines</label>
-              </div>
-              <div id="pairwiseControls" style="margin-top:5px; padding-left:20px;">
-                <div id="pairwiseSelection" style="display:flex; flex-direction:column; gap:3px; max-height:100px; overflow-y:auto;">
-                </div>
-              </div>
-            </div>
             <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
               <label for="statSymbolSize" style="font-size:12px;">Symbol size:</label>
               <input type="number" id="statSymbolSize" value="7" min="1" max="20" step="0.5" style="width:60px;" />
