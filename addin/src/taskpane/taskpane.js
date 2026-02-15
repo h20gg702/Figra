@@ -3798,10 +3798,20 @@ p <- ggplot(summary_data, aes(x = TimePoint, y = Mean, color = Group, group = Gr
     const vbracketLineWidth = settings.vbracketLineWidth || 3;
     const vbracketSigSize = settings.vbracketSigSize || 20;
 
+    // Determine which test to use based on settings
+    const isNonParametric = settings.dataType === 'nonparametric' ||
+                            settings.statisticalTest === 'nonparametric' ||
+                            settings.statisticalTest === 'kruskal';
+    const postHocTest = settings.postHocTest || 'tukey';
+    const isVsControl = postHocTest === 'dunnett' || postHocTest === 'steel';
+    const controlGroup = settings.controlGroup || '';
+
     code += `
 # ============ Statistical Analysis with vbracket ============
 # Install vbracket if needed: install.packages('vbracket', repos = 'https://h20gg702.r-universe.dev')
 library(vbracket)
+${isNonParametric && postHocTest === 'steel' ? `library(kSamples)  # For Steel test` : ''}
+${isNonParametric && postHocTest === 'dunn' ? `library(dunn.test)  # For Dunn test` : ''}
 
 # Get group order (same as factor levels used in plot)
 group_order <- levels(factor(summary_data$Group))
@@ -3817,78 +3827,160 @@ n_groups <- length(group_order)
 # Remove default legend (vbracket will replace it)
 p <- p + theme(legend.position = 'none')
 
-# Perform ANOVA and post-hoc tests
+# Statistical test settings
+data_type <- '${isNonParametric ? 'nonparametric' : 'parametric'}'
+posthoc_type <- '${postHocTest}'
+control_group <- '${controlGroup}'
+if (control_group == '' || !(control_group %in% group_order)) {
+  control_group <- group_order[1]  # Default to first group
+}
+
+# Perform statistical tests
 if (n_groups >= 3) {
-  # ANOVA
-  aov_result <- aov(${yColName} ~ ${groupColName}, data = test_data)
-  anova_p <- summary(aov_result)[[1]][['Pr(>F)']][1]
+  comparisons_list <- list()
+  labels_list <- c()
 
-  if (anova_p < 0.05) {
-    # Tukey post-hoc test
-    tukey_result <- TukeyHSD(aov_result)
-    tukey_df <- as.data.frame(tukey_result[['${groupColName}']])
-    tukey_df[['comparison']] <- rownames(tukey_df)
+  if (data_type == 'nonparametric') {
+    # Kruskal-Wallis test (non-parametric)
+    kw_result <- kruskal.test(${yColName} ~ ${groupColName}, data = test_data)
+    overall_p <- kw_result$p.value
+    cat('Kruskal-Wallis test: p =', overall_p, '\\n')
 
-    # Filter significant comparisons
-    sig_comparisons <- tukey_df[tukey_df[['p adj']] < 0.05, ]
+    if (overall_p < 0.05) {
+      if (posthoc_type == 'steel') {
+        # Steel test - non-parametric vs control (using kSamples)
+        cat('Running Steel test (vs control:', control_group, ')\\n')
+        control_values <- test_data[test_data$${groupColName} == control_group, '${yColName}']
+        treatment_groups <- group_order[group_order != control_group]
 
-    if (nrow(sig_comparisons) > 0) {
-      # Parse comparisons for vbracket
-      comparisons_list <- list()
-      labels_list <- c()
+        for (trt in treatment_groups) {
+          trt_values <- test_data[test_data$${groupColName} == trt, '${yColName}']
+          steel_result <- Steel.test(list(control_values, trt_values))
+          p_val <- steel_result$st[2]  # p-value is in st[2]
 
-      for (i in 1:nrow(sig_comparisons)) {
-        comp <- sig_comparisons[['comparison']][i]
-        p_val <- sig_comparisons[['p adj']][i]
+          cat(control_group, 'vs', trt, ': p =', p_val, '\\n')
 
-        # Split comparison into groups
-        grps <- strsplit(comp, '-')[[1]]
-        comparisons_list[[i]] <- grps
+          if (p_val < 0.05) {
+            comparisons_list[[length(comparisons_list) + 1]] <- c(control_group, trt)
+            if (p_val < 0.001) {
+              labels_list <- c(labels_list, '***')
+            } else if (p_val < 0.01) {
+              labels_list <- c(labels_list, '**')
+            } else {
+              labels_list <- c(labels_list, '*')
+            }
+          }
+        }
+      } else {
+        # Dunn test - non-parametric pairwise
+        cat('Running Dunn test (pairwise comparisons)\\n')
+        dunn_result <- dunn.test(test_data$${yColName}, test_data$${groupColName}, method = 'bonferroni')
 
-        # Determine significance label
-        if (p_val < 0.001) {
-          labels_list <- c(labels_list, '***')
-        } else if (p_val < 0.01) {
-          labels_list <- c(labels_list, '**')
-        } else {
-          labels_list <- c(labels_list, '*')
+        for (i in seq_along(dunn_result$comparisons)) {
+          comp <- dunn_result$comparisons[i]
+          p_val <- dunn_result$P.adjusted[i]
+
+          grps <- strsplit(comp, ' - ')[[1]]
+          cat(grps[1], 'vs', grps[2], ': p =', p_val, '\\n')
+
+          if (p_val < 0.05) {
+            comparisons_list[[length(comparisons_list) + 1]] <- grps
+            if (p_val < 0.001) {
+              labels_list <- c(labels_list, '***')
+            } else if (p_val < 0.01) {
+              labels_list <- c(labels_list, '**')
+            } else {
+              labels_list <- c(labels_list, '*')
+            }
+          }
         }
       }
-
-      # Create vbracket comparisons
-      vb_comparisons <- add_bracket_comparisons(
-        groups1 = sapply(comparisons_list, function(x) x[1]),
-        groups2 = sapply(comparisons_list, function(x) x[2]),
-        labels = labels_list
-      )
-
-      # Add vbracket legend with colors matching plot order
-      p <- p + legend_bracket(
-          labels = group_order,
-          colors = group_colors,
-          comparisons = vb_comparisons,
-          legend_x = ${vbracketX},
-          legend_y = ${vbracketY},
-          text_size = ${vbracketTextSize},
-          sig_size = ${vbracketSigSize},
-          bracket_margin = ${vbracketMargin},
-          output_width = ${settings.expWidth || 6},
-          output_height = ${settings.expHeight || 4}
-        )
-    } else {
-      # No significant comparisons - add legend without brackets
-      p <- p + legend_bracket(
-          labels = group_order,
-          colors = group_colors,
-          legend_x = ${vbracketX},
-          legend_y = ${vbracketY},
-          text_size = ${vbracketTextSize},
-          output_width = ${settings.expWidth || 6},
-          output_height = ${settings.expHeight || 4}
-        )
     }
   } else {
-    # ANOVA not significant - add legend without brackets
+    # Parametric tests (ANOVA)
+    aov_result <- aov(${yColName} ~ ${groupColName}, data = test_data)
+    overall_p <- summary(aov_result)[[1]][['Pr(>F)']][1]
+    cat('ANOVA: p =', overall_p, '\\n')
+
+    if (overall_p < 0.05) {
+      if (posthoc_type == 'dunnett') {
+        # Dunnett test - parametric vs control
+        cat('Running Dunnett test (vs control:', control_group, ')\\n')
+        library(multcomp)
+        test_data$${groupColName} <- relevel(factor(test_data$${groupColName}), ref = control_group)
+        dunnett_result <- glht(aov(${yColName} ~ ${groupColName}, data = test_data), linfct = mcp(${groupColName} = 'Dunnett'))
+        dunnett_summary <- summary(dunnett_result)
+
+        for (i in seq_along(dunnett_summary$test$coefficients)) {
+          comp_name <- names(dunnett_summary$test$coefficients)[i]
+          p_val <- dunnett_summary$test$pvalues[i]
+
+          # Parse comparison name (format: "Treatment - Control")
+          grps <- strsplit(comp_name, ' - ')[[1]]
+          cat(grps[1], 'vs', grps[2], ': p =', p_val, '\\n')
+
+          if (p_val < 0.05) {
+            comparisons_list[[length(comparisons_list) + 1]] <- c(control_group, trimws(grps[1]))
+            if (p_val < 0.001) {
+              labels_list <- c(labels_list, '***')
+            } else if (p_val < 0.01) {
+              labels_list <- c(labels_list, '**')
+            } else {
+              labels_list <- c(labels_list, '*')
+            }
+          }
+        }
+      } else {
+        # Tukey HSD - parametric pairwise (default)
+        cat('Running Tukey HSD test (pairwise comparisons)\\n')
+        tukey_result <- TukeyHSD(aov_result)
+        tukey_df <- as.data.frame(tukey_result[['${groupColName}']])
+        tukey_df[['comparison']] <- rownames(tukey_df)
+
+        for (i in 1:nrow(tukey_df)) {
+          comp <- tukey_df[['comparison']][i]
+          p_val <- tukey_df[['p adj']][i]
+
+          grps <- strsplit(comp, '-')[[1]]
+          cat(grps[1], 'vs', grps[2], ': p =', p_val, '\\n')
+
+          if (p_val < 0.05) {
+            comparisons_list[[length(comparisons_list) + 1]] <- grps
+            if (p_val < 0.001) {
+              labels_list <- c(labels_list, '***')
+            } else if (p_val < 0.01) {
+              labels_list <- c(labels_list, '**')
+            } else {
+              labels_list <- c(labels_list, '*')
+            }
+          }
+        }
+      }
+    }
+  }
+
+  # Add vbracket legend
+  if (length(comparisons_list) > 0) {
+    vb_comparisons <- add_bracket_comparisons(
+      groups1 = sapply(comparisons_list, function(x) x[1]),
+      groups2 = sapply(comparisons_list, function(x) x[2]),
+      labels = labels_list
+    )
+
+    p <- p + legend_bracket(
+        labels = group_order,
+        colors = group_colors,
+        comparisons = vb_comparisons,
+        legend_x = ${vbracketX},
+        legend_y = ${vbracketY},
+        text_size = ${vbracketTextSize},
+        sig_size = ${vbracketSigSize},
+        bracket_margin = ${vbracketMargin},
+        output_width = ${settings.expWidth || 6},
+        output_height = ${settings.expHeight || 4}
+      )
+  } else {
+    # No significant comparisons - add legend without brackets
     p <- p + legend_bracket(
         labels = group_order,
         colors = group_colors,
@@ -4046,6 +4138,7 @@ function collectCurrentSettings() {
     significanceLevel: el("significanceLevel")?.value || "0.05",
     comparisonMode: document.querySelector('input[name="comparisonMode"]:checked')?.value || "significant",
     postHocTest: (el("dataTypeSelect")?.value === "nonparametric" ? el("postHocTestNonparam")?.value : el("postHocTest")?.value) || "tukey",
+    controlGroup: el("dunnettControl")?.value || "",
     dataType: el("dataTypeSelect")?.value || "parametric",
     customComparisons: (typeof getSelectedCustomComparisons === 'function') ? JSON.stringify(getSelectedCustomComparisons()) : "[]",
     customPositions: (typeof getCustomBracketPositions === 'function') ? JSON.stringify(getCustomBracketPositions()) : "{}",
