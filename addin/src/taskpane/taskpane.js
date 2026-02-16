@@ -2129,30 +2129,58 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
       }
     }
 
-    // ALWAYS set factor levels to preserve order (either custom or original data order)
+    // Set factor levels based on data order mode
     if (actualCategories.length > 0) {
-      let categories = [];
+      const dataOrder = settings.dataOrder || 'original';
+      console.log('📊 [Plot] dataOrder mode:', dataOrder);
+      console.log('📊 [Plot] actualCategories from data:', actualCategories);
 
-      // Check if custom order is specified
-      if (settings.customOrderCategory) {
-        if (typeof settings.customOrderCategory === 'string') {
-          categories = settings.customOrderCategory.split(',').map(c => c.trim()).filter(c => c);
-        } else if (Array.isArray(settings.customOrderCategory)) {
-          categories = settings.customOrderCategory;
+      let finalCategories = [];
+
+      if (dataOrder === 'custom') {
+        // Custom order: use customOrderGroup (for single-group charts, X-axis values are stored here)
+        const orderSource = settings.customOrderGroup || settings.customOrderCategory;
+        console.log('📊 [Plot] Custom orderSource:', orderSource);
+
+        let customCategories = [];
+        if (orderSource) {
+          if (typeof orderSource === 'string') {
+            customCategories = orderSource.split(',').map(c => c.trim()).filter(c => c);
+          } else if (Array.isArray(orderSource)) {
+            customCategories = orderSource.map(c => String(c).trim());
+          }
         }
-      }
 
-      // Validate: only use custom order if values match actual categories
-      const isValidCategoryOrder = categories.length > 0 &&
-                                   categories.every(c => actualCategories.includes(c));
+        // Validate custom order
+        const actualLower = actualCategories.map(c => String(c).toLowerCase().trim());
+        const customLower = customCategories.map(c => String(c).toLowerCase().trim());
+        const isValidCustomOrder = customCategories.length > 0 &&
+                                   customLower.every(c => actualLower.includes(c));
 
-      if (isValidCategoryOrder) {
-        const categoryOrder = categories.map(c => `'${c}'`).join(', ');
-        code += `# Set custom category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+        if (isValidCustomOrder) {
+          finalCategories = customCategories;
+          const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+          code += `# Set custom category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+          console.log('✅ [Plot] Using custom category order:', finalCategories);
+        } else {
+          // Fallback to original order if custom validation fails
+          finalCategories = actualCategories;
+          const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+          code += `# Set category order (original - custom validation failed)\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+          console.log('⚠️ [Plot] Custom validation failed, using original order:', finalCategories);
+        }
+      } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+        // Alphabetical order: sort categories
+        finalCategories = [...actualCategories].sort((a, b) => String(a).localeCompare(String(b)));
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set alphabetical category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+        console.log('✅ [Plot] Using alphabetical order:', finalCategories);
       } else {
-        // Use actual categories in their natural order from data
-        const categoryOrder = actualCategories.map(c => `'${c}'`).join(', ');
-        code += `# Set category order from data\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+        // Original order: use order as values appear in data
+        finalCategories = actualCategories;
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set original category order (as in data)\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+        console.log('✅ [Plot] Using original data order:', finalCategories);
       }
     }
 
@@ -2465,57 +2493,89 @@ function generateGroupedBarCode(chartType, settings, groupColors) {
     }
   }
 
-  // Handle category ordering - ALWAYS set factor levels to preserve order
+  // Handle category ordering based on dataOrder mode
   if (actualCategories.length > 0) {
-    let categories = [];
+    let finalCategories = [];
+    const dataOrder = settings.dataOrder || 'original';
 
-    // Check if custom order is specified
-    if (settings.customOrderCategory) {
-      if (typeof settings.customOrderCategory === 'string') {
-        categories = settings.customOrderCategory.split(',').map(c => c.trim()).filter(c => c);
-      } else if (Array.isArray(settings.customOrderCategory)) {
-        categories = settings.customOrderCategory;
+    if (dataOrder === 'custom') {
+      // Check if custom order is specified
+      let categories = [];
+      if (settings.customOrderCategory) {
+        if (typeof settings.customOrderCategory === 'string') {
+          categories = settings.customOrderCategory.split(',').map(c => c.trim()).filter(c => c);
+        } else if (Array.isArray(settings.customOrderCategory)) {
+          categories = settings.customOrderCategory;
+        }
       }
-    }
 
-    // Validate: only use custom order if values match actual categories
-    const isValidCategoryOrder = categories.length > 0 &&
-                                 categories.every(c => actualCategories.includes(c));
+      // Validate: only use custom order if values match actual categories
+      const isValidCategoryOrder = categories.length > 0 &&
+                                   categories.every(c => actualCategories.includes(c));
 
-    if (isValidCategoryOrder) {
-      const categoryOrder = categories.map(c => `'${c}'`).join(', ');
-      code += `# Set custom category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      if (isValidCategoryOrder) {
+        finalCategories = categories;
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set custom category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      } else {
+        // Fall back to original order
+        finalCategories = actualCategories;
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set category order from data\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      }
+    } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+      // Sort categories alphabetically
+      finalCategories = [...actualCategories].sort((a, b) => String(a).localeCompare(String(b)));
+      const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+      code += `# Set alphabetical category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
     } else {
-      // Use actual categories in their natural order from data
-      const categoryOrder = actualCategories.map(c => `'${c}'`).join(', ');
-      code += `# Set category order from data\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      // Original order: use order as values appear in data
+      finalCategories = actualCategories;
+      const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+      code += `# Set category order from data (original order)\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
     }
   }
 
-  // Handle group ordering - ALWAYS set factor levels to preserve order
+  // Handle group ordering based on dataOrder mode
   if (actualGroups.length > 0) {
-    let groups = [];
+    let finalGroups = [];
+    const dataOrder = settings.dataOrder || 'original';
 
-    // Check if custom order is specified
-    if (settings.customOrderGroup) {
-      if (typeof settings.customOrderGroup === 'string') {
-        groups = settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g);
-      } else if (Array.isArray(settings.customOrderGroup)) {
-        groups = settings.customOrderGroup;
+    if (dataOrder === 'custom') {
+      // Check if custom order is specified
+      let groups = [];
+      if (settings.customOrderGroup) {
+        if (typeof settings.customOrderGroup === 'string') {
+          groups = settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g);
+        } else if (Array.isArray(settings.customOrderGroup)) {
+          groups = settings.customOrderGroup;
+        }
       }
-    }
 
-    // Validate: only use custom order if values match actual groups
-    const isValidGroupOrder = groups.length > 0 &&
-                              groups.every(g => actualGroups.includes(g));
+      // Validate: only use custom order if values match actual groups
+      const isValidGroupOrder = groups.length > 0 &&
+                                groups.every(g => actualGroups.includes(g));
 
-    if (isValidGroupOrder) {
-      const groupOrder = groups.map(g => `'${g}'`).join(', ');
-      code += `# Set custom group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      if (isValidGroupOrder) {
+        finalGroups = groups;
+        const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+        code += `# Set custom group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      } else {
+        // Fall back to original order
+        finalGroups = actualGroups;
+        const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+        code += `# Set group order from data\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      }
+    } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+      // Sort groups alphabetically
+      finalGroups = [...actualGroups].sort((a, b) => String(a).localeCompare(String(b)));
+      const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+      code += `# Set alphabetical group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
     } else {
-      // Use actual groups in their natural order from data
-      const groupOrder = actualGroups.map(g => `'${g}'`).join(', ');
-      code += `# Set group order from data\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      // Original order: use order as values appear in data
+      finalGroups = actualGroups;
+      const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+      code += `# Set group order from data (original order)\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
     }
   }
 
@@ -3062,6 +3122,64 @@ function generateSingleGroupStatisticalCode(settings, chartType) {
     }
   }
 
+  // Apply category order based on dataOrder mode (to match plot factor levels)
+  const dataOrder = settings.dataOrder || 'original';
+  console.log('📊 [Stats] dataOrder:', dataOrder);
+  console.log('📊 [Stats] uniqueCategories from data:', uniqueCategories);
+  console.log('📊 [Stats] postHocTest:', settings.postHocTest);
+
+  if (dataOrder === 'custom') {
+    // For single-group charts, the X-axis order may be stored in customOrderGroup
+    const orderSource = settings.customOrderGroup || settings.customOrderCategory;
+    console.log('📊 [Stats] Custom mode - orderSource:', orderSource);
+
+    if (orderSource) {
+      let customCategories = [];
+      if (typeof orderSource === 'string') {
+        customCategories = orderSource.split(',').map(c => c.trim()).filter(c => c);
+      } else if (Array.isArray(orderSource)) {
+        customCategories = orderSource.map(c => String(c).trim());
+      }
+      console.log('📊 [Stats] Parsed customCategories:', customCategories);
+
+      // Use custom order if categories match (case-insensitive, type-coerced comparison)
+      if (customCategories.length > 0) {
+        // Convert all to lowercase strings for comparison
+        const uniqueLower = uniqueCategories.map(c => String(c).toLowerCase().trim());
+        const customLower = customCategories.map(c => String(c).toLowerCase().trim());
+
+        // Check if all custom categories exist in data (regardless of order)
+        const allValid = customLower.every(c => uniqueLower.includes(c));
+        // Also check counts match to ensure no extra categories
+        const countsMatch = customCategories.length === uniqueCategories.length;
+
+        console.log('📊 [Stats] Validation - allValid:', allValid, 'countsMatch:', countsMatch);
+
+        if (allValid && countsMatch) {
+          // Use custom order, preserving original case from customCategories
+          uniqueCategories = customCategories;
+          console.log('✅ [Stats] Applied custom category order:', uniqueCategories);
+        } else if (allValid) {
+          // Custom has valid categories but different count - still use custom order
+          // (might have subset or superset, but valid categories should still apply)
+          uniqueCategories = customCategories;
+          console.log('⚠️ [Stats] Applied custom order (count mismatch):', uniqueCategories);
+        } else {
+          console.log('❌ [Stats] Custom order validation failed.');
+          console.log('   Custom (lowercase):', customLower);
+          console.log('   Data (lowercase):', uniqueLower);
+        }
+      }
+    }
+  } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+    // Sort categories alphabetically
+    uniqueCategories = [...uniqueCategories].sort((a, b) => String(a).localeCompare(String(b)));
+    console.log('📊 [Stats] Applied alphabetical order:', uniqueCategories);
+  } else {
+    // Original order: use order as values appear in data (already done)
+    console.log('📊 [Stats] Using original data order:', uniqueCategories);
+  }
+
   if (uniqueCategories.length < 2) {
     return `\n# ============ Statistical Comparisons ============
 # Need at least 2 categories for statistical comparisons
@@ -3076,8 +3194,511 @@ function generateSingleGroupStatisticalCode(settings, chartType) {
   const xColName = `col${settings.xColIndex}`;
   const yColName = `col${settings.yColIndex}`;
 
+  // Check test settings
+  const isManualMode = settings.statisticalTestMode === 'manual';
+  const isNonParametric = settings.dataType === 'nonparametric' ||
+                          settings.statisticalTest === 'nonparametric' ||
+                          settings.statisticalTest === 'kruskal';
+  const isManualParametric = isManualMode && !isNonParametric;
+  const postHocTest = settings.postHocTest || 'tukey';
+  const isVsControl = postHocTest === 'dunnett' || postHocTest === 'steel';
+  const controlGroup = settings.controlGroup || uniqueCategories[0];
+
+  // Define pairs for ggpubr bracket generation (populated in each branch)
+  let pairs = [];
+
   let code = `\n# ============ Statistical Comparisons ============
 # This replicates the add-in's internal statistical analysis
+# Data type: ${isNonParametric ? 'Non-parametric' : 'Parametric'}
+# Post-hoc test: ${postHocTest}
+${isVsControl ? `# Control group: ${controlGroup}` : '# Pairwise comparisons'}
+
+`;
+
+  // For 3+ groups with Steel/Dunnett, use vs-control approach
+  if (uniqueCategories.length >= 3 && isVsControl) {
+    // Generate pairs for vs-control comparisons
+    uniqueCategories.filter(c => c !== controlGroup).forEach(trt => {
+      pairs.push([controlGroup, trt]);
+    });
+
+    // Generate factor level order string for R
+    const categoryOrder = uniqueCategories.map(c => `'${c}'`).join(', ');
+
+    if (isNonParametric || postHocTest === 'steel') {
+      // Steel test (non-parametric vs control)
+      code += `# Install and load kSamples for Steel test
+if (!requireNamespace('kSamples', quietly = TRUE)) {
+  install.packages('kSamples')
+}
+library(kSamples)
+
+# Steel test (non-parametric vs control)
+# Control group: ${controlGroup}
+
+# Set category order to match plot
+dat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))
+
+# Test normality for each group (Shapiro-Wilk)
+cat('Normality tests (Shapiro-Wilk):\\n')
+all_normal <- TRUE
+for (grp in unique(dat$${xColName})) {
+  grp_data <- dat[dat$${xColName} == grp, '${yColName}']
+  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
+    sw_result <- shapiro.test(grp_data)
+    is_non_normal <- sw_result$p.value < 0.05
+    if (is_non_normal) all_normal <- FALSE
+    cat('  ', grp, ': p =', format(sw_result$p.value, digits = 4),
+        if(is_non_normal) '(non-normal)' else '(normal)', '\\n')
+  } else {
+    cat('  ', grp, ': n =', length(grp_data), '(skipped - need 3-5000 samples)\\n')
+  }
+}
+if (all_normal) {
+  cat('\\nℹ️ NOTE: All groups appear normally distributed. Non-parametric test (Steel) was selected manually.\\n')
+  cat('   Parametric test (Dunnett) may have more statistical power for normal data.\\n')
+}
+cat('\\n')
+
+# Kruskal-Wallis overall test (non-parametric alternative to ANOVA) - proceeding as user selected
+kw_result <- kruskal.test(${yColName} ~ ${xColName}, data = dat)
+cat('Kruskal-Wallis test: p =', kw_result$p.value, '\\n\\n')
+
+# Initialize results storage
+stat_results <- data.frame(
+  category1 = character(),
+  category2 = character(),
+  p_value = numeric(),
+  significance = character(),
+  stringsAsFactors = FALSE
+)
+
+# Get control group data
+control_data <- dat[dat$${xColName} == '${controlGroup}', '${yColName}']
+
+# Compare each treatment to control using Steel test
+treatment_groups <- c(${uniqueCategories.filter(c => c !== controlGroup).map(c => `'${c}'`).join(', ')})
+
+for (trt in treatment_groups) {
+  trt_data <- dat[dat$${xColName} == trt, '${yColName}']
+
+  # Steel test compares two samples - p-value is in st[2]
+  steel_result <- Steel.test(list(control_data, trt_data))
+  p_val <- steel_result$st[2]
+
+  # Determine significance
+  sig <- if (p_val < 0.001) '***' else if (p_val < 0.01) '**' else if (p_val < 0.05) '*' else 'ns'
+
+  stat_results <- rbind(stat_results, data.frame(
+    category1 = '${controlGroup}',
+    category2 = trt,
+    p_value = p_val,
+    significance = sig
+  ))
+
+  cat('${controlGroup} vs', trt, ': Steel test p =', p_val, '(', sig, ')\\n')
+}
+
+# Display results
+print(stat_results)
+
+# Add significance brackets to plot using ggpubr
+`;
+    } else {
+      // Dunnett test (parametric vs control)
+      code += `# Install and load multcomp for Dunnett test
+if (!requireNamespace('multcomp', quietly = TRUE)) {
+  install.packages('multcomp')
+}
+library(multcomp)
+
+# Dunnett test (parametric vs control)
+# Control group: ${controlGroup}
+
+# Set category order to match plot
+dat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))
+
+# Test normality for each group (Shapiro-Wilk)
+cat('Normality tests (Shapiro-Wilk):\\n')
+any_non_normal <- FALSE
+for (grp in unique(dat$${xColName})) {
+  grp_data <- dat[dat$${xColName} == grp, '${yColName}']
+  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
+    sw_result <- shapiro.test(grp_data)
+    is_non_normal <- sw_result$p.value < 0.05
+    if (is_non_normal) any_non_normal <- TRUE
+    cat('  ', grp, ': p =', format(sw_result$p.value, digits = 4),
+        if(is_non_normal) '(non-normal)' else '(normal)', '\\n')
+  } else {
+    cat('  ', grp, ': n =', length(grp_data), '(skipped - need 3-5000 samples)\\n')
+  }
+}
+if (any_non_normal) {
+  cat('\\n⚠️ WARNING: Some groups appear non-normal. Parametric test (Dunnett) was selected manually.\\n')
+  cat('   Consider using non-parametric test (Steel) for more robust results.\\n')
+}
+cat('\\n')
+
+# ANOVA overall test (parametric) - proceeding as user selected
+aov_result <- aov(${yColName} ~ ${xColName}, data = dat)
+anova_p <- summary(aov_result)[[1]][['Pr(>F)']][1]
+cat('ANOVA: p =', anova_p, '\\n\\n')
+
+# Initialize results storage
+stat_results <- data.frame(
+  category1 = character(),
+  category2 = character(),
+  p_value = numeric(),
+  significance = character(),
+  stringsAsFactors = FALSE
+)
+
+# Set control group as reference level
+dat$${xColName} <- relevel(factor(dat$${xColName}), ref = '${controlGroup}')
+
+# Run Dunnett test
+dunnett_result <- glht(aov(${yColName} ~ ${xColName}, data = dat), linfct = mcp(${xColName} = 'Dunnett'))
+dunnett_summary <- summary(dunnett_result)
+
+# Extract results
+for (i in seq_along(dunnett_summary$test$coefficients)) {
+  comp_name <- names(dunnett_summary$test$coefficients)[i]
+  p_val <- dunnett_summary$test$pvalues[i]
+
+  # Parse comparison name (format: "Treatment - Control")
+  grps <- strsplit(comp_name, ' - ')[[1]]
+  trt <- trimws(grps[1])
+
+  # Determine significance
+  sig <- if (p_val < 0.001) '***' else if (p_val < 0.01) '**' else if (p_val < 0.05) '*' else 'ns'
+
+  stat_results <- rbind(stat_results, data.frame(
+    category1 = '${controlGroup}',
+    category2 = trt,
+    p_value = p_val,
+    significance = sig
+  ))
+
+  cat('${controlGroup} vs', trt, ': Dunnett test p =', p_val, '(', sig, ')\\n')
+}
+
+# Display results
+print(stat_results)
+
+# Add significance brackets to plot using ggpubr
+`;
+    }
+  } else if (uniqueCategories.length >= 3 && (postHocTest === 'bonferroni' || postHocTest === 'holm')) {
+    // Bonferroni or Holm correction for 3+ groups (parametric pairwise with multiple testing correction)
+    // Generate pairs for all pairwise comparisons
+    for (let i = 0; i < uniqueCategories.length; i++) {
+      for (let j = i + 1; j < uniqueCategories.length; j++) {
+        pairs.push([uniqueCategories[i], uniqueCategories[j]]);
+      }
+    }
+
+    const pAdjustMethod = postHocTest; // 'bonferroni' or 'holm'
+
+    // Generate factor level order string for R
+    const categoryOrder = uniqueCategories.map(c => `'${c}'`).join(', ');
+
+    code += `# Parametric pairwise comparisons with ${postHocTest.charAt(0).toUpperCase() + postHocTest.slice(1)} correction
+# For multiple testing correction across all pairwise comparisons
+
+# Set category order to match plot
+dat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))
+
+# Test normality for each group (Shapiro-Wilk)
+cat('Normality tests (Shapiro-Wilk):\\n')
+any_non_normal <- FALSE
+for (grp in unique(dat$${xColName})) {
+  grp_data <- dat[dat$${xColName} == grp, '${yColName}']
+  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
+    sw_result <- shapiro.test(grp_data)
+    is_non_normal <- sw_result$p.value < 0.05
+    if (is_non_normal) any_non_normal <- TRUE
+    cat('  ', grp, ': p =', format(sw_result$p.value, digits = 4),
+        if(is_non_normal) '(non-normal)' else '(normal)', '\\n')
+  } else {
+    cat('  ', grp, ': n =', length(grp_data), '(skipped - need 3-5000 samples)\\n')
+  }
+}
+if (any_non_normal) {
+  cat('\\n\u26a0\ufe0f WARNING: Some groups appear non-normal. Parametric test with ${postHocTest.charAt(0).toUpperCase() + postHocTest.slice(1)} correction was selected.\\n')
+  cat('   Consider using non-parametric test (Dunn) for more robust results.\\n')
+}
+cat('\\n')
+
+# ANOVA overall test (parametric)
+aov_result <- aov(${yColName} ~ ${xColName}, data = dat)
+anova_p <- summary(aov_result)[[1]][['Pr(>F)']][1]
+cat('ANOVA: p =', format(anova_p, digits = 4), '\\n\\n')
+
+# Pairwise t-tests with ${postHocTest.charAt(0).toUpperCase() + postHocTest.slice(1)} correction
+cat('Pairwise comparisons (${postHocTest.charAt(0).toUpperCase() + postHocTest.slice(1)} correction):\\n')
+pairwise_result <- pairwise.t.test(dat$${yColName}, dat$${xColName},
+                                    p.adjust.method = '${pAdjustMethod}')
+
+# Initialize results storage
+stat_results <- data.frame(
+  category1 = character(),
+  category2 = character(),
+  p_value = numeric(),
+  significance = character(),
+  stringsAsFactors = FALSE
+)
+
+# Extract p-values from the matrix
+p_matrix <- pairwise_result$p.value
+for (i in 1:nrow(p_matrix)) {
+  for (j in 1:ncol(p_matrix)) {
+    if (!is.na(p_matrix[i, j])) {
+      grp1 <- colnames(p_matrix)[j]
+      grp2 <- rownames(p_matrix)[i]
+      p_val <- p_matrix[i, j]
+
+      # Determine significance
+      sig <- if (p_val < 0.001) '***' else if (p_val < 0.01) '**' else if (p_val < 0.05) '*' else 'ns'
+
+      stat_results <- rbind(stat_results, data.frame(
+        category1 = grp1,
+        category2 = grp2,
+        p_value = p_val,
+        significance = sig,
+        stringsAsFactors = FALSE
+      ))
+
+      cat('  ', grp1, 'vs', grp2, ': p =', format(p_val, digits = 4), '(', sig, ')\\n')
+    }
+  }
+}
+
+cat('\\n')
+print(stat_results)
+
+# Add significance brackets to plot using ggpubr
+`;
+  } else if (uniqueCategories.length >= 3 && postHocTest === 'tukey') {
+    // Tukey HSD for 3+ groups (ANOVA + TukeyHSD)
+    // Generate pairs for all pairwise comparisons
+    for (let i = 0; i < uniqueCategories.length; i++) {
+      for (let j = i + 1; j < uniqueCategories.length; j++) {
+        pairs.push([uniqueCategories[i], uniqueCategories[j]]);
+      }
+    }
+
+    // Generate factor level order string for R
+    const categoryOrder = uniqueCategories.map(c => `'${c}'`).join(', ');
+
+    code += `# ANOVA with Tukey HSD post-hoc test
+# For 3+ group comparisons
+
+# Set category order to match plot
+dat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))
+
+# Test normality for each group (Shapiro-Wilk)
+cat('Normality tests (Shapiro-Wilk):\\n')
+any_non_normal <- FALSE
+for (grp in unique(dat$${xColName})) {
+  grp_data <- dat[dat$${xColName} == grp, '${yColName}']
+  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
+    sw_result <- shapiro.test(grp_data)
+    is_non_normal <- sw_result$p.value < 0.05
+    if (is_non_normal) any_non_normal <- TRUE
+    cat('  ', grp, ': p =', format(sw_result$p.value, digits = 4),
+        if(is_non_normal) '(non-normal)' else '(normal)', '\\n')
+  } else {
+    cat('  ', grp, ': n =', length(grp_data), '(skipped - need 3-5000 samples)\\n')
+  }
+}
+if (any_non_normal) {
+  cat('\\n⚠️ WARNING: Some groups appear non-normal. Parametric test (ANOVA/Tukey) was selected.\\n')
+  cat('   Consider using non-parametric test (Kruskal-Wallis/Dunn) for more robust results.\\n')
+}
+cat('\\n')
+
+# ANOVA overall test
+aov_result <- aov(${yColName} ~ ${xColName}, data = dat)
+anova_p <- summary(aov_result)[[1]][['Pr(>F)']][1]
+cat('ANOVA: p =', format(anova_p, digits = 4), '\\n')
+
+if (anova_p >= 0.05) {
+  cat('ANOVA not significant (p >= 0.05). No post-hoc comparisons needed.\\n\\n')
+}
+
+# Tukey HSD post-hoc test
+cat('\\nTukey HSD post-hoc comparisons:\\n')
+tukey_result <- TukeyHSD(aov_result)
+
+# Initialize results storage
+stat_results <- data.frame(
+  category1 = character(),
+  category2 = character(),
+  p_value = numeric(),
+  significance = character(),
+  stringsAsFactors = FALSE
+)
+
+# Extract results from Tukey HSD
+tukey_df <- as.data.frame(tukey_result[['${xColName}']])
+tukey_df[['comparison']] <- rownames(tukey_df)
+
+for (i in 1:nrow(tukey_df)) {
+  comp <- tukey_df[['comparison']][i]
+  p_val <- tukey_df[['p adj']][i]
+
+  # Parse comparison name (format: "Group2-Group1")
+  grps <- strsplit(comp, '-')[[1]]
+  grp1 <- trimws(grps[2])  # Second group (after -)
+  grp2 <- trimws(grps[1])  # First group (before -)
+
+  # Determine significance
+  sig <- if (p_val < 0.001) '***' else if (p_val < 0.01) '**' else if (p_val < 0.05) '*' else 'ns'
+
+  stat_results <- rbind(stat_results, data.frame(
+    category1 = grp1,
+    category2 = grp2,
+    p_value = p_val,
+    significance = sig,
+    stringsAsFactors = FALSE
+  ))
+
+  cat('  ', grp1, 'vs', grp2, ': p =', format(p_val, digits = 4), '(', sig, ')\\n')
+}
+
+cat('\\n')
+print(stat_results)
+
+# Add significance brackets to plot using ggpubr
+`;
+  } else if (uniqueCategories.length >= 3 && postHocTest === 'dunn') {
+    // Dunn test for 3+ groups (Kruskal-Wallis + Dunn)
+    // Generate pairs for all pairwise comparisons
+    for (let i = 0; i < uniqueCategories.length; i++) {
+      for (let j = i + 1; j < uniqueCategories.length; j++) {
+        pairs.push([uniqueCategories[i], uniqueCategories[j]]);
+      }
+    }
+
+    // Generate factor level order string for R
+    const categoryOrder = uniqueCategories.map(c => `'${c}'`).join(', ');
+
+    code += `# Install and load dunn.test for Dunn test
+if (!requireNamespace('dunn.test', quietly = TRUE)) {
+  install.packages('dunn.test')
+}
+library(dunn.test)
+
+# Kruskal-Wallis with Dunn post-hoc test (non-parametric)
+# For 3+ group comparisons
+
+# Set category order to match plot
+dat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))
+
+# Test normality for each group (Shapiro-Wilk)
+cat('Normality tests (Shapiro-Wilk):\\n')
+all_normal <- TRUE
+for (grp in unique(dat$${xColName})) {
+  grp_data <- dat[dat$${xColName} == grp, '${yColName}']
+  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
+    sw_result <- shapiro.test(grp_data)
+    is_non_normal <- sw_result$p.value < 0.05
+    if (is_non_normal) all_normal <- FALSE
+    cat('  ', grp, ': p =', format(sw_result$p.value, digits = 4),
+        if(is_non_normal) '(non-normal)' else '(normal)', '\\n')
+  } else {
+    cat('  ', grp, ': n =', length(grp_data), '(skipped - need 3-5000 samples)\\n')
+  }
+}
+if (all_normal) {
+  cat('\\nℹ️ NOTE: All groups appear normally distributed. Non-parametric test (Dunn) was selected.\\n')
+  cat('   Parametric test (ANOVA/Tukey) may have more statistical power for normal data.\\n')
+}
+cat('\\n')
+
+# Kruskal-Wallis overall test
+kw_result <- kruskal.test(${yColName} ~ ${xColName}, data = dat)
+cat('Kruskal-Wallis: p =', format(kw_result$p.value, digits = 4), '\\n')
+
+if (kw_result$p.value >= 0.05) {
+  cat('Kruskal-Wallis not significant (p >= 0.05). No post-hoc comparisons needed.\\n\\n')
+}
+
+# Dunn post-hoc test
+cat('\\nDunn post-hoc comparisons:\\n')
+dunn_result <- dunn.test(dat$${yColName}, dat$${xColName}, method = 'bonferroni', kw = FALSE)
+
+# Initialize results storage
+stat_results <- data.frame(
+  category1 = character(),
+  category2 = character(),
+  p_value = numeric(),
+  significance = character(),
+  stringsAsFactors = FALSE
+)
+
+# Extract results from Dunn test
+for (i in seq_along(dunn_result$comparisons)) {
+  comp <- dunn_result$comparisons[i]
+  p_val <- dunn_result$P.adjusted[i]
+
+  # Parse comparison name (format: "Group1 - Group2")
+  grps <- strsplit(comp, ' - ')[[1]]
+  grp1 <- trimws(grps[1])
+  grp2 <- trimws(grps[2])
+
+  # Determine significance
+  sig <- if (p_val < 0.001) '***' else if (p_val < 0.01) '**' else if (p_val < 0.05) '*' else 'ns'
+
+  stat_results <- rbind(stat_results, data.frame(
+    category1 = grp1,
+    category2 = grp2,
+    p_value = p_val,
+    significance = sig,
+    stringsAsFactors = FALSE
+  ))
+
+  cat('  ', grp1, 'vs', grp2, ': p =', format(p_val, digits = 4), '(', sig, ')\\n')
+}
+
+cat('\\n')
+print(stat_results)
+
+# Add significance brackets to plot using ggpubr
+`;
+  } else {
+    // Original pairwise approach (for 2 groups only)
+    // Generate factor level order string for R
+    const categoryOrder = uniqueCategories.map(c => `'${c}'`).join(', ');
+
+    // Add normality testing with warnings for manual mode
+    if (isNonParametric) {
+      code += `# Non-parametric pairwise comparisons (Wilcoxon test)
+# Selected manually by user
+
+# Set category order to match plot
+dat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))
+
+# Test normality for each group (Shapiro-Wilk)
+cat('Normality tests (Shapiro-Wilk):\\n')
+all_normal <- TRUE
+for (grp in unique(dat$${xColName})) {
+  grp_data <- dat[dat$${xColName} == grp, '${yColName}']
+  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
+    sw_result <- shapiro.test(grp_data)
+    is_non_normal <- sw_result$p.value < 0.05
+    if (is_non_normal) all_normal <- FALSE
+    cat('  ', grp, ': p =', format(sw_result$p.value, digits = 4),
+        if(is_non_normal) '(non-normal)' else '(normal)', '\\n')
+  } else {
+    cat('  ', grp, ': n =', length(grp_data), '(skipped - need 3-5000 samples)\\n')
+  }
+}
+if (all_normal) {
+  cat('\\nℹ️ NOTE: All groups appear normally distributed. Non-parametric test (Wilcoxon) was selected manually.\\n')
+  cat('   Parametric test (t-test) may have more statistical power for normal data.\\n')
+}
+cat('\\n')
 
 # Initialize results storage
 stat_results <- data.frame(
@@ -3089,64 +3710,167 @@ stat_results <- data.frame(
 )
 
 `;
+    } else {
+      // Parametric or auto mode
+      code += `# Parametric pairwise comparisons (t-test)
+# Selected manually by user
 
-  // Generate pairwise comparisons based on comparison mode
-  let pairs = [];
+# Set category order to match plot
+dat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))
 
-  if (settings.comparisonMode === 'custom' && settings.customComparisons) {
-    // Parse custom comparisons
-    let customComps = [];
-    if (typeof settings.customComparisons === 'string') {
-      try {
-        customComps = JSON.parse(settings.customComparisons);
-      } catch (e) {
-        console.warn('Failed to parse customComparisons:', e);
-      }
-    } else if (Array.isArray(settings.customComparisons)) {
-      customComps = settings.customComparisons;
+# Test normality for each group (Shapiro-Wilk)
+cat('Normality tests (Shapiro-Wilk):\\n')
+any_non_normal <- FALSE
+for (grp in unique(dat$${xColName})) {
+  grp_data <- dat[dat$${xColName} == grp, '${yColName}']
+  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
+    sw_result <- shapiro.test(grp_data)
+    is_non_normal <- sw_result$p.value < 0.05
+    if (is_non_normal) any_non_normal <- TRUE
+    cat('  ', grp, ': p =', format(sw_result$p.value, digits = 4),
+        if(is_non_normal) '(non-normal)' else '(normal)', '\\n')
+  } else {
+    cat('  ', grp, ': n =', length(grp_data), '(skipped - need 3-5000 samples)\\n')
+  }
+}
+if (any_non_normal) {
+  cat('\\n⚠️ WARNING: Some groups appear non-normal. Parametric test (t-test) was selected manually.\\n')
+  cat('   Consider using non-parametric test (Wilcoxon) for more robust results.\\n')
+}
+cat('\\n')
+
+# Initialize results storage
+stat_results <- data.frame(
+  category1 = character(),
+  category2 = character(),
+  p_value = numeric(),
+  significance = character(),
+  stringsAsFactors = FALSE
+)
+
+`;
     }
 
-    // For single-group charts, custom comparisons are just category pairs (not Group@Category format)
-    // Extract unique pairs
-    customComps.forEach(comp => {
-      // Handle both "Cat1-Cat2" and "Cat1-Cat2@X" formats
-      const pairPart = comp.split('@')[0];
-      const [cat1, cat2] = pairPart.split('-').map(c => c.trim());
-      if (cat1 && cat2 && uniqueCategories.includes(cat1) && uniqueCategories.includes(cat2)) {
-        // Avoid duplicates
-        const alreadyExists = pairs.some(([p1, p2]) =>
-          (p1 === cat1 && p2 === cat2) || (p1 === cat2 && p2 === cat1)
-        );
-        if (!alreadyExists) {
-          pairs.push([cat1, cat2]);
+    // Generate pairwise comparisons based on comparison mode
+    let pairs = [];
+
+    if (settings.comparisonMode === 'custom' && settings.customComparisons) {
+      // Parse custom comparisons
+      let customComps = [];
+      if (typeof settings.customComparisons === 'string') {
+        try {
+          customComps = JSON.parse(settings.customComparisons);
+        } catch (e) {
+          console.warn('Failed to parse customComparisons:', e);
+        }
+      } else if (Array.isArray(settings.customComparisons)) {
+        customComps = settings.customComparisons;
+      }
+
+      // For single-group charts, custom comparisons are just category pairs (not Group@Category format)
+      // Extract unique pairs
+      customComps.forEach(comp => {
+        // Handle both "Cat1-Cat2" and "Cat1-Cat2@X" formats
+        const pairPart = comp.split('@')[0];
+        const [cat1, cat2] = pairPart.split('-').map(c => c.trim());
+        if (cat1 && cat2 && uniqueCategories.includes(cat1) && uniqueCategories.includes(cat2)) {
+          // Avoid duplicates
+          const alreadyExists = pairs.some(([p1, p2]) =>
+            (p1 === cat1 && p2 === cat2) || (p1 === cat2 && p2 === cat1)
+          );
+          if (!alreadyExists) {
+            pairs.push([cat1, cat2]);
+          }
+        }
+      });
+
+      // If no valid custom comparisons found, fall back to all pairs
+      if (pairs.length === 0) {
+        for (let i = 0; i < uniqueCategories.length; i++) {
+          for (let j = i + 1; j < uniqueCategories.length; j++) {
+            pairs.push([uniqueCategories[i], uniqueCategories[j]]);
+          }
         }
       }
-    });
-
-    // If no valid custom comparisons found, fall back to all pairs
-    if (pairs.length === 0) {
+    } else {
+      // For 'all' or 'significant' mode, generate all pairwise comparisons
       for (let i = 0; i < uniqueCategories.length; i++) {
         for (let j = i + 1; j < uniqueCategories.length; j++) {
           pairs.push([uniqueCategories[i], uniqueCategories[j]]);
         }
       }
     }
-  } else {
-    // For 'all' or 'significant' mode, generate all pairwise comparisons
-    for (let i = 0; i < uniqueCategories.length; i++) {
-      for (let j = i + 1; j < uniqueCategories.length; j++) {
-        pairs.push([uniqueCategories[i], uniqueCategories[j]]);
-      }
-    }
-  }
 
-  // Generate test code for each pair
-  pairs.forEach(([cat1, cat2]) => {
-    const safeName1 = cat1.replace(/[^a-zA-Z0-9]/g, '_');
-    const safeName2 = cat2.replace(/[^a-zA-Z0-9]/g, '_');
-    const pairName = `${safeName1}_vs_${safeName2}`;
+    // Generate test code for each pair
+    pairs.forEach(([cat1, cat2]) => {
+      const safeName1 = cat1.replace(/[^a-zA-Z0-9]/g, '_');
+      const safeName2 = cat2.replace(/[^a-zA-Z0-9]/g, '_');
+      const pairName = `${safeName1}_vs_${safeName2}`;
 
-    code += `# Test: ${cat1} vs ${cat2}
+      if (isNonParametric) {
+        // Non-parametric: always use Wilcoxon
+        code += `# Test: ${cat1} vs ${cat2} (Non-parametric: Wilcoxon)
+cat1_data <- dat[dat$${xColName} == '${cat1}', '${yColName}']
+cat2_data <- dat[dat$${xColName} == '${cat2}', '${yColName}']
+
+test_result_${pairName} <- wilcox.test(cat1_data, cat2_data)
+test_name_${pairName} <- 'Wilcoxon test'
+p_val_${pairName} <- test_result_${pairName}$p.value
+
+# Determine significance symbol
+sig_${pairName} <- if (p_val_${pairName} < 0.001) '***' else if (p_val_${pairName} < 0.01) '**' else if (p_val_${pairName} < 0.05) '*' else 'ns'
+
+# Store result
+stat_results <- rbind(stat_results, data.frame(
+  category1 = '${cat1}',
+  category2 = '${cat2}',
+  p_value = p_val_${pairName},
+  significance = sig_${pairName}
+))
+
+cat('${cat1} vs ${cat2}:', test_name_${pairName}, 'p =', p_val_${pairName}, '(', sig_${pairName}, ')\\n')
+
+`;
+      } else if (isManualParametric) {
+        // Manual parametric mode: force t-test regardless of normality
+        code += `# Test: ${cat1} vs ${cat2} (Parametric: t-test - manually selected)
+cat1_data <- dat[dat$${xColName} == '${cat1}', '${yColName}']
+cat2_data <- dat[dat$${xColName} == '${cat2}', '${yColName}']
+
+# Test for equal variances (Levene test)
+combined_data <- data.frame(
+  values = c(cat1_data, cat2_data),
+  group = factor(c(rep('${cat1}', length(cat1_data)), rep('${cat2}', length(cat2_data))))
+)
+group_means <- tapply(combined_data$values, combined_data$group, mean)
+abs_deviations <- abs(combined_data$values - group_means[combined_data$group])
+levene_result <- anova(lm(abs_deviations ~ combined_data$group))
+levene_p_${pairName} <- levene_result[['Pr(>F)']][1]
+equal_var_${pairName} <- levene_p_${pairName} >= 0.05
+cat('  Variance test (Levene) for ${cat1} vs ${cat2}: p =', levene_p_${pairName}, if(equal_var_${pairName}) '(equal variances)' else '(unequal variances)', '\\n')
+
+# Use t-test (parametric - manually selected)
+test_result_${pairName} <- t.test(cat1_data, cat2_data, var.equal = equal_var_${pairName})
+test_name_${pairName} <- if (equal_var_${pairName}) 'Student\\'s t-test' else 'Welch\\'s t-test'
+p_val_${pairName} <- test_result_${pairName}$p.value
+
+# Determine significance symbol
+sig_${pairName} <- if (p_val_${pairName} < 0.001) '***' else if (p_val_${pairName} < 0.01) '**' else if (p_val_${pairName} < 0.05) '*' else 'ns'
+
+# Store result
+stat_results <- rbind(stat_results, data.frame(
+  category1 = '${cat1}',
+  category2 = '${cat2}',
+  p_value = p_val_${pairName},
+  significance = sig_${pairName}
+))
+
+cat('${cat1} vs ${cat2}:', test_name_${pairName}, 'p =', p_val_${pairName}, '(', sig_${pairName}, ')\\n')
+
+`;
+      } else {
+        // Auto-detect mode: test normality per pair and choose appropriate test
+        code += `# Test: ${cat1} vs ${cat2} (Auto-detect mode)
 cat1_data <- dat[dat$${xColName} == '${cat1}', '${yColName}']
 cat2_data <- dat[dat$${xColName} == '${cat2}', '${yColName}']
 
@@ -3175,7 +3899,7 @@ if (both_normal_${pairName}) {
   equal_var_${pairName} <- TRUE  # Default for non-parametric tests
 }
 
-# Perform appropriate test
+# Perform appropriate test based on normality
 if (both_normal_${pairName}) {
   # Use t-test with appropriate var.equal parameter
   test_result_${pairName} <- t.test(cat1_data, cat2_data, var.equal = equal_var_${pairName})
@@ -3202,13 +3926,15 @@ stat_results <- rbind(stat_results, data.frame(
 cat('${cat1} vs ${cat2}:', test_name_${pairName}, 'p =', p_val_${pairName}, '(', sig_${pairName}, ')\\n')
 
 `;
-  });
+      }
+    });
 
-  code += `# Display results
+    code += `# Display results
 print(stat_results)
 
 # Add significance brackets to plot using ggpubr
 `;
+  }
 
   // Generate ggpubr comparison data frame
   const yColIndex = settings.yColIndex - 1;
@@ -3239,7 +3965,53 @@ print(stat_results)
   // Check if we have bracket data from add-in
   const hasAddInBrackets = window.lastBracketData && window.lastBracketData.length > 0;
 
-  code += `# Prepare comparison data for ggpubr
+  // Determine if we use stat_results (vs-control or Bonferroni/Holm)
+  const useStatResults = (uniqueCategories.length >= 3 && isVsControl) ||
+                         (uniqueCategories.length >= 3 && (postHocTest === 'bonferroni' || postHocTest === 'holm' || postHocTest === 'tukey' || postHocTest === 'dunn'));
+
+  // For tests that use stat_results (Steel/Dunnett, Bonferroni/Holm, Tukey, Dunn), build comparison_df from stat_results
+  if (useStatResults) {
+    // Calculate Y positions for each comparison
+    const yPositions = pairs.map(([cat1, cat2], pairIdx) => {
+      let yBracketPos;
+      if (hasAddInBrackets && pairIdx < window.lastBracketData.length) {
+        yBracketPos = window.lastBracketData[pairIdx]["y.position"];
+        yBracketPos = typeof yBracketPos === 'number' ? yBracketPos.toFixed(2) : yBracketPos;
+      } else {
+        const compKey1 = `${cat1}-${cat2}`;
+        const compKey2 = `${cat2}-${cat1}`;
+        const customYPos = customPositions[compKey1] || customPositions[compKey2];
+        if (customYPos !== undefined && customYPos !== null) {
+          yBracketPos = Number(customYPos).toFixed(2);
+        } else {
+          const bracketLevel = pairIdx + 1;
+          yBracketPos = (yMax + yRange * (0.05 + bracketLevel * 0.1)).toFixed(2);
+        }
+      }
+      return yBracketPos;
+    });
+
+    const showAll = settings.comparisonMode === 'all' || settings.comparisonMode === 'custom';
+
+    code += `# Build comparison_df from stat_results for ggpubr
+# Y positions for brackets
+y_positions <- c(${yPositions.join(', ')})
+
+comparison_df <- data.frame(
+  group1 = stat_results$category1,
+  group2 = stat_results$category2,
+  p.signif = stat_results$significance,
+  y.position = y_positions[1:nrow(stat_results)],
+  stringsAsFactors = FALSE
+)
+
+${showAll ? '' : `# Filter to only significant comparisons
+comparison_df <- comparison_df[comparison_df$p.signif != 'ns', ]
+`}
+`;
+  } else {
+    // Original pairwise approach with individual variables
+    code += `# Prepare comparison data for ggpubr
 ${hasAddInBrackets ? '# Note: Y positions below are the exact values from the add-in preview\n' : ''}comparison_df <- data.frame(
   group1 = character(),
   group2 = character(),
@@ -3250,48 +4022,48 @@ ${hasAddInBrackets ? '# Note: Y positions below are the exact values from the ad
 
 `;
 
-  pairs.forEach(([cat1, cat2], pairIdx) => {
-    const safeName1 = cat1.replace(/[^a-zA-Z0-9]/g, '_');
-    const safeName2 = cat2.replace(/[^a-zA-Z0-9]/g, '_');
-    const pairName = `${safeName1}_vs_${safeName2}`;
+    pairs.forEach(([cat1, cat2], pairIdx) => {
+      const safeName1 = cat1.replace(/[^a-zA-Z0-9]/g, '_');
+      const safeName2 = cat2.replace(/[^a-zA-Z0-9]/g, '_');
+      const pairName = `${safeName1}_vs_${safeName2}`;
 
-    // Calculate Y position: prioritize add-in data, then custom, then automatic
-    let yBracketPos;
+      // Calculate Y position: prioritize add-in data, then custom, then automatic
+      let yBracketPos;
 
-    // First priority: Use exact position from add-in if available
-    if (hasAddInBrackets && pairIdx < window.lastBracketData.length) {
-      yBracketPos = window.lastBracketData[pairIdx]["y.position"];
-      console.log(`📍 Using exact bracket position from add-in for ${cat1} vs ${cat2}: y=${yBracketPos}`);
-      yBracketPos = typeof yBracketPos === 'number' ? yBracketPos.toFixed(2) : yBracketPos;
-    } else {
-      // Second priority: Check for custom Y position
-      const compKey1 = `${cat1}-${cat2}`;
-      const compKey2 = `${cat2}-${cat1}`;
-      const customYPos = customPositions[compKey1] || customPositions[compKey2];
-
-      if (customYPos !== undefined && customYPos !== null) {
-        yBracketPos = Number(customYPos).toFixed(2);
+      // First priority: Use exact position from add-in if available
+      if (hasAddInBrackets && pairIdx < window.lastBracketData.length) {
+        yBracketPos = window.lastBracketData[pairIdx]["y.position"];
+        console.log(`📍 Using exact bracket position from add-in for ${cat1} vs ${cat2}: y=${yBracketPos}`);
+        yBracketPos = typeof yBracketPos === 'number' ? yBracketPos.toFixed(2) : yBracketPos;
       } else {
-        // Last resort: Calculate automatically (stack multiple brackets)
-        const bracketLevel = pairIdx + 1;
-        yBracketPos = (yMax + yRange * (0.05 + bracketLevel * 0.1)).toFixed(2);
+        // Second priority: Check for custom Y position
+        const compKey1 = `${cat1}-${cat2}`;
+        const compKey2 = `${cat2}-${cat1}`;
+        const customYPos = customPositions[compKey1] || customPositions[compKey2];
+
+        if (customYPos !== undefined && customYPos !== null) {
+          yBracketPos = Number(customYPos).toFixed(2);
+        } else {
+          // Last resort: Calculate automatically (stack multiple brackets)
+          const bracketLevel = pairIdx + 1;
+          yBracketPos = (yMax + yRange * (0.05 + bracketLevel * 0.1)).toFixed(2);
+        }
       }
-    }
 
-    const showAll = settings.comparisonMode === 'all' || settings.comparisonMode === 'custom';
+      const showAll = settings.comparisonMode === 'all' || settings.comparisonMode === 'custom';
 
-    if (showAll) {
-      // Show all comparisons
-      code += `comparison_df <- rbind(comparison_df, data.frame(
+      if (showAll) {
+        // Show all comparisons
+        code += `comparison_df <- rbind(comparison_df, data.frame(
   group1 = '${cat1}',
   group2 = '${cat2}',
   p.signif = sig_${pairName},
   y.position = ${yBracketPos}
 ))
 `;
-    } else {
-      // Show only significant comparisons
-      code += `if (sig_${pairName} != 'ns') {
+      } else {
+        // Show only significant comparisons
+        code += `if (sig_${pairName} != 'ns') {
   comparison_df <- rbind(comparison_df, data.frame(
     group1 = '${cat1}',
     group2 = '${cat2}',
@@ -3300,8 +4072,9 @@ ${hasAddInBrackets ? '# Note: Y positions below are the exact values from the ad
   ))
 }
 `;
-    }
-  });
+      }
+    });
+  }
 
   // Add the ggpubr stat_pvalue_manual call
   code += `
@@ -3374,57 +4147,89 @@ function generateGroupedBoxCode(chartType, settings, groupColors) {
     }
   }
 
-  // Handle category ordering - ALWAYS set factor levels to preserve order
+  // Handle category ordering based on dataOrder mode
   if (actualCategories.length > 0) {
-    let categories = [];
+    let finalCategories = [];
+    const dataOrder = settings.dataOrder || 'original';
 
-    // Check if custom order is specified
-    if (settings.customOrderCategory) {
-      if (typeof settings.customOrderCategory === 'string') {
-        categories = settings.customOrderCategory.split(',').map(c => c.trim()).filter(c => c);
-      } else if (Array.isArray(settings.customOrderCategory)) {
-        categories = settings.customOrderCategory;
+    if (dataOrder === 'custom') {
+      // Check if custom order is specified
+      let categories = [];
+      if (settings.customOrderCategory) {
+        if (typeof settings.customOrderCategory === 'string') {
+          categories = settings.customOrderCategory.split(',').map(c => c.trim()).filter(c => c);
+        } else if (Array.isArray(settings.customOrderCategory)) {
+          categories = settings.customOrderCategory;
+        }
       }
-    }
 
-    // Validate: only use custom order if values match actual categories
-    const isValidCategoryOrder = categories.length > 0 &&
-                                 categories.every(c => actualCategories.includes(c));
+      // Validate: only use custom order if values match actual categories
+      const isValidCategoryOrder = categories.length > 0 &&
+                                   categories.every(c => actualCategories.includes(c));
 
-    if (isValidCategoryOrder) {
-      const categoryOrder = categories.map(c => `'${c}'`).join(', ');
-      code += `# Set custom category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      if (isValidCategoryOrder) {
+        finalCategories = categories;
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set custom category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      } else {
+        // Fall back to original order
+        finalCategories = actualCategories;
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set category order from data\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      }
+    } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+      // Sort categories alphabetically
+      finalCategories = [...actualCategories].sort((a, b) => String(a).localeCompare(String(b)));
+      const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+      code += `# Set alphabetical category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
     } else {
-      // Use actual categories in their natural order from data
-      const categoryOrder = actualCategories.map(c => `'${c}'`).join(', ');
-      code += `# Set category order from data\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      // Original order: use order as values appear in data
+      finalCategories = actualCategories;
+      const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+      code += `# Set category order from data (original order)\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
     }
   }
 
-  // Handle group ordering - ALWAYS set factor levels to preserve order
+  // Handle group ordering based on dataOrder mode
   if (actualGroups.length > 0) {
-    let groups = [];
+    let finalGroups = [];
+    const dataOrder = settings.dataOrder || 'original';
 
-    // Check if custom order is specified
-    if (settings.customOrderGroup) {
-      if (typeof settings.customOrderGroup === 'string') {
-        groups = settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g);
-      } else if (Array.isArray(settings.customOrderGroup)) {
-        groups = settings.customOrderGroup;
+    if (dataOrder === 'custom') {
+      // Check if custom order is specified
+      let groups = [];
+      if (settings.customOrderGroup) {
+        if (typeof settings.customOrderGroup === 'string') {
+          groups = settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g);
+        } else if (Array.isArray(settings.customOrderGroup)) {
+          groups = settings.customOrderGroup;
+        }
       }
-    }
 
-    // Validate: only use custom order if values match actual groups
-    const isValidGroupOrder = groups.length > 0 &&
-                              groups.every(g => actualGroups.includes(g));
+      // Validate: only use custom order if values match actual groups
+      const isValidGroupOrder = groups.length > 0 &&
+                                groups.every(g => actualGroups.includes(g));
 
-    if (isValidGroupOrder) {
-      const groupOrder = groups.map(g => `'${g}'`).join(', ');
-      code += `# Set custom group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      if (isValidGroupOrder) {
+        finalGroups = groups;
+        const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+        code += `# Set custom group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      } else {
+        // Fall back to original order
+        finalGroups = actualGroups;
+        const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+        code += `# Set group order from data\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      }
+    } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+      // Sort groups alphabetically
+      finalGroups = [...actualGroups].sort((a, b) => String(a).localeCompare(String(b)));
+      const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+      code += `# Set alphabetical group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
     } else {
-      // Use actual groups in their natural order from data
-      const groupOrder = actualGroups.map(g => `'${g}'`).join(', ');
-      code += `# Set group order from data\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      // Original order: use order as values appear in data
+      finalGroups = actualGroups;
+      const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+      code += `# Set group order from data (original order)\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
     }
   }
 
@@ -3536,57 +4341,89 @@ function generateGroupedViolinCode(chartType, settings, groupColors) {
     }
   }
 
-  // Handle category ordering - ALWAYS set factor levels to preserve order
+  // Handle category ordering based on dataOrder mode
   if (actualCategories.length > 0) {
-    let categories = [];
+    let finalCategories = [];
+    const dataOrder = settings.dataOrder || 'original';
 
-    // Check if custom order is specified
-    if (settings.customOrderCategory) {
-      if (typeof settings.customOrderCategory === 'string') {
-        categories = settings.customOrderCategory.split(',').map(c => c.trim()).filter(c => c);
-      } else if (Array.isArray(settings.customOrderCategory)) {
-        categories = settings.customOrderCategory;
+    if (dataOrder === 'custom') {
+      // Check if custom order is specified
+      let categories = [];
+      if (settings.customOrderCategory) {
+        if (typeof settings.customOrderCategory === 'string') {
+          categories = settings.customOrderCategory.split(',').map(c => c.trim()).filter(c => c);
+        } else if (Array.isArray(settings.customOrderCategory)) {
+          categories = settings.customOrderCategory;
+        }
       }
-    }
 
-    // Validate: only use custom order if values match actual categories
-    const isValidCategoryOrder = categories.length > 0 &&
-                                 categories.every(c => actualCategories.includes(c));
+      // Validate: only use custom order if values match actual categories
+      const isValidCategoryOrder = categories.length > 0 &&
+                                   categories.every(c => actualCategories.includes(c));
 
-    if (isValidCategoryOrder) {
-      const categoryOrder = categories.map(c => `'${c}'`).join(', ');
-      code += `# Set custom category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      if (isValidCategoryOrder) {
+        finalCategories = categories;
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set custom category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      } else {
+        // Fall back to original order
+        finalCategories = actualCategories;
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set category order from data\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      }
+    } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+      // Sort categories alphabetically
+      finalCategories = [...actualCategories].sort((a, b) => String(a).localeCompare(String(b)));
+      const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+      code += `# Set alphabetical category order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
     } else {
-      // Use actual categories in their natural order from data
-      const categoryOrder = actualCategories.map(c => `'${c}'`).join(', ');
-      code += `# Set category order from data\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      // Original order: use order as values appear in data
+      finalCategories = actualCategories;
+      const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+      code += `# Set category order from data (original order)\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
     }
   }
 
-  // Handle group ordering - ALWAYS set factor levels to preserve order
+  // Handle group ordering based on dataOrder mode
   if (actualGroups.length > 0) {
-    let groups = [];
+    let finalGroups = [];
+    const dataOrder = settings.dataOrder || 'original';
 
-    // Check if custom order is specified
-    if (settings.customOrderGroup) {
-      if (typeof settings.customOrderGroup === 'string') {
-        groups = settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g);
-      } else if (Array.isArray(settings.customOrderGroup)) {
-        groups = settings.customOrderGroup;
+    if (dataOrder === 'custom') {
+      // Check if custom order is specified
+      let groups = [];
+      if (settings.customOrderGroup) {
+        if (typeof settings.customOrderGroup === 'string') {
+          groups = settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g);
+        } else if (Array.isArray(settings.customOrderGroup)) {
+          groups = settings.customOrderGroup;
+        }
       }
-    }
 
-    // Validate: only use custom order if values match actual groups
-    const isValidGroupOrder = groups.length > 0 &&
-                              groups.every(g => actualGroups.includes(g));
+      // Validate: only use custom order if values match actual groups
+      const isValidGroupOrder = groups.length > 0 &&
+                                groups.every(g => actualGroups.includes(g));
 
-    if (isValidGroupOrder) {
-      const groupOrder = groups.map(g => `'${g}'`).join(', ');
-      code += `# Set custom group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      if (isValidGroupOrder) {
+        finalGroups = groups;
+        const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+        code += `# Set custom group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      } else {
+        // Fall back to original order
+        finalGroups = actualGroups;
+        const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+        code += `# Set group order from data\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      }
+    } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+      // Sort groups alphabetically
+      finalGroups = [...actualGroups].sort((a, b) => String(a).localeCompare(String(b)));
+      const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+      code += `# Set alphabetical group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
     } else {
-      // Use actual groups in their natural order from data
-      const groupOrder = actualGroups.map(g => `'${g}'`).join(', ');
-      code += `# Set group order from data\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      // Original order: use order as values appear in data
+      finalGroups = actualGroups;
+      const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+      code += `# Set group order from data (original order)\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
     }
   }
 
@@ -3675,43 +4512,108 @@ function generateLineGroupedCode(settings, groupColors) {
   const xColName = `col${settings.xColIndex}`;
   const yColName = `col${settings.yColIndex}`;
 
-  // Get actual groups from data for ordering
+  // Get actual groups and categories from data for ordering
   let actualGroups = [];
+  let actualCategories = [];
   if (window.lastProcessedData && window.lastProcessedData.length > 0) {
     const data = window.lastProcessedData;
     const grpIdx = settings.groupColIndex - 1;
+    const catIdx = settings.xColIndex - 1;
     if (grpIdx >= 0) {
       // Get unique groups in data order
       actualGroups = [...new Set(data.slice(1).map(row => row[grpIdx]).filter(v => v))];
+    }
+    if (catIdx >= 0) {
+      // Get unique categories (x-axis values) in data order
+      actualCategories = [...new Set(data.slice(1).map(row => row[catIdx]).filter(v => v))];
     }
   }
 
   let code = '';
 
-  // Handle group ordering - set factor levels to preserve data order
-  if (actualGroups.length > 0) {
-    let groups = [];
+  // Handle category (x-axis) ordering based on dataOrder mode
+  if (actualCategories.length > 0) {
+    let finalCategories = [];
+    const dataOrder = settings.dataOrder || 'original';
 
-    // Check if custom order is specified
-    if (settings.customOrderGroup) {
-      if (typeof settings.customOrderGroup === 'string') {
-        groups = settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g);
-      } else if (Array.isArray(settings.customOrderGroup)) {
-        groups = settings.customOrderGroup;
+    if (dataOrder === 'custom') {
+      // Check if custom order is specified
+      let categories = [];
+      if (settings.customOrderCategory) {
+        if (typeof settings.customOrderCategory === 'string') {
+          categories = settings.customOrderCategory.split(',').map(c => c.trim()).filter(c => c);
+        } else if (Array.isArray(settings.customOrderCategory)) {
+          categories = settings.customOrderCategory;
+        }
       }
-    }
 
-    // Validate: only use custom order if values match actual groups
-    const isValidGroupOrder = groups.length > 0 &&
-                              groups.every(g => actualGroups.includes(g));
+      // Validate: only use custom order if values match actual categories
+      const isValidCategoryOrder = categories.length > 0 &&
+                                   categories.every(c => actualCategories.includes(c));
 
-    if (isValidGroupOrder) {
-      const groupOrder = groups.map(g => `'${g}'`).join(', ');
-      code += `# Set custom group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      if (isValidCategoryOrder) {
+        finalCategories = categories;
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set custom x-axis (timepoint) order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      } else {
+        // Fall back to original order
+        finalCategories = actualCategories;
+        const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+        code += `# Set x-axis (timepoint) order from data\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+      }
+    } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+      // Sort categories alphabetically
+      finalCategories = [...actualCategories].sort((a, b) => String(a).localeCompare(String(b)));
+      const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+      code += `# Set alphabetical x-axis (timepoint) order\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
     } else {
-      // Use actual groups in their natural order from data
-      const groupOrder = actualGroups.map(g => `'${g}'`).join(', ');
-      code += `# Set group order from data\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      // Original order: use order as values appear in data
+      finalCategories = actualCategories;
+      const categoryOrder = finalCategories.map(c => `'${c}'`).join(', ');
+      code += `# Set x-axis (timepoint) order from data (original order)\ndat$${xColName} <- factor(dat$${xColName}, levels = c(${categoryOrder}))\n\n`;
+    }
+  }
+
+  // Handle group ordering based on dataOrder mode
+  if (actualGroups.length > 0) {
+    let finalGroups = [];
+    const dataOrder = settings.dataOrder || 'original';
+
+    if (dataOrder === 'custom') {
+      // Check if custom order is specified
+      let groups = [];
+      if (settings.customOrderGroup) {
+        if (typeof settings.customOrderGroup === 'string') {
+          groups = settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g);
+        } else if (Array.isArray(settings.customOrderGroup)) {
+          groups = settings.customOrderGroup;
+        }
+      }
+
+      // Validate: only use custom order if values match actual groups
+      const isValidGroupOrder = groups.length > 0 &&
+                                groups.every(g => actualGroups.includes(g));
+
+      if (isValidGroupOrder) {
+        finalGroups = groups;
+        const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+        code += `# Set custom group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      } else {
+        // Fall back to original order
+        finalGroups = actualGroups;
+        const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+        code += `# Set group order from data\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+      }
+    } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+      // Sort groups alphabetically
+      finalGroups = [...actualGroups].sort((a, b) => String(a).localeCompare(String(b)));
+      const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+      code += `# Set alphabetical group order\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
+    } else {
+      // Original order: use order as values appear in data
+      finalGroups = actualGroups;
+      const groupOrder = finalGroups.map(g => `'${g}'`).join(', ');
+      code += `# Set group order from data (original order)\ndat$${groupColName} <- factor(dat$${groupColName}, levels = c(${groupOrder}))\n\n`;
     }
   }
 
@@ -3810,8 +4712,16 @@ p <- ggplot(summary_data, aes(x = TimePoint, y = Mean, color = Group, group = Gr
 # ============ Statistical Analysis with vbracket ============
 # Install vbracket if needed: install.packages('vbracket', repos = 'https://h20gg702.r-universe.dev')
 library(vbracket)
-${isNonParametric && postHocTest === 'steel' ? `library(kSamples)  # For Steel test` : ''}
-${isNonParametric && postHocTest === 'dunn' ? `library(dunn.test)  # For Dunn test` : ''}
+${isNonParametric && postHocTest === 'steel' ? `# Install and load kSamples for Steel test
+if (!requireNamespace('kSamples', quietly = TRUE)) {
+  install.packages('kSamples')
+}
+library(kSamples)` : ''}
+${isNonParametric && postHocTest === 'dunn' ? `# Install and load dunn.test for Dunn test
+if (!requireNamespace('dunn.test', quietly = TRUE)) {
+  install.packages('dunn.test')
+}
+library(dunn.test)` : ''}
 
 # Get group order (same as factor levels used in plot)
 group_order <- levels(factor(summary_data$Group))
@@ -3833,6 +4743,36 @@ posthoc_type <- '${postHocTest}'
 control_group <- '${controlGroup}'
 if (control_group == '' || !(control_group %in% group_order)) {
   control_group <- group_order[1]  # Default to first group
+}
+
+# Test normality for each group (Shapiro-Wilk)
+cat('Normality tests (Shapiro-Wilk) at timepoint', selected_timepoint, ':\\n')
+normality_results <- list()
+for (grp in group_order) {
+  grp_data <- test_data[test_data$${groupColName} == grp, '${yColName}']
+  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
+    sw_result <- shapiro.test(grp_data)
+    normality_results[[grp]] <- sw_result$p.value
+    cat('  ', grp, ': p =', format(sw_result$p.value, digits = 4),
+        if(sw_result$p.value < 0.05) '(non-normal)' else '(normal)', '\\n')
+  } else {
+    normality_results[[grp]] <- NA
+    cat('  ', grp, ': n =', length(grp_data), '(skipped - need 3-5000 samples)\\n')
+  }
+}
+
+# Check normality and show appropriate warning
+any_non_normal <- any(sapply(normality_results, function(p) !is.na(p) && p < 0.05))
+all_normal <- all(sapply(normality_results, function(p) is.na(p) || p >= 0.05))
+
+if (data_type == 'parametric' && any_non_normal) {
+  cat('\\n⚠️ WARNING: Some groups appear non-normal. Parametric test (ANOVA/', posthoc_type, ') was selected manually.\\n')
+  cat('   Consider using non-parametric test (Kruskal-Wallis/Dunn or Steel) for more robust results.\\n\\n')
+} else if (data_type == 'nonparametric' && all_normal) {
+  cat('\\nℹ️ NOTE: All groups appear normally distributed. Non-parametric test was selected manually.\\n')
+  cat('   Parametric test (ANOVA/Tukey or Dunnett) may have more statistical power.\\n\\n')
+} else {
+  cat('\\n')
 }
 
 # Perform statistical tests
@@ -3927,6 +4867,36 @@ if (n_groups >= 3) {
               labels_list <- c(labels_list, '**')
             } else {
               labels_list <- c(labels_list, '*')
+            }
+          }
+        }
+      } else if (posthoc_type == 'bonferroni' || posthoc_type == 'holm') {
+        # Bonferroni or Holm correction - parametric pairwise
+        cat('Running pairwise t-test with', posthoc_type, 'correction\\n')
+        pairwise_result <- pairwise.t.test(test_data$${yColName}, test_data$${groupColName},
+                                            p.adjust.method = posthoc_type)
+
+        # Extract p-values from the matrix
+        p_matrix <- pairwise_result$p.value
+        for (i in 1:nrow(p_matrix)) {
+          for (j in 1:ncol(p_matrix)) {
+            if (!is.na(p_matrix[i, j])) {
+              grp1 <- colnames(p_matrix)[j]
+              grp2 <- rownames(p_matrix)[i]
+              p_val <- p_matrix[i, j]
+
+              cat(grp1, 'vs', grp2, ': p =', p_val, '\\n')
+
+              if (p_val < 0.05) {
+                comparisons_list[[length(comparisons_list) + 1]] <- c(grp1, grp2)
+                if (p_val < 0.001) {
+                  labels_list <- c(labels_list, '***')
+                } else if (p_val < 0.01) {
+                  labels_list <- c(labels_list, '**')
+                } else {
+                  labels_list <- c(labels_list, '*')
+                }
+              }
             }
           }
         }
@@ -4866,6 +5836,23 @@ Office.onReady(() => {
       if (errorColumnRow) errorColumnRow.style.display = "none";
     }
 
+    // Update order containers based on chart type
+    const groupOrderContainer = document.getElementById("groupOrderContainer");
+    const xAxisOrderContainer = document.getElementById("xAxisOrderContainer");
+    const groupOrderLabel = document.getElementById("groupOrderLabel");
+
+    if (isGrouped) {
+      // Grouped charts: show both Group order and X-axis order
+      if (groupOrderLabel) groupOrderLabel.textContent = "Group order:";
+      if (groupOrderContainer) groupOrderContainer.style.display = "block";
+      if (xAxisOrderContainer) xAxisOrderContainer.style.display = "block";
+    } else {
+      // Single-group charts: show only one list labeled "X-axis order"
+      if (groupOrderLabel) groupOrderLabel.textContent = "X-axis order:";
+      if (groupOrderContainer) groupOrderContainer.style.display = "block";
+      if (xAxisOrderContainer) xAxisOrderContainer.style.display = "none";
+    }
+
     // Show/hide bins row (only for histogram)
     const binsRow = document.getElementById("binsRow");
     if (binsRow) {
@@ -4959,7 +5946,7 @@ Office.onReady(() => {
 
   // vbracket position dropdown removed - now uses manual X/Y positioning only
 
-  // Set up group column change listener to auto-update number of groups
+  // Set up group column change listener to auto-update number of groups and custom order
   document.getElementById("groupColumn")?.addEventListener("change", function() {
     const actualGroups = getActualGroupNames();
     if (actualGroups && actualGroups.length >= 2) {
@@ -4970,6 +5957,18 @@ Office.onReady(() => {
         numGroupsInput.dispatchEvent(new Event('change'));
         console.log("🔥 Auto-updated numGroups to:", actualGroups.length, "when Group Column changed");
       }
+    }
+    // Update custom order lists when column changes
+    if (typeof detectAndStoreGroups === 'function') {
+      detectAndStoreGroups();
+    }
+  });
+
+  // Set up X column change listener to update custom order
+  document.getElementById("xColumn")?.addEventListener("change", function() {
+    // Update custom order lists when column changes
+    if (typeof detectAndStoreGroups === 'function') {
+      detectAndStoreGroups();
     }
   });
 
@@ -5145,7 +6144,7 @@ Office.onReady(() => {
         }
       }
 
-      // Detect categories from Column 2 (X-axis)
+      // Detect categories from X-axis column
       const xCol = document.getElementById("xColumn")?.value;
       if (xCol) {
         const xColIndex = headers.indexOf(xCol);
@@ -5162,11 +6161,23 @@ Office.onReady(() => {
         }
       }
 
-      // If custom order is currently selected, update both lists
+      // Check if this is a grouped chart type
+      const chartType = document.getElementById("chartType")?.value || "";
+      const isGrouped = GROUPED_CHART_TYPES.includes(chartType);
+
+      // If custom order is currently selected, update lists
       const dataOrder = document.getElementById("dataOrder")?.value;
       if (dataOrder === "custom") {
-        populateCustomOrderList('customOrderGroupList', window.detectedGroups, 'Load data to see groups');
-        populateCustomOrderList('customOrderCategoryList', window.detectedCategories, 'Load data to see categories');
+        if (isGrouped) {
+          // For grouped charts: populate both lists
+          populateCustomOrderList('customOrderGroupList', window.detectedGroups, 'Load data to see groups');
+          populateCustomOrderList('customOrderCategoryList', window.detectedCategories, 'Load data to see values');
+        } else {
+          // For single-group charts: use customOrderGroupList for X-axis values
+          // Put X-axis values into detectedGroups (since that list works)
+          window.detectedGroups = [...window.detectedCategories];
+          populateCustomOrderList('customOrderGroupList', window.detectedGroups, 'Load data to see values');
+        }
       }
     } catch (error) {
       console.error("Error detecting groups:", error);
@@ -10402,7 +11413,7 @@ async function initWebR() {
 
       # Prepare data
       plot_data <- data.frame(
-        group = factor(dat[[group_col]]),
+        group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
         x = as.numeric(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
@@ -11376,7 +12387,7 @@ async function initWebR() {
 
       # Prepare data frame with categories, means, and errors
       df <- data.frame(
-        category = factor(dat[[x_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         mean_val = as.numeric(dat[[y_col]]),
         error = as.numeric(dat[[error_col]])
       )
@@ -11418,7 +12429,7 @@ async function initWebR() {
 
       # Prepare data frame
       df <- data.frame(
-        category = factor(dat[[x_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       
@@ -11545,7 +12556,7 @@ async function initWebR() {
 
       # Prepare data frame
       df <- data.frame(
-        category = factor(dat[[x_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       
@@ -11645,8 +12656,8 @@ async function initWebR() {
       
       # データ準備
       plot_data <- data.frame(
-        group = factor(dat[[group_col]]),
-        category = factor(dat[[x_col]]),
+        group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       
@@ -11746,8 +12757,8 @@ async function initWebR() {
 
       # Prepare data using PRE-CALCULATED mean and error values (no calculation)
       plot_data <- data.frame(
-        group = factor(dat[[group_col]]),
-        category = factor(dat[[x_col]]),
+        group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         mean_val = as.numeric(dat[[y_col]]),
         error_val = as.numeric(dat[[error_col]])
       )
@@ -11846,8 +12857,8 @@ async function initWebR() {
       
       # データ準備
       plot_data <- data.frame(
-        group = factor(dat[[group_col]]),
-        category = factor(dat[[x_col]]),
+        group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       plot_data <- plot_data[complete.cases(plot_data), ]
@@ -12802,8 +13813,8 @@ async function initWebR() {
       
       # データ準備とグループ順序設定
       plot_data <- data.frame(
-        group = factor(dat[[group_col]]),
-        category = factor(dat[[x_col]]),
+        group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       plot_data <- plot_data[complete.cases(plot_data), ]
@@ -12903,8 +13914,8 @@ async function initWebR() {
       
       # データ準備とグループ順序設定
       plot_data <- data.frame(
-        group = factor(dat[[group_col]]),
-        category = factor(dat[[x_col]]),
+        group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       plot_data <- plot_data[complete.cases(plot_data), ]
@@ -13824,7 +14835,7 @@ async function initWebR() {
 
       # Prepare data frame
       df <- data.frame(
-        category = factor(dat[[x_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       
@@ -13861,7 +14872,7 @@ async function initWebR() {
 
       # Prepare data frame
       df <- data.frame(
-        category = factor(dat[[x_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       
@@ -13919,8 +14930,8 @@ async function initWebR() {
       
       # データ準備とグループ順序設定
       plot_data <- data.frame(
-        group = factor(dat[[group_col]]),
-        category = factor(dat[[x_col]]),
+        group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       plot_data <- plot_data[complete.cases(plot_data), ]
@@ -14019,8 +15030,8 @@ async function initWebR() {
       
       # データ準備とグループ順序設定
       plot_data <- data.frame(
-        group = factor(dat[[group_col]]),
-        category = factor(dat[[x_col]]),
+        group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
+        category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
       plot_data <- plot_data[complete.cases(plot_data), ]
@@ -15788,63 +16799,126 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     
     if (data_order == "original") {
       # 元の順序を保持（最初に出現した順序でfactor化）
-      # For all grouped charts, apply order to X-axis column (category column)
-      # This is the column that will become "category" in plot_data
       chart_type <- "${chartType}"
-
-      # Determine which column is the X-axis (category) column
-      # For grouped charts: X column is user-selected (xColIndex in JavaScript, passed as x_col to R)
-      # For single-group charts: X column is column 1
       is_grouped <- grepl("grouped", chart_type, fixed = TRUE)
-      target_col <- if(is_grouped) ${xColIndex} else 1
 
-      if (ncol(dat) >= target_col && (is.character(dat[[target_col]]) || is.factor(dat[[target_col]]))) {
-        unique_levels <- unique(dat[[target_col]])
-        dat[[target_col]] <- factor(dat[[target_col]], levels = unique_levels)
-        cat("Applied original order for column", target_col, ". Levels:", paste(levels(dat[[target_col]]), collapse = ", "), "\\n")
+      # Always use xColIndex for X-axis column (user-selected column)
+      x_col_idx <- ${xColIndex}
+      cat("Original order mode. Chart type:", chart_type, "X column index:", x_col_idx, "\\n")
+
+      # Apply original order to X-axis column
+      if (ncol(dat) >= x_col_idx && (is.character(dat[[x_col_idx]]) || is.factor(dat[[x_col_idx]]))) {
+        unique_levels <- unique(dat[[x_col_idx]])
+        dat[[x_col_idx]] <- factor(dat[[x_col_idx]], levels = unique_levels)
+        cat("Applied original order for X-axis column", x_col_idx, ". Levels:", paste(levels(dat[[x_col_idx]]), collapse = ", "), "\\n")
       }
-    } else if (data_order == "custom") {
-      # カスタム順序を適用 - Apply custom order to both columns if provided
 
-      # Apply custom order to Column 1 (Group)
-      custom_order_group <- "${customOrderGroup}"
-      if (nchar(custom_order_group) > 0) {
-        custom_levels_group <- trimws(strsplit(custom_order_group, ",")[[1]])
-        cat("Custom group order requested:", paste(custom_levels_group, collapse = ", "), "\\n")
-
-        if (ncol(dat) >= 1 && (is.character(dat[[1]]) || is.factor(dat[[1]]))) {
-          existing_levels <- unique(as.character(dat[[1]]))
-          cat("Existing group levels:", paste(existing_levels, collapse = ", "), "\\n")
-
-          missing_levels <- setdiff(existing_levels, custom_levels_group)
-          final_levels <- c(custom_levels_group[custom_levels_group %in% existing_levels], missing_levels)
-          dat[[1]] <- factor(dat[[1]], levels = final_levels)
-
-          cat("Applied custom order to Column 1 (Group). Final levels:", paste(levels(dat[[1]]), collapse = ", "), "\\n")
+      # For grouped charts, also apply original order to group column
+      if (is_grouped) {
+        group_col_idx <- ${groupColIndex}
+        if (ncol(dat) >= group_col_idx && (is.character(dat[[group_col_idx]]) || is.factor(dat[[group_col_idx]]))) {
+          unique_group_levels <- unique(dat[[group_col_idx]])
+          dat[[group_col_idx]] <- factor(dat[[group_col_idx]], levels = unique_group_levels)
+          cat("Applied original order for Group column", group_col_idx, ". Levels:", paste(levels(dat[[group_col_idx]]), collapse = ", "), "\\n")
         }
       }
+    } else if (data_order == "custom") {
+      # カスタム順序を適用
+      chart_type <- "${chartType}"
+      is_grouped <- grepl("grouped", chart_type, fixed = TRUE)
+      x_col_idx <- ${xColIndex}
 
-      # Apply custom order to Column 2 (Category/X-axis)
+      cat("Custom order mode. Chart type:", chart_type, "X column index:", x_col_idx, "\\n")
+
+      # For single-group charts: customOrderGroup contains X-axis values
+      # For grouped charts: customOrderGroup contains group values, customOrderCategory contains X-axis values
+      custom_order_group <- "${customOrderGroup}"
       custom_order_category <- "${customOrderCategory}"
-      if (nchar(custom_order_category) > 0) {
-        custom_levels_category <- trimws(strsplit(custom_order_category, ",")[[1]])
 
-        if (ncol(dat) >= 2) {
-          # Convert column to character first if it's numeric
-          dat[[2]] <- as.character(dat[[2]])
+      cat("customOrderGroup:", custom_order_group, "\\n")
+      cat("customOrderCategory:", custom_order_category, "\\n")
 
-          existing_levels <- unique(dat[[2]])
+      if (is_grouped) {
+        # GROUPED CHARTS: Group column + X-axis column
+        group_col_idx <- ${groupColIndex}
 
-          missing_levels <- setdiff(existing_levels, custom_levels_category)
-          final_levels <- c(custom_levels_category[custom_levels_category %in% existing_levels], missing_levels)
-          dat[[2]] <- factor(dat[[2]], levels = final_levels)
+        # Apply custom order to Group column
+        if (nchar(custom_order_group) > 0) {
+          custom_levels_group <- trimws(strsplit(custom_order_group, ",")[[1]])
+          cat("Custom group order requested:", paste(custom_levels_group, collapse = ", "), "\\n")
 
-          cat("Applied custom order to Column 2 (Category). Final levels:", paste(levels(dat[[2]]), collapse = ", "), "\\n")
+          if (ncol(dat) >= group_col_idx && (is.character(dat[[group_col_idx]]) || is.factor(dat[[group_col_idx]]))) {
+            existing_levels <- unique(as.character(dat[[group_col_idx]]))
+            cat("Existing group levels:", paste(existing_levels, collapse = ", "), "\\n")
+
+            missing_levels <- setdiff(existing_levels, custom_levels_group)
+            final_levels <- c(custom_levels_group[custom_levels_group %in% existing_levels], missing_levels)
+            dat[[group_col_idx]] <- factor(dat[[group_col_idx]], levels = final_levels)
+
+            cat("Applied custom order to Group column", group_col_idx, ". Final levels:", paste(levels(dat[[group_col_idx]]), collapse = ", "), "\\n")
+          }
+        }
+
+        # Apply custom order to X-axis column
+        if (nchar(custom_order_category) > 0) {
+          custom_levels_category <- trimws(strsplit(custom_order_category, ",")[[1]])
+          cat("Custom X-axis order requested:", paste(custom_levels_category, collapse = ", "), "\\n")
+
+          if (ncol(dat) >= x_col_idx) {
+            dat[[x_col_idx]] <- as.character(dat[[x_col_idx]])
+            existing_levels <- unique(dat[[x_col_idx]])
+            cat("Existing X-axis levels:", paste(existing_levels, collapse = ", "), "\\n")
+
+            missing_levels <- setdiff(existing_levels, custom_levels_category)
+            final_levels <- c(custom_levels_category[custom_levels_category %in% existing_levels], missing_levels)
+            dat[[x_col_idx]] <- factor(dat[[x_col_idx]], levels = final_levels)
+
+            cat("Applied custom order to X-axis column", x_col_idx, ". Final levels:", paste(levels(dat[[x_col_idx]]), collapse = ", "), "\\n")
+          }
+        }
+      } else {
+        # SINGLE-GROUP CHARTS: Only X-axis column (customOrderGroup contains X-axis values)
+        if (nchar(custom_order_group) > 0) {
+          custom_levels_x <- trimws(strsplit(custom_order_group, ",")[[1]])
+          cat("Custom X-axis order requested (from customOrderGroup):", paste(custom_levels_x, collapse = ", "), "\\n")
+
+          if (ncol(dat) >= x_col_idx) {
+            dat[[x_col_idx]] <- as.character(dat[[x_col_idx]])
+            existing_levels <- unique(dat[[x_col_idx]])
+            cat("Existing X-axis levels:", paste(existing_levels, collapse = ", "), "\\n")
+
+            missing_levels <- setdiff(existing_levels, custom_levels_x)
+            final_levels <- c(custom_levels_x[custom_levels_x %in% existing_levels], missing_levels)
+            dat[[x_col_idx]] <- factor(dat[[x_col_idx]], levels = final_levels)
+
+            cat("Applied custom order to X-axis column", x_col_idx, ". Final levels:", paste(levels(dat[[x_col_idx]]), collapse = ", "), "\\n")
+          }
         }
       }
     } else {
-      # default: アルファベット順（Rのデフォルト動作）
-      cat("Using default alphabetical ordering\\n")
+      # default: アルファベット順（Alphabetical order）
+      chart_type <- "${chartType}"
+      is_grouped <- grepl("grouped", chart_type, fixed = TRUE)
+      x_col_idx <- ${xColIndex}
+
+      cat("Alphabetical order mode. Chart type:", chart_type, "X column index:", x_col_idx, "\\n")
+
+      # Apply alphabetical order to X-axis column
+      if (ncol(dat) >= x_col_idx && (is.character(dat[[x_col_idx]]) || is.factor(dat[[x_col_idx]]))) {
+        sorted_levels <- sort(unique(as.character(dat[[x_col_idx]])))
+        dat[[x_col_idx]] <- factor(dat[[x_col_idx]], levels = sorted_levels)
+        cat("Applied alphabetical order for X-axis column", x_col_idx, ". Levels:", paste(levels(dat[[x_col_idx]]), collapse = ", "), "\\n")
+      }
+
+      # For grouped charts, also apply alphabetical order to group column
+      if (is_grouped) {
+        group_col_idx <- ${groupColIndex}
+        if (ncol(dat) >= group_col_idx && (is.character(dat[[group_col_idx]]) || is.factor(dat[[group_col_idx]]))) {
+          sorted_group_levels <- sort(unique(as.character(dat[[group_col_idx]])))
+          dat[[group_col_idx]] <- factor(dat[[group_col_idx]], levels = sorted_group_levels)
+          cat("Applied alphabetical order for Group column", group_col_idx, ". Levels:", paste(levels(dat[[group_col_idx]]), collapse = ", "), "\\n")
+        }
+      }
     }
     
     # 直接的なフォント設定（構文エラー回避）

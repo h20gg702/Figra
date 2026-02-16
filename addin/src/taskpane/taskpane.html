@@ -519,16 +519,16 @@
           <option value="custom">Custom order</option>
         </select>
         <div id="customOrderContainer" style="display:none;">
-          <div style="margin-bottom:12px;">
-            <div style="font-size:11px; color:#666; font-weight:bold; margin-bottom:4px;">Group order:</div>
+          <div id="groupOrderContainer" style="margin-bottom:12px;">
+            <div id="groupOrderLabel" style="font-size:11px; color:#666; font-weight:bold; margin-bottom:4px;">X-axis order:</div>
             <div id="customOrderGroupList" style="border:1px solid #ddd; padding:8px; min-height:60px; border-radius:4px; background:#fafafa;">
-              <div style="font-size:11px; color:#999; text-align:center;">Load data to see groups</div>
+              <div style="font-size:11px; color:#999; text-align:center;">Load data to see values</div>
             </div>
           </div>
-          <div>
-            <div style="font-size:11px; color:#666; font-weight:bold; margin-bottom:4px;">Category order:</div>
+          <div id="xAxisOrderContainer" style="display:none;">
+            <div style="font-size:11px; color:#666; font-weight:bold; margin-bottom:4px;">X-axis order:</div>
             <div id="customOrderCategoryList" style="border:1px solid #ddd; padding:8px; min-height:60px; border-radius:4px; background:#fafafa;">
-              <div style="font-size:11px; color:#999; text-align:center;">Load data to see categories</div>
+              <div style="font-size:11px; color:#999; text-align:center;">Load data to see values</div>
             </div>
           </div>
         </div>
