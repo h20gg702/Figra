@@ -16,6 +16,7 @@ const FORM_FIELDS = {
   country: "entry.838311149",
   jobTitle: "entry.16463827",
   affiliation: "entry.810594215",
+  software: "entry.912332377",
   agreement: "entry.438747924"
 };
 
@@ -54,13 +55,14 @@ async function submitRegistration() {
   const email = document.getElementById("regEmail")?.value?.trim();
   const jobTitle = document.getElementById("regJobTitle")?.value?.trim();
   const affiliation = document.getElementById("regAffiliation")?.value?.trim();
+  const software = document.getElementById("regSoftware")?.value?.trim();
   const country = document.getElementById("regCountry")?.value;
   const termsAccepted = document.getElementById("regTerms")?.checked;
   const errorEl = document.getElementById("regError");
   const submitBtn = document.getElementById("regSubmitBtn");
 
   // Validation
-  if (!email || !jobTitle || !affiliation || !country) {
+  if (!email || !jobTitle || !affiliation || !software || !country) {
     errorEl.textContent = "Please fill in all required fields.";
     errorEl.style.display = "block";
     return;
@@ -90,6 +92,7 @@ async function submitRegistration() {
     params.append(FORM_FIELDS.email, email);
     params.append(FORM_FIELDS.jobTitle, jobTitle);
     params.append(FORM_FIELDS.affiliation, affiliation);
+    params.append(FORM_FIELDS.software, software);
     params.append(FORM_FIELDS.country, country);
     params.append(FORM_FIELDS.agreement, termsAccepted ? "I have read and agree to the Terms of Use and Privacy Policy." : "No");
 
@@ -720,6 +723,14 @@ async function loadFromFigure() {
             console.log("🔍 DEBUG: Data rows count:", metadata?.data?.rows?.length);
             console.log("🔍 DEBUG: Has statisticalResults:", !!metadata?.statisticalResults);
             console.log("🔍 DEBUG: StatisticalResults length:", metadata?.statisticalResults?.length || 0);
+            // Font settings debug
+            console.log("📂 LOAD - Settings from metadata:");
+            console.log("  fontFamily:", metadata?.settings?.fontFamily);
+            console.log("  family (legacy):", metadata?.settings?.family);
+            console.log("  titleWeight:", metadata?.settings?.titleWeight);
+            console.log("  axisTitleWeight:", metadata?.settings?.axisTitleWeight);
+            console.log("  axisTextWeight:", metadata?.settings?.axisTextWeight);
+            console.log("  axisWeight (legacy):", metadata?.settings?.axisWeight);
           } catch (e) {
             console.error("🔍 DEBUG: Error extracting metadata:", e);
             setStatus("❌ Error extracting metadata from PNG: " + e.message);
@@ -754,7 +765,25 @@ async function loadFromFigure() {
 
         // Restore chart configuration
         if (metadata.chart.chartType) {
-          document.getElementById("chartType").value = metadata.chart.chartType;
+          const chartTypeSelect = document.getElementById("chartType");
+          chartTypeSelect.value = metadata.chart.chartType;
+          // Dispatch change event to sync the visual custom dropdown
+          chartTypeSelect.dispatchEvent(new Event('change'));
+
+          // Also update the visual dropdown display directly
+          const selectedIcon = document.getElementById('chartTypeSelectedIcon');
+          const selectedText = document.getElementById('chartTypeSelectedText');
+          const optionsContainer = document.getElementById('chartTypeOptions');
+          if (selectedIcon && selectedText && window.chartIcons && window.chartLabels) {
+            selectedIcon.innerHTML = window.chartIcons[metadata.chart.chartType] || '';
+            selectedText.textContent = window.chartLabels[metadata.chart.chartType] || metadata.chart.chartType;
+          }
+          // Update option selection in dropdown
+          if (optionsContainer) {
+            optionsContainer.querySelectorAll('.chart-option').forEach(opt => {
+              opt.classList.toggle('selected', opt.dataset.value === metadata.chart.chartType);
+            });
+          }
         }
 
         // Populate column dropdowns
@@ -766,8 +795,26 @@ async function loadFromFigure() {
         if (metadata.chart.errorColumn) document.getElementById("errorColumn").value = metadata.chart.errorColumn;
         if (metadata.chart.bins) document.getElementById("bins").value = metadata.chart.bins;
 
-        // Restore all settings
-        applySettings(metadata.settings);
+        // Restore all settings using applySettingsToUI which has proper key->element ID mappings
+        applySettingsToUI(metadata.settings);
+
+        // Debug: Check UI values after applySettingsToUI
+        console.log("📂 LOAD - UI values after applySettingsToUI:");
+        console.log("  fontFam element value:", document.getElementById("fontFam")?.value);
+        console.log("  titleWeight element value:", document.getElementById("titleWeight")?.value);
+        console.log("  axisTitleWeight element value:", document.getElementById("axisTitleWeight")?.value);
+        console.log("  axisTextWeight element value:", document.getElementById("axisTextWeight")?.value);
+
+        // Update visibility based on restored settings
+        if (typeof updateStatsDetailedControlsVisibility === 'function') {
+          updateStatsDetailedControlsVisibility();
+        }
+        if (typeof updateVbracketVisibility === 'function') {
+          updateVbracketVisibility();
+        }
+        if (typeof updateGroupColorVisibility === 'function') {
+          updateGroupColorVisibility();
+        }
 
         // Display statistical results if available
         if (metadata.statisticalResults) {
@@ -891,6 +938,24 @@ async function loadFromFigure() {
           console.log("Auto-loading data into UI...");
           await loadHeadersFromSelection();
           console.log("✅ Data auto-loaded into UI");
+
+          // IMPORTANT: Re-apply column values from metadata AFTER loadHeadersFromSelection
+          // because loadHeadersFromSelection auto-detects and overrides column selections
+          if (metadata.chart.xColumn) document.getElementById("xColumn").value = metadata.chart.xColumn;
+          if (metadata.chart.yColumn) document.getElementById("yColumn").value = metadata.chart.yColumn;
+          if (metadata.chart.groupColumn) document.getElementById("groupColumn").value = metadata.chart.groupColumn;
+          if (metadata.chart.errorColumn) document.getElementById("errorColumn").value = metadata.chart.errorColumn;
+          console.log("✅ Column selections restored from metadata:", {
+            x: metadata.chart.xColumn,
+            y: metadata.chart.yColumn,
+            group: metadata.chart.groupColumn,
+            error: metadata.chart.errorColumn
+          });
+
+          // IMPORTANT: Re-apply all settings that might have been affected by loadHeadersFromSelection
+          // This ensures font, weight, title, labels, etc. are correctly restored
+          applySettingsToUI(metadata.settings);
+          console.log("✅ Settings re-applied after loadHeadersFromSelection");
         } catch (err) {
           console.error('Error auto-loading data:', err);
           // Don't fail the whole operation if auto-load fails
@@ -907,6 +972,59 @@ async function loadFromFigure() {
         setStatus(`${versionMessage}✅ Loaded from ${file.name} (created: ${createdDate})\n📋 Data loaded and ready: ${rowCount} rows × ${colCount} columns${statMsg}\n🎯 Click Preview to verify reproducibility`);
 
         console.log("Metadata loaded:", metadata);
+        console.log("📋 Metadata settings:", metadata.settings);
+
+        // FINAL explicit setting of critical UI values that may have been missed
+        // This is a safety net to ensure font, weight, title, etc. are set correctly
+        const finalSettings = metadata.settings || {};
+
+        // Populate vbracket timepoint dropdown and set saved value
+        if (typeof populateVbracketTimepoints === 'function') {
+          populateVbracketTimepoints();
+          // Set the saved timepoint value after dropdown is populated
+          if (finalSettings.vbracketTimepoint) {
+            const timepointEl = document.getElementById("vbracketTimepoint");
+            if (timepointEl) {
+              timepointEl.value = finalSettings.vbracketTimepoint;
+              console.log("🕐 FINAL vbracket timepoint set to:", timepointEl.value);
+            }
+          }
+        }
+        if (finalSettings.fontFamily || finalSettings.family) {
+          const fontFamEl = document.getElementById("fontFam");
+          if (fontFamEl) {
+            fontFamEl.value = finalSettings.fontFamily || finalSettings.family;
+            console.log("🔤 FINAL font family set to:", fontFamEl.value);
+          }
+        }
+        if (finalSettings.titleWeight) {
+          const titleWeightEl = document.getElementById("titleWeight");
+          if (titleWeightEl) {
+            titleWeightEl.value = finalSettings.titleWeight;
+            console.log("🔤 FINAL title weight set to:", titleWeightEl.value);
+          }
+        }
+        if (finalSettings.axisTitleWeight || finalSettings.axisWeight) {
+          const axisTitleWeightEl = document.getElementById("axisTitleWeight");
+          if (axisTitleWeightEl) {
+            axisTitleWeightEl.value = finalSettings.axisTitleWeight || finalSettings.axisWeight;
+            console.log("🔤 FINAL axis title weight set to:", axisTitleWeightEl.value);
+          }
+        }
+        if (finalSettings.axisTextWeight || finalSettings.axisWeight) {
+          const axisTextWeightEl = document.getElementById("axisTextWeight");
+          if (axisTextWeightEl) {
+            axisTextWeightEl.value = finalSettings.axisTextWeight || finalSettings.axisWeight;
+            console.log("🔤 FINAL axis text weight set to:", axisTextWeightEl.value);
+          }
+        }
+
+        // Final verification: log all font-related UI values
+        console.log("✅ FINAL UI VALUES after all settings applied:");
+        console.log("  fontFam:", document.getElementById("fontFam")?.value);
+        console.log("  titleWeight:", document.getElementById("titleWeight")?.value);
+        console.log("  axisTitleWeight:", document.getElementById("axisTitleWeight")?.value);
+        console.log("  axisTextWeight:", document.getElementById("axisTextWeight")?.value);
 
       } catch (err) {
         console.error('Load figure error:', err);
@@ -1743,7 +1861,7 @@ function generateSubsetRCodeFromData(chartType, opts) {
     const xAxisTextSize = document.getElementById("xAxisTextSize")?.value || "18";
     const yAxisTextSize = document.getElementById("yAxisTextSize")?.value || "18";
     const legendTextSize = document.getElementById("legendTextSize")?.value || "16";
-    const titleWeight = document.getElementById("titleWeight")?.value || "bold";
+    const titleWeight = document.getElementById("titleWeight")?.value || "plain";
     const axisTitleWeight = document.getElementById("axisTitleWeight")?.value || "plain";
     const axisTextWeight = document.getElementById("axisTextWeight")?.value || "plain";
 
@@ -5023,6 +5141,15 @@ async function writeRCodeToCellHandler() {
 function collectCurrentSettings() {
   const el = (id) => document.getElementById(id);
 
+  // Debug: log the raw element values for font settings
+  console.log("💾 collectCurrentSettings - Font values from UI:");
+  console.log("  fontFam element:", el("fontFam"));
+  console.log("  fontFam value:", el("fontFam")?.value);
+  console.log("  titleWeight element:", el("titleWeight"));
+  console.log("  titleWeight value:", el("titleWeight")?.value);
+  console.log("  axisTitleWeight value:", el("axisTitleWeight")?.value);
+  console.log("  axisTextWeight value:", el("axisTextWeight")?.value);
+
   const settings = {
     // Font settings
     fontFamily: el("fontFam")?.value || "Arial",
@@ -5032,7 +5159,7 @@ function collectCurrentSettings() {
     xAxisTextSize: el("xAxisTextSize")?.value || "18",
     yAxisTextSize: el("yAxisTextSize")?.value || "18",
     legendTextSize: el("legendTextSize")?.value || "16",
-    titleWeight: el("titleWeight")?.value || "bold",
+    titleWeight: el("titleWeight")?.value || "plain",
     axisTitleWeight: el("axisTitleWeight")?.value || "plain",
     axisTextWeight: el("axisTextWeight")?.value || "plain",
 
@@ -5146,12 +5273,17 @@ function collectCurrentSettings() {
   // Add group colors to settings
   Object.assign(settings, groupColors);
 
+  // Debug logging for font settings
+  console.log('💾 SAVE - fontFamily:', settings.fontFamily);
+  console.log('💾 SAVE - titleWeight:', settings.titleWeight);
+  console.log('💾 SAVE - axisTitleWeight:', settings.axisTitleWeight);
+  console.log('💾 SAVE - axisTextWeight:', settings.axisTextWeight);
+
   // Debug logging for custom symbols
   console.log('🔥 stat_symbol_type:', settings.statSymbolType);
   console.log('🔥 customSymbol05:', settings.customSymbol05);
   console.log('🔥 customSymbol01:', settings.customSymbol01);
-  console.log('🔥 customSymbol001:', settings.customSymbol001);
-  console.log('🔥 customSymbolNS:', settings.customSymbolNS);
+  console.log('🔥 customSymbol001:', settings.customSymbolNS);
 
   return settings;
 }
@@ -5308,11 +5440,17 @@ async function loadSettingsFromSheet() {
 function applySettingsToUI(settings) {
   const el = (id) => document.getElementById(id);
 
-  // Helper to safely set value
+  // Helper to safely set value with validation
   const setValue = (id, value) => {
     const element = el(id);
     if (element && value !== undefined && value !== null) {
+      const oldValue = element.value;
       element.value = value;
+      // For select elements, verify the value was actually set
+      if (element.tagName === "SELECT" && element.value !== value) {
+        console.warn(`⚠️ setValue(${id}): Attempted to set "${value}" but element has "${element.value}"`);
+        console.warn(`   Available options:`, Array.from(element.options).map(o => o.value));
+      }
     }
   };
 
@@ -5324,8 +5462,8 @@ function applySettingsToUI(settings) {
     }
   };
 
-  // Font settings
-  setValue("fontFam", settings.fontFamily);
+  // Font settings (handle both old and new key names for backwards compatibility)
+  setValue("fontFam", settings.fontFamily || settings.family);
   setValue("titleSize", settings.titleSize);
   setValue("xAxisTitleSize", settings.xAxisTitleSize);
   setValue("yAxisTitleSize", settings.yAxisTitleSize);
@@ -5335,6 +5473,12 @@ function applySettingsToUI(settings) {
   setValue("titleWeight", settings.titleWeight);
   setValue("axisTitleWeight", settings.axisTitleWeight || settings.axisWeight);
   setValue("axisTextWeight", settings.axisTextWeight || settings.axisWeight);
+
+  console.log("📋 Font settings applied:", {
+    fontFamily: settings.fontFamily || settings.family,
+    titleWeight: settings.titleWeight,
+    axisTitleWeight: settings.axisTitleWeight || settings.axisWeight
+  });
 
   // Theme
   setValue("ggtheme", settings.themeName);
@@ -5367,6 +5511,7 @@ function applySettingsToUI(settings) {
 
   // Rotation and layout
   setValue("rotation", settings.rotation);
+  setChecked("tableStyleLabels", settings.tableStyleLabels);
   setValue("xScale", settings.xScale);
   setValue("yScale", settings.yScale);
 
@@ -5382,6 +5527,11 @@ function applySettingsToUI(settings) {
   setChecked("showTitle", settings.showTitle);
   setChecked("showXLabel", settings.showXLabel);
   setChecked("showYLabel", settings.showYLabel);
+
+  // Title and axis label text
+  setValue("titleText", settings.titleText);
+  setValue("xLabel", settings.xLabel);
+  setValue("yLabel", settings.yLabel);
 
   // Data order
   setValue("dataOrder", settings.dataOrder);
@@ -5403,14 +5553,17 @@ function applySettingsToUI(settings) {
   setValue("postHocTest", settings.postHocTest);
 
   // VBracket legend settings (position dropdown removed - manual X/Y only)
+  setValue("vbracketTimepoint", settings.vbracketTimepoint);
   setValue("vbracketX", settings.vbracketX);
   setValue("vbracketY", settings.vbracketY);
   setValue("vbracketTextSize", settings.vbracketTextSize);
+  setValue("vbracketSigSize", settings.vbracketSigSize);
   setValue("vbracketMargin", settings.vbracketMargin);
   setValue("vbracketLineWidth", settings.vbracketLineWidth);
   setValue("vbracketLegendLineLength", settings.vbracketLegendLineLength);
   setValue("vbracketLegendLineWidth", settings.vbracketLegendLineWidth);
   setValue("vbracketItemSpacing", settings.vbracketItemSpacing);
+  setValue("vbracketBracketLayerSpacing", settings.vbracketBracketLayerSpacing);
 
   // Comparison mode (radio buttons)
   if (settings.comparisonMode) {
