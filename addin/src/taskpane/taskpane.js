@@ -5572,7 +5572,37 @@ function collectCurrentSettings() {
     bins: el("bins")?.value || "20",
 
     // Number of groups
-    numGroups: el("numGroups")?.value || "2"
+    numGroups: el("numGroups")?.value || "2",
+
+    // IC50 Analysis settings
+    enableIC50Analysis: el("enableIC50Analysis")?.checked ? "true" : "false",
+    showIC50Value: el("showIC50Value")?.checked ? "true" : "false",
+    showIC50Line: el("showIC50Line")?.checked ? "true" : "false",
+    showHalfMaxLine: el("showHalfMaxLine")?.checked ? "true" : "false",
+    showConfidenceBand: el("showConfidenceBand")?.checked ? "true" : "false",
+    ic50CurveColor: el("ic50CurveColor")?.value || "#2563eb",
+    ic50CurveWidth: el("ic50CurveWidth")?.value || "1.5",
+    ic50LineColor: el("ic50LineColor")?.value || "#dc2626",
+    ic50LineWidth: el("ic50LineWidth")?.value || "0.8",
+    ic50LineAlpha: el("ic50LineAlpha")?.value || "1",
+    ic50HalfLineColor: el("ic50HalfLineColor")?.value || "#808080",
+    ic50HalfLineWidth: el("ic50HalfLineWidth")?.value || "0.5",
+    ic50HalfLineAlpha: el("ic50HalfLineAlpha")?.value || "1",
+    ic50PointSize: el("ic50PointSize")?.value || "3",
+    ic50PointShape: el("ic50PointShape")?.value || "16",
+    ic50PointColor: el("ic50PointColor")?.value || "#1f2937",
+    ic50PointAlpha: el("ic50PointAlpha")?.value || "1",
+    ic50GroupShape1: el("ic50GroupShape1")?.value || "16",
+    ic50GroupShape2: el("ic50GroupShape2")?.value || "17",
+    ic50GroupShape3: el("ic50GroupShape3")?.value || "15",
+    ic50GroupShape4: el("ic50GroupShape4")?.value || "18",
+    ic50GroupShape5: el("ic50GroupShape5")?.value || "1",
+    ic50GroupShape6: el("ic50GroupShape6")?.value || "2",
+    ic50DataDisplay: el("ic50DataDisplay")?.value || "mean_sd",
+    ic50FittingMethod: el("ic50FittingMethod")?.value || "drc",
+    ic50XisLog10: el("ic50XisLog10")?.checked ? "true" : "false",
+    ic50ShowLog10Labels: el("ic50ShowLog10Labels")?.checked ? "true" : "false",
+    ic50DecimalLabels: el("ic50DecimalLabels")?.checked !== false ? "true" : "false"
   };
 
   // Collect group colors dynamically
@@ -5908,6 +5938,36 @@ function applySettingsToUI(settings) {
 
   // Number of groups
   setValue("numGroups", settings.numGroups);
+
+  // IC50 Analysis settings
+  setChecked("enableIC50Analysis", settings.enableIC50Analysis);
+  setChecked("showIC50Value", settings.showIC50Value);
+  setChecked("showIC50Line", settings.showIC50Line);
+  setChecked("showHalfMaxLine", settings.showHalfMaxLine);
+  setChecked("showConfidenceBand", settings.showConfidenceBand);
+  setValue("ic50CurveColor", settings.ic50CurveColor);
+  setValue("ic50CurveWidth", settings.ic50CurveWidth);
+  setValue("ic50LineColor", settings.ic50LineColor);
+  setValue("ic50LineWidth", settings.ic50LineWidth);
+  setValue("ic50LineAlpha", settings.ic50LineAlpha);
+  setValue("ic50HalfLineColor", settings.ic50HalfLineColor);
+  setValue("ic50HalfLineWidth", settings.ic50HalfLineWidth);
+  setValue("ic50HalfLineAlpha", settings.ic50HalfLineAlpha);
+  setValue("ic50PointSize", settings.ic50PointSize);
+  setValue("ic50PointShape", settings.ic50PointShape);
+  setValue("ic50PointColor", settings.ic50PointColor);
+  setValue("ic50PointAlpha", settings.ic50PointAlpha);
+  setValue("ic50GroupShape1", settings.ic50GroupShape1);
+  setValue("ic50GroupShape2", settings.ic50GroupShape2);
+  setValue("ic50GroupShape3", settings.ic50GroupShape3);
+  setValue("ic50GroupShape4", settings.ic50GroupShape4);
+  setValue("ic50GroupShape5", settings.ic50GroupShape5);
+  setValue("ic50GroupShape6", settings.ic50GroupShape6);
+  setValue("ic50DataDisplay", settings.ic50DataDisplay);
+  setValue("ic50FittingMethod", settings.ic50FittingMethod);
+  setChecked("ic50XisLog10", settings.ic50XisLog10);
+  setChecked("ic50ShowLog10Labels", settings.ic50ShowLog10Labels);
+  setChecked("ic50DecimalLabels", settings.ic50DecimalLabels);
 
   // Restore group colors dynamically
   for (let i = 1; i <= 10; i++) {
