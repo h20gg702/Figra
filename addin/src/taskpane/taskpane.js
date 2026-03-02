@@ -20912,12 +20912,14 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     vbracketTimepoint, vbracketPosition, vbracketX, vbracketY, vbracketTextSize, vbracketSigSize, vbracketMargin, vbracketLineWidth,
     fillMode,
     dataOrder, customOrderGroup, customOrderCategory, numGroups, bins, expWidth: wIn, expHeight: hIn,
+    // VBracket extended settings
+    vbracketLegendLineLength, vbracketLegendLineWidth, vbracketItemSpacing, vbracketBracketLayerSpacing,
     // IC50 settings
-    enableIC50Analysis, showIC50Value, showIC50Line, showConfidenceBand,
+    enableIC50Analysis, showIC50Value, showIC50Line, showHalfMaxLine, showConfidenceBand,
     ic50CurveColor, ic50CurveWidth,
     ic50LineColor, ic50LineWidth, ic50LineAlpha,
     ic50HalfLineColor, ic50HalfLineWidth, ic50HalfLineAlpha,
-    ic50PointSize, ic50PointColor, ic50PointAlpha,
+    ic50PointSize, ic50PointShape, ic50GroupShapes, ic50PointColor, ic50PointAlpha,
     ic50DataDisplay, ic50FittingMethod, ic50XisLog10, ic50ShowLog10Labels, ic50DecimalLabels
   };
   console.log("✅ Stored all plot settings for R code generation");
