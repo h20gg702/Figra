@@ -27,27 +27,6 @@
     #status { margin:8px 0; color:#444; min-height:1.2em; }
     canvas { border:1px solid #ddd; background:#fff; display:block; width:500px; height:500px; }
 
-    /* Filename Dialog */
-    #filenameDialog {
-      display:none;
-      position:fixed;
-      top:0; left:0; right:0; bottom:0;
-      background:rgba(0,0,0,0.5);
-      z-index:1000;
-      align-items:center;
-      justify-content:center;
-    }
-    #filenameDialog.show { display:flex; }
-    .dialog-content {
-      background:#fff;
-      padding:20px;
-      border-radius:8px;
-      box-shadow:0 4px 12px rgba(0,0,0,0.3);
-      min-width:320px;
-    }
-    .dialog-content h3 { margin:0 0 16px; font-size:16px; }
-    .dialog-content input { width:100%; box-sizing:border-box; margin-bottom:16px; }
-    .dialog-buttons { display:flex; gap:8px; justify-content:flex-end; }
 
     /* Registration Overlay */
     #registrationOverlay {
@@ -336,35 +315,45 @@
       font-size: 13px;
       color: #333;
     }
+    /* Visual Converter */
+    #vcTable { border-collapse: collapse; font-size: 11px; user-select: none; cursor: cell; }
+    #vcTable td { border: 1px solid #ccc; padding: 3px 6px; min-width: 36px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #vcTable td.vc-sel { outline: 2px solid #2563eb; outline-offset: -2px; background: #bfdbfe !important; }
+    #vcTable td.vc-cursor { box-shadow: inset 0 0 0 2px #1d4ed8; }
+    #vcTableWrap:focus { outline: 2px solid #2563eb; outline-offset: 1px; }
+    #vcTable td.vc-group { background: #dbeafe; }
+    #vcTable td.vc-x { background: #dcfce7; }
+    #vcTable td.vc-values { background: #fef3c7; }
+    #vcTable td.vc-skip { background: #f3f4f6; color: #aaa; }
+    #vcTable td.vc-factor3 { background: #ede9fe; }
+    #vcTable td.vc-factor4 { background: #fce7f3; }
+    .vc-role-btn { font-size: 11px; padding: 3px 8px; border-radius: 3px; border: 1px solid #ccc; cursor: pointer; background: #f9f9f9; }
+    .vc-role-btn:hover { opacity: 0.8; }
+    .vc-role-btn.vc-group { background: #dbeafe; border-color: #93c5fd; }
+    .vc-role-btn.vc-x { background: #dcfce7; border-color: #86efac; }
+    .vc-role-btn.vc-values { background: #fef3c7; border-color: #fcd34d; }
+    .vc-role-btn.vc-skip { background: #f3f4f6; border-color: #d1d5db; }
+    .vc-role-btn.vc-factor3 { background: #ede9fe; border-color: #c4b5fd; }
+    .vc-role-btn.vc-factor4 { background: #fce7f3; border-color: #f9a8d4; }
   </style>
 </head>
 <body>
-  <!-- Filename Dialog -->
-  <div id="filenameDialog">
-    <div class="dialog-content">
-      <h3>Save Figure</h3>
-      <input type="text" id="filenameInput" placeholder="Enter filename..." />
-      <div class="dialog-buttons">
-        <button id="filenameCancelBtn">Cancel</button>
-        <button id="filenameSaveBtn" style="background:#4C78A8; color:#fff;">Save</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Save Image Dialog -->
   <div id="saveImageDialog" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.8); z-index:1001; overflow:auto;">
     <div style="background:#fff; margin:40px auto; padding:20px; max-width:800px; border-radius:8px;">
-      <h3 style="margin-top:0;">Save Figure with Metadata</h3>
-      <p style="font-size:14px; color:#666; margin-bottom:16px;">
-        <strong>🖱️ DRAG this image to your Desktop or Finder</strong><br>
-        Or right-click and select "Save Image As..."<br>
-        Save as: <strong id="suggestedFilename">plot.png</strong>
-      </p>
+      <h3 style="margin-top:0;">Save Figure</h3>
+      <p style="font-size:12px; color:#555; background:#fff8e1; border-left:3px solid #f9a825; padding:6px 10px; border-radius:4px; margin:0 0 12px;">💡 <strong>Windows / Excel Online users:</strong> use the <strong>⬇ Download</strong> button below.</p>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <label style="font-size:13px; font-weight:600; white-space:nowrap;">Filename:</label>
+        <input type="text" id="suggestedFilename" style="flex:1; font-size:13px; padding:5px 8px; border:1px solid #ccc; border-radius:6px;" />
+      </div>
+      <p id="saveInstructions" style="font-size:13px; color:#555; margin-bottom:12px;"></p>
       <div style="border:2px dashed #4C78A8; padding:20px; text-align:center; background:#f0f5ff;">
         <img id="saveImagePreview" style="max-width:100%; border:1px solid #ddd; cursor:move;" />
       </div>
-      <div style="margin-top:16px; text-align:right;">
-        <button id="closeSaveImageDialog" style="padding:8px 16px; background:#4C78A8; color:#fff; border:none; border-radius:4px; cursor:pointer;">Close</button>
+      <div style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end;">
+        <button id="downloadFigureBtn" style="padding:8px 16px; background:#4C78A8; color:#fff; border:none; border-radius:4px; cursor:pointer;">⬇ Download</button>
+        <button id="closeSaveImageDialog" style="padding:8px 16px; background:#888; color:#fff; border:none; border-radius:4px; cursor:pointer;">Close</button>
       </div>
     </div>
   </div>
@@ -373,7 +362,7 @@
   <div id="registrationOverlay">
     <div class="registration-card">
       <h2>Welcome to Figra</h2>
-      <p class="subtitle">Please register to start creating publication-quality figures.</p>
+      <p class="subtitle">Free for everyone — one-time registration required.</p>
 
       <div class="form-group">
         <label for="regEmail">Email *</label>
@@ -437,15 +426,78 @@
     <!-- Tab Navigation -->
     <div class="tab-nav">
       <button class="tab-button active" data-tab="tab-data">Data & Chart</button>
+      <button class="tab-button" data-tab="tab-converter">Converter</button>
       <button class="tab-button" data-tab="tab-colors">Colors & Style</button>
       <button class="tab-button" data-tab="tab-text">Text & Font</button>
       <button class="tab-button" data-tab="tab-theme">Theme & Layout</button>
       <button class="tab-button" data-tab="tab-stats">Statistics</button>
       <button class="tab-button" data-tab="tab-analysis">Analysis</button>
+      <button class="tab-button" data-tab="tab-help">Help</button>
     </div>
 
     <!-- Tab 1: Data & Chart -->
     <div id="tab-data" class="tab-content active">
+
+    <!-- Expected Data Format (always shown, hideable) -->
+    <div style="margin-bottom:10px; padding:8px; border:1px solid #ddd; border-radius:4px; background:#f9f9f9;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+        <span style="font-weight:bold; font-size:12px;">Expected Data Format</span>
+        <label style="font-size:11px; color:#888; cursor:pointer; display:flex; align-items:center; gap:3px; user-select:none;">
+          <input type="checkbox" id="hideFormatGuide" style="margin:0;"> Hide
+        </label>
+      </div>
+      <div id="formatGuideDiagram">
+        <div style="background:#fff; border:1px solid #e0e0e0; border-radius:4px; padding:8px;">
+          <div style="display:flex; align-items:flex-start; gap:4px;">
+            <!-- Wide table -->
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:9px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">Your data (Wide format)</div>
+              <table style="width:100%; border-collapse:collapse; font-size:9px;">
+                <tr style="background:#e8f0fe;">
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Sample</th>
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</th>
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#E15759;">Treatment</th>
+                </tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep1</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">3.2</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">5.1</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep2</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">2.8</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">4.9</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep3</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">3.5</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">5.8</td></tr>
+              </table>
+            </div>
+            <!-- Arrow -->
+            <div style="display:flex; align-items:center; padding-top:20px; font-size:18px; color:#888; flex-shrink:0;">→</div>
+            <!-- Long table -->
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:9px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">For Figra (Long format)</div>
+              <table style="width:100%; border-collapse:collapse; font-size:9px;">
+                <tr style="background:#e8f0fe;">
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Sample</th>
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Category</th>
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Value</th>
+                </tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep1</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">3.2</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep2</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">2.8</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep3</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">3.5</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep1</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#E15759;">Treatment</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">5.1</td></tr>
+                <tr style="color:#aaa;"><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">...</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">...</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">...</td></tr>
+              </table>
+            </div>
+          </div>
+          <div style="font-size:10px; color:#555; margin-top:6px;">
+            Figra expects one row per measurement. If your data has one column per group, use the <b>Converter</b> tab.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 1: Load Data — placed here so the top-to-bottom flow is natural -->
+    <div style="margin: 10px 0 14px 0;">
+      <button onclick="document.getElementById('load').click()"
+              style="width:100%; padding:9px; font-size:12px;
+                     background:#f5f5f5; color:#333; border:1px solid #ccc; border-radius:6px;
+                     cursor:pointer;">
+        Select your data in Excel and click here to load
+      </button>
+    </div>
 
     <div class="row">
       <label for="chartType">Chart Type</label>
@@ -472,6 +524,7 @@
         <option value="line_grouped_error">Grouped line (mean±error)</option>
         <option value="line_grouped_error_raw">Grouped line with error (raw data)</option>
         <option value="ic50_dose_response">IC50 Dose-Response</option>
+        <option value="ic50_grouped_dose_response">Grouped IC50 Dose-Response</option>
       </select>
       <!-- Custom dropdown with icons -->
       <div id="chartTypeDropdown" class="chart-dropdown">
@@ -483,6 +536,17 @@
         <div id="chartTypeOptions" class="chart-dropdown-options">
           <!-- Options will be populated by JavaScript -->
         </div>
+      </div>
+    </div>
+
+    <!-- IC50-specific options (shown only for IC50 chart types) -->
+    <div id="ic50DataChartOptions" style="display:none; margin: 4px 0 6px 0;">
+      <div class="row">
+        <input type="checkbox" id="ic50XisLog10" />
+        <label for="ic50XisLog10" style="font-weight:normal;width:auto">Concentrations are log<sub>10</sub>-transformed?</label>
+      </div>
+      <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:4px; padding:7px 10px; font-size:11px; color:#1e40af; margin-top:4px;">
+        IC50 analysis settings (curve display, data points, export) are in the <strong>Analysis</strong> tab.
       </div>
     </div>
 
@@ -540,22 +604,6 @@
       </div>
     </div>
 
-    <div class="row actions">
-      <button id="load">Load Data</button>
-      <button id="preview">Preview</button>
-      <button id="insert">Insert Figure to Sheet</button>
-    </div>
-
-    <div class="row actions" style="margin-top:4px;">
-      <button id="loadFromFigure">📁 Load from Figure</button>
-      <button id="saveFigure">💾 Save Figure</button>
-    </div>
-
-    <div class="row actions" style="margin-top:4px;">
-      <button id="downloadRCode">Download R Code</button>
-      <button id="writeRCodeToCell">📋 Copy R Code</button>
-    </div>
-
     <!-- Hidden: Export statistics button (no longer used)
     <div class="row actions" style="margin-top:4px;">
       <button id="exportStatResults">
@@ -583,7 +631,8 @@
 
     <!-- Preset Settings -->
     <div style="margin-top:16px; padding:8px; border:1px solid #ddd; border-radius:4px; background:#f9f9f9; display:inline-block;">
-      <div style="font-weight:bold; font-size:12px; margin-bottom:6px;">Preset Settings</div>
+      <div style="font-weight:bold; font-size:12px; margin-bottom:4px;">Preset Settings</div>
+      <div style="font-size:11px; color:#666; margin-bottom:8px;">Save your current settings (colors, fonts, theme…) as a preset and reload them anytime.<br>Presets are stored as a sheet in this workbook.</div>
 
       <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
         <input type="text" id="presetName" placeholder="Preset name" style="width:210px; font-size:11px;" value="MyPreset">
@@ -594,6 +643,7 @@
         <select id="presetSheet" style="width:210px; font-size:11px;">
           <option value="">-- No presets --</option>
         </select>
+        <button id="refreshPreset" style="width:28px; font-size:11px; padding:4px 4px;" title="Refresh preset list">🔄</button>
         <button id="loadPreset" style="width:60px; font-size:11px; padding:4px 6px;">Load</button>
       </div>
     </div>
@@ -607,7 +657,7 @@
       <div class="row" id="barInteriorRow">
         <label>Bar Interior</label>
         <div style="display:flex; flex-direction:column; gap:6px; width:280px">
-          <div style="display:flex; align-items:center; gap:8px;">
+          <div id="fillColorSubRow" style="display:flex; align-items:center; gap:8px;">
             <label for="fillColor" style="width:50px;">Color</label>
             <input id="fillPicker" type="color" value="#4C78A8" />
             <input id="fillColor" type="text" placeholder="#4C78A8" style="width:100px" />
@@ -616,6 +666,21 @@
             <label for="fillAlpha" style="width:50px;">Opacity</label>
             <input id="fillAlpha" type="range" min="0" max="1" step="0.05" value="1" style="width:180px;">
           </div>
+        </div>
+      </div>
+
+      <!-- Fill Mode (bar_error_dot only) -->
+      <div class="row" id="fillModeRow" style="display:none;">
+        <label>Fill mode</label>
+        <div style="display:flex; gap:16px; align-items:center; width:280px;">
+          <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input type="radio" name="fillMode" id="fillModeSingle" value="single" checked />
+            Single color
+          </label>
+          <label style="display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input type="radio" name="fillMode" id="fillModePerCategory" value="per_category" />
+            Per category
+          </label>
         </div>
       </div>
 
@@ -631,36 +696,36 @@
 
       <!-- Group Colors -->
       <div class="row" id="groupColorRow" style="display:none;">
-        <label>Group Colors</label>
+        <label id="groupColorRowLabel">Group Colors</label>
         <div style="display:flex; flex-direction:column; gap:6px; width:280px;">
           <div id="groupColorControls">
             <div class="group-color-item" data-group="1">
-              <label for="groupColor1">1st group</label>
+              <label for="groupColor1" id="groupColorLabel1">1st group</label>
               <input id="groupPicker1" type="color" value="#4C78A8" />
               <input id="groupColor1" type="text" placeholder="#4C78A8" style="width:100px" />
             </div>
             <div class="group-color-item" data-group="2">
-              <label for="groupColor2">2nd group</label>
+              <label for="groupColor2" id="groupColorLabel2">2nd group</label>
               <input id="groupPicker2" type="color" value="#E15759" />
               <input id="groupColor2" type="text" placeholder="#E15759" style="width:100px" />
             </div>
             <div class="group-color-item" data-group="3" style="display:none;">
-              <label for="groupColor3">3rd group</label>
+              <label for="groupColor3" id="groupColorLabel3">3rd group</label>
               <input id="groupPicker3" type="color" value="#57C4AD" />
               <input id="groupColor3" type="text" placeholder="#57C4AD" style="width:100px" />
             </div>
             <div class="group-color-item" data-group="4" style="display:none;">
-              <label for="groupColor4">4th group</label>
+              <label for="groupColor4" id="groupColorLabel4">4th group</label>
               <input id="groupPicker4" type="color" value="#E9C46A" />
               <input id="groupColor4" type="text" placeholder="#E9C46A" style="width:100px" />
             </div>
             <div class="group-color-item" data-group="5" style="display:none;">
-              <label for="groupColor5">5th group</label>
+              <label for="groupColor5" id="groupColorLabel5">5th group</label>
               <input id="groupPicker5" type="color" value="#F76C6C" />
               <input id="groupColor5" type="text" placeholder="#F76C6C" style="width:100px" />
             </div>
             <div class="group-color-item" data-group="6" style="display:none;">
-              <label for="groupColor6">6th group</label>
+              <label for="groupColor6" id="groupColorLabel6">6th group</label>
               <input id="groupPicker6" type="color" value="#A8DADC" />
               <input id="groupColor6" type="text" placeholder="#A8DADC" style="width:100px" />
             </div>
@@ -730,9 +795,9 @@
       <!-- IC50 Curve Style (shown only for IC50 chart type) -->
       <div id="ic50StyleSection" style="display: none;">
         <div class="row">
-          <label style="font-weight: bold;">IC50 Curve Style</label>
+          <label style="font-weight: bold;">Dose response curve</label>
         </div>
-        <div class="row">
+        <div class="row" id="ic50CurveColorRow">
           <label for="ic50CurveColor">Curve color</label>
           <div style="display:flex; align-items:center; gap:8px;">
             <input type="color" id="ic50CurveColor" value="#2563eb" style="width: 60px; height: 28px;">
@@ -742,17 +807,174 @@
           <label for="ic50CurveWidth">Curve width</label>
           <input type="number" id="ic50CurveWidth" value="1.5" min="0.5" max="5" step="0.5" style="width: 80px;">
         </div>
-        <div class="row">
-          <label for="ic50LineColor">IC50 line color</label>
+        <div class="row" id="ic50VerticalLineHeader" style="display:none; border-top: 1px solid #e5e7eb; margin-top: 6px; padding-top: 6px;">
+          <label style="font-weight: bold;" id="ic50VerticalLineTitleLabel">IC50 line (vertical)</label>
+        </div>
+        <div class="row" id="ic50LineColorRow">
+          <label for="ic50LineColor" id="ic50LineColorLabel">Color</label>
           <div style="display:flex; align-items:center; gap:8px;">
             <input type="color" id="ic50LineColor" value="#dc2626" style="width: 60px; height: 28px;">
           </div>
         </div>
         <div class="row">
+          <label for="ic50LineWidth" id="ic50LineWidthLabel">Line width</label>
+          <input type="number" id="ic50LineWidth" value="0.8" min="0.1" max="3" step="0.1" style="width: 80px;">
+        </div>
+        <div class="row">
+          <label for="ic50LineAlpha" id="ic50LineAlphaLabel">Opacity</label>
+          <input type="number" id="ic50LineAlpha" value="1" min="0" max="1" step="0.1" style="width: 80px;">
+        </div>
+        <div class="row" id="ic50HalfLineHeader" style="display:none; border-top: 1px solid #e5e7eb; margin-top: 6px; padding-top: 6px;">
+          <label style="font-weight: bold;">50% line (horizontal)</label>
+        </div>
+        <div class="row" id="ic50HalfLineColorRow" style="display:none;">
+          <label for="ic50HalfLineColor">Color</label>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <input type="color" id="ic50HalfLineColor" value="#808080" style="width: 60px; height: 28px;">
+          </div>
+        </div>
+        <div class="row" id="ic50HalfLineWidthRow" style="display:none;">
+          <label for="ic50HalfLineWidth">Line width</label>
+          <input type="number" id="ic50HalfLineWidth" value="0.5" min="0.1" max="3" step="0.1" style="width: 80px;">
+        </div>
+        <div class="row" id="ic50HalfLineAlphaRow" style="display:none;">
+          <label for="ic50HalfLineAlpha">Opacity</label>
+          <input type="number" id="ic50HalfLineAlpha" value="1" min="0" max="1" step="0.1" style="width: 80px;">
+        </div>
+        <div class="row" style="border-top: 1px solid #e5e7eb; margin-top: 6px; padding-top: 6px;">
+          <label style="font-weight: bold;">Dots</label>
+        </div>
+        <div class="row">
           <label for="ic50PointSize">Point size</label>
           <input type="number" id="ic50PointSize" value="3" min="1" max="10" step="0.5" style="width: 80px;">
         </div>
-        <div class="row">
+        <div class="row" id="ic50PointShapeRow">
+          <label for="ic50PointShape">Point shape</label>
+          <select id="ic50PointShape">
+            <option value="16" selected>● Circle (filled)</option>
+            <option value="1">○ Circle (open)</option>
+            <option value="15">■ Square (filled)</option>
+            <option value="0">□ Square (open)</option>
+            <option value="17">▲ Triangle up (filled)</option>
+            <option value="2">△ Triangle up (open)</option>
+            <option value="25">▼ Triangle down (filled)</option>
+            <option value="6">▽ Triangle down (open)</option>
+            <option value="18">♦ Diamond (filled)</option>
+            <option value="5">◇ Diamond (open)</option>
+            <option value="19">● Large circle</option>
+            <option value="3">+ Plus</option>
+            <option value="4">× Cross</option>
+          </select>
+        </div>
+        <!-- Per-group point shapes (shown only for grouped IC50) -->
+        <div id="ic50GroupShapeSection" style="display:none;">
+          <div class="row"><label style="font-weight:600; font-size:12px;">Point shape per group</label></div>
+          <div style="display:flex; flex-direction:column; gap:4px; padding-left:4px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label id="ic50GroupShapeLabel1" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">1st group</label>
+              <select id="ic50GroupShape1" style="flex:1; font-size:12px;">
+                <option value="16" selected>● Circle (filled)</option>
+                <option value="17">▲ Triangle up (filled)</option>
+                <option value="15">■ Square (filled)</option>
+                <option value="18">♦ Diamond (filled)</option>
+                <option value="1">○ Circle (open)</option>
+                <option value="2">△ Triangle up (open)</option>
+                <option value="25">▼ Triangle down (filled)</option>
+                <option value="6">▽ Triangle down (open)</option>
+                <option value="0">□ Square (open)</option>
+                <option value="5">◇ Diamond (open)</option>
+                <option value="3">+ Plus</option>
+                <option value="4">× Cross</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label id="ic50GroupShapeLabel2" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">2nd group</label>
+              <select id="ic50GroupShape2" style="flex:1; font-size:12px;">
+                <option value="16">● Circle (filled)</option>
+                <option value="17" selected>▲ Triangle up (filled)</option>
+                <option value="15">■ Square (filled)</option>
+                <option value="18">♦ Diamond (filled)</option>
+                <option value="1">○ Circle (open)</option>
+                <option value="2">△ Triangle up (open)</option>
+                <option value="25">▼ Triangle down (filled)</option>
+                <option value="6">▽ Triangle down (open)</option>
+                <option value="0">□ Square (open)</option>
+                <option value="5">◇ Diamond (open)</option>
+                <option value="3">+ Plus</option>
+                <option value="4">× Cross</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label id="ic50GroupShapeLabel3" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">3rd group</label>
+              <select id="ic50GroupShape3" style="flex:1; font-size:12px;">
+                <option value="16">● Circle (filled)</option>
+                <option value="17">▲ Triangle up (filled)</option>
+                <option value="15" selected>■ Square (filled)</option>
+                <option value="18">♦ Diamond (filled)</option>
+                <option value="1">○ Circle (open)</option>
+                <option value="2">△ Triangle up (open)</option>
+                <option value="25">▼ Triangle down (filled)</option>
+                <option value="6">▽ Triangle down (open)</option>
+                <option value="0">□ Square (open)</option>
+                <option value="5">◇ Diamond (open)</option>
+                <option value="3">+ Plus</option>
+                <option value="4">× Cross</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label id="ic50GroupShapeLabel4" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">4th group</label>
+              <select id="ic50GroupShape4" style="flex:1; font-size:12px;">
+                <option value="16">● Circle (filled)</option>
+                <option value="17">▲ Triangle up (filled)</option>
+                <option value="15">■ Square (filled)</option>
+                <option value="18" selected>♦ Diamond (filled)</option>
+                <option value="1">○ Circle (open)</option>
+                <option value="2">△ Triangle up (open)</option>
+                <option value="25">▼ Triangle down (filled)</option>
+                <option value="6">▽ Triangle down (open)</option>
+                <option value="0">□ Square (open)</option>
+                <option value="5">◇ Diamond (open)</option>
+                <option value="3">+ Plus</option>
+                <option value="4">× Cross</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label id="ic50GroupShapeLabel5" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">5th group</label>
+              <select id="ic50GroupShape5" style="flex:1; font-size:12px;">
+                <option value="16">● Circle (filled)</option>
+                <option value="17">▲ Triangle up (filled)</option>
+                <option value="15">■ Square (filled)</option>
+                <option value="18">♦ Diamond (filled)</option>
+                <option value="1" selected>○ Circle (open)</option>
+                <option value="2">△ Triangle up (open)</option>
+                <option value="25">▼ Triangle down (filled)</option>
+                <option value="6">▽ Triangle down (open)</option>
+                <option value="0">□ Square (open)</option>
+                <option value="5">◇ Diamond (open)</option>
+                <option value="3">+ Plus</option>
+                <option value="4">× Cross</option>
+              </select>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label id="ic50GroupShapeLabel6" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">6th group</label>
+              <select id="ic50GroupShape6" style="flex:1; font-size:12px;">
+                <option value="16">● Circle (filled)</option>
+                <option value="17">▲ Triangle up (filled)</option>
+                <option value="15">■ Square (filled)</option>
+                <option value="18">♦ Diamond (filled)</option>
+                <option value="1">○ Circle (open)</option>
+                <option value="2" selected>△ Triangle up (open)</option>
+                <option value="25">▼ Triangle down (filled)</option>
+                <option value="6">▽ Triangle down (open)</option>
+                <option value="0">□ Square (open)</option>
+                <option value="5">◇ Diamond (open)</option>
+                <option value="3">+ Plus</option>
+                <option value="4">× Cross</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div class="row" id="ic50PointColorRow">
           <label for="ic50PointColor">Point color</label>
           <div style="display:flex; align-items:center; gap:8px;">
             <input type="color" id="ic50PointColor" value="#1f2937" style="width: 60px; height: 28px;">
@@ -762,6 +984,10 @@
           <label for="ic50PointAlpha">Point opacity</label>
           <input type="number" id="ic50PointAlpha" value="1" min="0" max="1" step="0.1" style="width: 80px;">
         </div>
+      </div>
+
+      <div class="row" style="margin-top:16px; border-top:1px solid #e5e7eb; padding-top:10px;">
+        <button id="resetTab2"">Reset to defaults</button>
       </div>
 
     </div><!-- End Tab 2: Colors & Style -->
@@ -786,7 +1012,7 @@
       <!-- Title Section -->
       <div class="row">
         <label for="showTitle">Show title</label>
-        <input type="checkbox" id="showTitle" checked>
+        <input type="checkbox" id="showTitle">
       </div>
       <div class="row">
         <label>Title</label>
@@ -798,6 +1024,8 @@
             <button type="button" onclick="formatText('titleText', 'sub')" title="Make selected text subscript">X₂</button>
             <button type="button" onclick="insertSymbol('titleText', 'log₂')" title="Insert log base 2">log₂</button>
             <button type="button" onclick="insertSymbol('titleText', 'log₁₀')" title="Insert log base 10">log₁₀</button>
+            <button type="button" onclick="openGreekPicker(event,'titleText')" title="Insert Greek letter or symbol">Ω</button>
+            <span style="font-size:10px; color:#888; align-self:center; white-space:nowrap;">← opens Greek/Symbol picker</span>
           </div>
         </div>
       </div>
@@ -828,6 +1056,8 @@
             <button type="button" onclick="formatText('xLabel', 'sub')" title="Make selected text subscript">X₂</button>
             <button type="button" onclick="insertSymbol('xLabel', 'log₂')" title="Insert log base 2">log₂</button>
             <button type="button" onclick="insertSymbol('xLabel', 'log₁₀')" title="Insert log base 10">log₁₀</button>
+            <button type="button" onclick="openGreekPicker(event,'xLabel')" title="Insert Greek letter or symbol">Ω</button>
+            <span style="font-size:10px; color:#888; align-self:center; white-space:nowrap;">← opens Greek/Symbol picker</span>
           </div>
         </div>
       </div>
@@ -855,6 +1085,8 @@
             <button type="button" onclick="formatText('yLabel', 'sub')" title="Make selected text subscript">X₂</button>
             <button type="button" onclick="insertSymbol('yLabel', 'log₂')" title="Insert log base 2">log₂</button>
             <button type="button" onclick="insertSymbol('yLabel', 'log₁₀')" title="Insert log base 10">log₁₀</button>
+            <button type="button" onclick="openGreekPicker(event,'yLabel')" title="Insert Greek letter or symbol">Ω</button>
+            <span style="font-size:10px; color:#888; align-self:center; white-space:nowrap;">← opens Greek/Symbol picker</span>
           </div>
         </div>
       </div>
@@ -891,6 +1123,10 @@
         </select>
       </div>
 
+      <div class="row" style="margin-top:16px; border-top:1px solid #e5e7eb; padding-top:10px;">
+        <button id="resetTab3"">Reset to defaults</button>
+      </div>
+
     </div><!-- End Tab 3: Text & Font -->
 
     <!-- Tab 4: Theme & Layout -->
@@ -901,19 +1137,27 @@
         <label>ggtheme</label>
         <select id="ggtheme" style="width:280px">
           <option value="gray">gray</option>
-          <option value="bw">bw</option>
+          <option value="bw" selected>bw</option>
           <option value="linedraw">linedraw</option>
           <option value="light">light</option>
           <option value="dark">dark</option>
-          <option value="minimal" selected>minimal</option>
+          <option value="minimal">minimal</option>
           <option value="classic">classic</option>
           <option value="void">void</option>
-          <option value="test">test</option>
+        </select>
+      </div>
+
+      <!-- X axis tick marks -->
+      <div class="row">
+        <label for="xBreaksMode">X-axis ticks</label>
+        <select id="xBreaksMode">
+          <option value="auto" selected>Auto</option>
+          <option value="data">At data points</option>
         </select>
       </div>
 
       <!-- X axis scale -->
-      <div class="row">
+      <div class="row" id="xScaleRow">
         <label for="xScale">X axis scale</label>
         <select id="xScale">
           <option value="linear" selected>Linear</option>
@@ -926,7 +1170,7 @@
       </div>
 
       <!-- Y axis scale -->
-      <div class="row">
+      <div class="row" id="yScaleRow">
         <label for="yScale">Y axis scale</label>
         <select id="yScale">
           <option value="linear" selected>Linear</option>
@@ -989,11 +1233,76 @@
       </div>
 
       <!-- Axis text positioning section -->
-      <div style="margin-top:15px; margin-bottom:5px; font-weight:bold; font-size:13px;">
+      <div style="margin-top:15px; margin-bottom:8px; font-weight:bold; font-size:13px;">
         Axis text positioning
       </div>
-      <div style="margin-bottom:10px; font-size:11px; color:#666;">
-        hjust: horizontal alignment (0=left, 0.5=center, 1=right) | vjust: vertical alignment (0=bottom, 0.5=middle, 1=top)
+
+      <!-- Visual preset diagram -->
+      <div style="background:#f7f9fc; border:1px solid #d0d7e3; border-radius:6px; padding:8px 6px 8px; margin-bottom:10px;">
+        <div style="font-size:10px; color:#555; margin-bottom:8px; text-align:center;">X axis label presets — click <b>Apply</b> to auto-fill</div>
+        <div style="display:flex; gap:5px; justify-content:space-between; align-items:flex-start;">
+
+          <!-- Preset 1: 30° diagonal -->
+          <div style="flex:1; text-align:center;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="76" height="68" viewBox="0 0 76 68" style="display:block;margin:0 auto;overflow:visible;">
+              <rect x="6"  y="12" width="12" height="18" fill="#5b9bd5" rx="1"/>
+              <rect x="30" y="5"  width="12" height="25" fill="#5b9bd5" rx="1"/>
+              <rect x="54" y="16" width="12" height="14" fill="#5b9bd5" rx="1"/>
+              <line x1="2" y1="30" x2="74" y2="30" stroke="#888" stroke-width="1.2"/>
+              <line x1="12" y1="30" x2="12" y2="33" stroke="#888" stroke-width="1"/>
+              <line x1="36" y1="30" x2="36" y2="33" stroke="#888" stroke-width="1"/>
+              <line x1="60" y1="30" x2="60" y2="33" stroke="#888" stroke-width="1"/>
+              <text x="12" y="35" text-anchor="end" font-size="9" fill="#333" font-family="Arial,sans-serif" transform="rotate(-30 12 35)">Control</text>
+              <text x="36" y="35" text-anchor="end" font-size="9" fill="#333" font-family="Arial,sans-serif" transform="rotate(-30 36 35)">Treated</text>
+              <text x="60" y="35" text-anchor="end" font-size="9" fill="#333" font-family="Arial,sans-serif" transform="rotate(-30 60 35)">Vehicle</text>
+            </svg>
+            <div style="font-size:9px; color:#555; line-height:1.5; margin:2px 0 4px;"><b>30°</b> · hjust=1, vjust=1<br><span style="color:#888;">gentle tilt</span></div>
+            <button onclick="document.getElementById('xAxisRotation').value=30;document.getElementById('xAxisHjust').value=1;document.getElementById('xAxisVjust').value=1;"
+                    style="font-size:9px;padding:2px 0;background:#e8f0fa;border:1px solid #5b9bd5;border-radius:3px;cursor:pointer;color:#1a4f8a;width:100%;">Apply</button>
+          </div>
+
+          <!-- Preset 2: 45° diagonal -->
+          <div style="flex:1; text-align:center;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="76" height="68" viewBox="0 0 76 68" style="display:block;margin:0 auto;overflow:visible;">
+              <rect x="6"  y="10" width="12" height="16" fill="#5b9bd5" rx="1"/>
+              <rect x="30" y="4"  width="12" height="22" fill="#5b9bd5" rx="1"/>
+              <rect x="54" y="14" width="12" height="12" fill="#5b9bd5" rx="1"/>
+              <line x1="2" y1="26" x2="74" y2="26" stroke="#888" stroke-width="1.2"/>
+              <line x1="12" y1="26" x2="12" y2="29" stroke="#888" stroke-width="1"/>
+              <line x1="36" y1="26" x2="36" y2="29" stroke="#888" stroke-width="1"/>
+              <line x1="60" y1="26" x2="60" y2="29" stroke="#888" stroke-width="1"/>
+              <text x="12" y="32" text-anchor="end" font-size="9" fill="#333" font-family="Arial,sans-serif" transform="rotate(-45 12 32)">Control</text>
+              <text x="36" y="32" text-anchor="end" font-size="9" fill="#333" font-family="Arial,sans-serif" transform="rotate(-45 36 32)">Treated</text>
+              <text x="60" y="32" text-anchor="end" font-size="9" fill="#333" font-family="Arial,sans-serif" transform="rotate(-45 60 32)">Vehicle</text>
+            </svg>
+            <div style="font-size:9px; color:#555; line-height:1.5; margin:2px 0 4px;"><b>45°</b> · hjust=1, vjust=1<br><span style="color:#888;">most common</span></div>
+            <button onclick="document.getElementById('xAxisRotation').value=45;document.getElementById('xAxisHjust').value=1;document.getElementById('xAxisVjust').value=1;"
+                    style="font-size:9px;padding:2px 0;background:#e8f0fa;border:1px solid #5b9bd5;border-radius:3px;cursor:pointer;color:#1a4f8a;width:100%;">Apply</button>
+          </div>
+
+          <!-- Preset 3: 90° vertical -->
+          <div style="flex:1; text-align:center;">
+            <svg xmlns="http://www.w3.org/2000/svg" width="76" height="68" viewBox="0 0 76 68" style="display:block;margin:0 auto;overflow:visible;">
+              <rect x="6"  y="5"  width="12" height="13" fill="#5b9bd5" rx="1"/>
+              <rect x="30" y="1"  width="12" height="17" fill="#5b9bd5" rx="1"/>
+              <rect x="54" y="8"  width="12" height="10" fill="#5b9bd5" rx="1"/>
+              <line x1="2" y1="18" x2="74" y2="18" stroke="#888" stroke-width="1.2"/>
+              <line x1="12" y1="18" x2="12" y2="21" stroke="#888" stroke-width="1"/>
+              <line x1="36" y1="18" x2="36" y2="21" stroke="#888" stroke-width="1"/>
+              <line x1="60" y1="18" x2="60" y2="21" stroke="#888" stroke-width="1"/>
+              <text x="12" y="24" text-anchor="end" font-size="9" fill="#333" font-family="Arial,sans-serif" transform="rotate(-90 12 24)">Control</text>
+              <text x="36" y="24" text-anchor="end" font-size="9" fill="#333" font-family="Arial,sans-serif" transform="rotate(-90 36 24)">Treated</text>
+              <text x="60" y="24" text-anchor="end" font-size="9" fill="#333" font-family="Arial,sans-serif" transform="rotate(-90 60 24)">Vehicle</text>
+            </svg>
+            <div style="font-size:9px; color:#555; line-height:1.5; margin:2px 0 4px;"><b>90°</b> · hjust=1<br><span style="color:#888;">very long labels</span></div>
+            <button onclick="document.getElementById('xAxisRotation').value=90;document.getElementById('xAxisHjust').value=1;document.getElementById('xAxisVjust').value=0.5;"
+                    style="font-size:9px;padding:2px 0;background:#e8f0fa;border:1px solid #5b9bd5;border-radius:3px;cursor:pointer;color:#1a4f8a;width:100%;">Apply</button>
+          </div>
+
+        </div>
+        <div style="font-size:9px; color:#888; margin-top:7px; padding-top:5px; border-top:1px solid #dde4ef; text-align:center;">
+          hjust: 0=left · 0.5=center · 1=right &nbsp;|&nbsp; vjust: 0=bottom · 0.5=mid · 1=top
+        </div>
       </div>
 
       <div class="row">
@@ -1014,6 +1323,10 @@
       <div class="row">
         <label for="yAxisVjust">Y axis vjust</label>
         <input id="yAxisVjust" type="number" min="0" max="1" step="0.1" value="0.5" />
+      </div>
+
+      <div class="row" style="margin-top:16px; border-top:1px solid #e5e7eb; padding-top:10px;">
+        <button id="resetTab4"">Reset to defaults</button>
       </div>
 
     </div><!-- End Tab 4: Theme & Layout -->
@@ -1154,8 +1467,8 @@
               <div id="parametricPostHoc">
                 <select id="postHocTest" style="width:220px;">
                   <option value="tukey" selected>Tukey HSD (all pairs)</option>
-                  <option value="bonferroni">Bonferroni (all pairs)</option>
-                  <option value="holm">Holm (all pairs)</option>
+                  <option value="bonferroni">Pairwise t-test + Bonferroni</option>
+                  <option value="holm">Pairwise t-test + Holm</option>
                   <option value="dunnett">Dunnett (vs control only)</option>
                 </select>
               </div>
@@ -1163,7 +1476,8 @@
               <!-- Non-parametric post-hoc options -->
               <div id="nonparametricPostHoc" style="display:none;">
                 <select id="postHocTestNonparam" style="width:220px;">
-                  <option value="dunn" selected>Dunn (all pairs)</option>
+                  <option value="dunn" selected>Dunn (Bonferroni adj.)</option>
+                  <option value="dunn_holm">Dunn (Holm adj.)</option>
                   <option value="steel">Steel (vs control only)</option>
                 </select>
               </div>
@@ -1223,28 +1537,80 @@
           </div>
           <!-- Traditional statistical annotation controls (for bars, boxes, 2-group line plots) -->
           <div id="traditionalStatControls">
-            <div style="display:flex; align-items:center; gap:10px; margin-top:8px;">
+            <!-- Show brackets checkbox (full width, no grid) -->
+            <div style="display:flex; align-items:center; gap:8px; margin-top:8px; margin-bottom:6px;">
+              <input type="checkbox" id="showBrackets" checked style="width:14px; height:14px;" />
+              <label for="showBrackets" style="font-size:12px;">Show brackets</label>
+            </div>
+            <!-- Grid: label | input | diagram -->
+            <div style="display:grid; grid-template-columns:max-content 64px 68px; align-items:center; row-gap:6px; column-gap:30px; justify-content:start;">
+
               <label for="statSymbolSize" style="font-size:12px;">Symbol size:</label>
-              <input type="number" id="statSymbolSize" value="7" min="1" max="20" step="0.5" style="width:60px;" />
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
+              <input type="number" id="statSymbolSize" value="7" min="1" max="20" step="0.5" style="width:100%;"/>
+              <svg width="68" height="30" viewBox="0 0 68 30">
+                <text x="6" y="22" font-size="7" font-family="Arial" fill="#999">**</text>
+                <text x="26" y="25" font-size="14" font-family="Arial" fill="#333" font-weight="bold">***</text>
+              </svg>
+
               <label for="statLineSize" style="font-size:12px;">Line thickness:</label>
-              <input type="number" id="statLineSize" value="1.0" min="0.5" max="3.0" step="0.1" style="width:60px;" />
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
+              <input type="number" id="statLineSize" value="1.0" min="0.5" max="3.0" step="0.1" style="width:100%;"/>
+              <svg width="68" height="28" viewBox="0 0 68 28">
+                <line x1="3" y1="8" x2="25" y2="8" stroke="#555" stroke-width="1"/>
+                <line x1="3" y1="8" x2="3" y2="22" stroke="#555" stroke-width="1"/>
+                <line x1="25" y1="8" x2="25" y2="22" stroke="#555" stroke-width="1"/>
+                <line x1="36" y1="8" x2="62" y2="8" stroke="#333" stroke-width="3.5"/>
+                <line x1="36" y1="8" x2="36" y2="22" stroke="#333" stroke-width="3.5"/>
+                <line x1="62" y1="8" x2="62" y2="22" stroke="#333" stroke-width="3.5"/>
+              </svg>
+
               <label for="statTipLength" style="font-size:12px;">Distance from bars:</label>
-              <input type="number" id="statTipLength" value="0.04" min="0.01" max="0.1" step="0.01" style="width:60px;" />
-            </div>
-            <div style="display:flex; align-items:center; gap:10px; margin-top:5px;">
-              <label for="statVjust" style="font-size:12px;">Vertical position adjustment:</label>
-              <input type="number" id="statVjust" value="-0.3" min="-1.0" max="1.0" step="0.1" style="width:60px;" />
+              <input type="number" id="statTipLength" value="0.04" min="0.01" max="0.1" step="0.01" style="width:100%;"/>
+              <svg width="68" height="38" viewBox="0 0 68 38">
+                <text x="22" y="7" text-anchor="middle" font-size="8" font-family="Arial" fill="#333">***</text>
+                <line x1="8" y1="10" x2="36" y2="10" stroke="#444" stroke-width="1.5"/>
+                <line x1="8" y1="10" x2="8" y2="26" stroke="#c44" stroke-width="2"/>
+                <line x1="36" y1="10" x2="36" y2="26" stroke="#c44" stroke-width="2"/>
+                <rect x="3" y="27" width="10" height="8" fill="#bbb" rx="1"/>
+                <rect x="31" y="27" width="10" height="8" fill="#bbb" rx="1"/>
+                <line x1="52" y1="10" x2="52" y2="26" stroke="#c44" stroke-width="1"/>
+                <polygon points="49,13 55,13 52,9" fill="#c44"/>
+                <polygon points="49,23 55,23 52,27" fill="#c44"/>
+              </svg>
+
+
+              <label for="symbolGap" style="font-size:12px;">Symbol gap:</label>
+              <input type="number" id="symbolGap" value="0.6" min="0" max="2.0" step="0.1" style="width:100%;"/>
+              <svg width="68" height="36" viewBox="0 0 68 36">
+                <text x="21" y="8" text-anchor="middle" font-size="8" font-family="Arial" fill="#333">***</text>
+                <line x1="50" y1="11" x2="50" y2="21" stroke="#c44" stroke-width="1"/>
+                <polygon points="47,14 53,14 50,10" fill="#c44"/>
+                <polygon points="47,18 53,18 50,22" fill="#c44"/>
+                <line x1="6" y1="23" x2="36" y2="23" stroke="#444" stroke-width="1.5"/>
+                <line x1="6" y1="23" x2="6" y2="34" stroke="#444" stroke-width="1.5"/>
+                <line x1="36" y1="23" x2="36" y2="34" stroke="#444" stroke-width="1.5"/>
+              </svg>
+
+              <label for="bracketSpacing" style="font-size:12px;">Bracket spacing:</label>
+              <input type="number" id="bracketSpacing" value="1.0" min="0.2" max="2.0" step="0.1" style="width:100%;"/>
+              <svg width="68" height="46" viewBox="0 0 68 46">
+                <text x="21" y="7" text-anchor="middle" font-size="7" font-family="Arial" fill="#333">***</text>
+                <line x1="6" y1="10" x2="36" y2="10" stroke="#444" stroke-width="1.5"/>
+                <line x1="6" y1="10" x2="6" y2="19" stroke="#444" stroke-width="1.5"/>
+                <line x1="36" y1="10" x2="36" y2="19" stroke="#444" stroke-width="1.5"/>
+                <line x1="50" y1="20" x2="50" y2="29" stroke="#c44" stroke-width="1"/>
+                <polygon points="47,23 53,23 50,19" fill="#c44"/>
+                <polygon points="47,26 53,26 50,30" fill="#c44"/>
+                <text x="21" y="34" text-anchor="middle" font-size="7" font-family="Arial" fill="#333">*</text>
+                <line x1="6" y1="37" x2="36" y2="37" stroke="#444" stroke-width="1.5"/>
+                <line x1="6" y1="37" x2="6" y2="46" stroke="#444" stroke-width="1.5"/>
+                <line x1="36" y1="37" x2="36" y2="46" stroke="#444" stroke-width="1.5"/>
+              </svg>
+
             </div>
             <div style="margin-top:8px;">
               <button id="resetStatParams" style="font-size:11px; padding:4px 8px;">Reset to defaults</button>
             </div>
           </div>
-        </div>
-      </div>
 
       <!-- Custom Legend Settings (for 3+ groups line plots) -->
       <div id="vbracketControls" style="margin-top:16px; padding:10px; border:1px solid #ddd; border-radius:4px; background:#f9f9f9; display:none;">
@@ -1255,11 +1621,10 @@
 
         <div style="display:flex; flex-direction:column; gap:8px;">
           <div style="display:flex; align-items:center; gap:10px;">
-            <label for="vbracketTimepoint" style="font-size:12px; width:100px;">Time point:</label>
+            <label for="vbracketTimepoint" style="font-size:12px; width:100px;">X-axis value:</label>
             <select id="vbracketTimepoint" style="width:120px; font-size:12px;">
               <option value="">-- Load data first --</option>
             </select>
-            <span style="font-size:10px; color:#666;">X-axis value</span>
           </div>
 
           <div style="display:flex; align-items:center; gap:10px;">
@@ -1324,49 +1689,401 @@
         </div>
       </div>
 
-      </div><!-- End statsDetailedControls -->
-
+        </div><!-- End statsDetailedControls -->
       </div><!-- End statsControlsContainer -->
+
 
     </div><!-- End Tab 5: Statistics -->
 
-    <!-- Tab 6: Analysis -->
+    <!-- Tab 6: Converter -->
+    <div id="tab-converter" class="tab-content">
+
+        <!-- Expected Data Format (copy) -->
+        <div style="margin-bottom:10px; padding:8px; border:1px solid #ddd; border-radius:4px; background:#f9f9f9;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+            <span style="font-weight:bold; font-size:12px;">Expected Data Format</span>
+            <label style="font-size:11px; color:#888; cursor:pointer; display:flex; align-items:center; gap:3px; user-select:none;">
+              <input type="checkbox" id="hideFormatGuideConverter" style="margin:0;" onchange="document.getElementById('formatGuideDiagramConverter').style.display=this.checked?'none':'block'"> Hide
+            </label>
+          </div>
+          <div id="formatGuideDiagramConverter">
+          <div style="background:#fff; border:1px solid #e0e0e0; border-radius:4px; padding:8px;">
+          <div style="display:flex; align-items:flex-start; gap:4px;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:9px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">Your data (Wide format)</div>
+              <table style="width:100%; border-collapse:collapse; font-size:9px;">
+                <tr style="background:#e8f0fe;">
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Sample</th>
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</th>
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#E15759;">Treatment</th>
+                </tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep1</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">3.2</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">5.1</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep2</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">2.8</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">4.9</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep3</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">3.5</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">5.8</td></tr>
+              </table>
+            </div>
+            <div style="display:flex; align-items:center; padding-top:20px; font-size:18px; color:#888; flex-shrink:0;">→</div>
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:9px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">For Figra (Long format)</div>
+              <table style="width:100%; border-collapse:collapse; font-size:9px;">
+                <tr style="background:#e8f0fe;">
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Sample</th>
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Category</th>
+                  <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Value</th>
+                </tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep1</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">3.2</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep2</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">2.8</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep3</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">3.5</td></tr>
+                <tr><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Rep1</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#E15759;">Treatment</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">5.1</td></tr>
+                <tr style="color:#aaa;"><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">...</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">...</td><td style="border:1px solid #ccc; padding:2px 3px; text-align:center;">...</td></tr>
+              </table>
+            </div>
+          </div>
+          <div style="font-size:10px; color:#555; margin-top:6px;">
+            Figra expects one row per measurement. Select your wide-format data, load it below, and convert.
+          </div>
+          </div><!-- end inner white box -->
+          </div><!-- end formatGuideDiagramConverter -->
+        </div>
+
+      <!-- ===== Visual Converter (new) ===== -->
+      <div id="vcSection">
+        <div style="font-weight:bold; font-size:13px; margin-bottom:2px;">Visual Converter <span style="font-size:10px; color:#888; font-weight:normal;">Beta</span></div>
+        <div style="font-size:12px; color:#666; margin-bottom:6px;">Select your data in Excel, load it, then drag-select cells and assign roles. Merged cells are supported.<br>Don't overthink it — trust the Force.</div>
+
+        <button id="vcLoadBtn" style="font-size:12px; width:100%; margin-bottom:10px;">Load your data</button>
+
+        <div style="font-size:11px; color:#888; background:#f3f4f6; border-radius:4px; padding:5px 8px; margin-bottom:8px; line-height:1.6;">
+          <b>Selection shortcuts (after clicking a cell):</b><br>
+          <b>Arrow keys</b> — move cursor &nbsp;|&nbsp; <b>Shift+Arrow</b> — extend selection<br>
+          <b>Cmd/Ctrl+Arrow</b> — jump to edge &nbsp;|&nbsp; <b>Shift+click</b> — extend to clicked cell
+        </div>
+
+        <!-- Usage diagram -->
+        <div style="background:#f8f9fa; border:1px solid #e5e7eb; border-radius:6px; padding:8px 10px; margin-bottom:10px;">
+          <div style="font-weight:bold; font-size:12px; color:#555; margin-bottom:5px;">How to assign roles:</div>
+
+          <div style="display:flex; gap:8px; margin-bottom:6px; align-items:flex-start;">
+
+            <!-- Example 1: Replicates in rows -->
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:9px; font-weight:bold; color:#444; margin-bottom:3px; text-align:center;">Replicates in rows</div>
+              <table style="border-collapse:collapse; font-size:8px; width:100%;">
+                <tr>
+                  <td style="padding:1px 2px; border:1px solid #ddd; background:#fff;"></td>
+                  <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group A</td>
+                  <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group A</td>
+                  <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group B</td>
+                  <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group B</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 2px; border:2px solid #86efac; background:#dcfce7; color:#166534; font-weight:bold; text-align:center;">Control</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.97</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">1.04</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.97</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">1.04</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 2px; border:2px solid #86efac; background:#dcfce7; color:#166534; font-weight:bold; text-align:center;">Drug A</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.58</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.62</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.58</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.62</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 2px; border:2px solid #86efac; background:#dcfce7; color:#166534; font-weight:bold; text-align:center;">Drug B</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.52</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.49</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.52</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.49</td>
+                </tr>
+              </table>
+            </div>
+
+            <!-- Example 2: Replicates in columns -->
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:9px; font-weight:bold; color:#444; margin-bottom:3px; text-align:center;">Replicates in columns</div>
+              <table style="border-collapse:collapse; font-size:8px; width:100%;">
+                <tr>
+                  <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group A</td>
+                  <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group A</td>
+                  <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group B</td>
+                  <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group B</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 2px; border:2px solid #86efac; background:#dcfce7; color:#166534; font-weight:bold; text-align:center;">Control</td>
+                  <td style="padding:1px 2px; border:2px solid #86efac; background:#dcfce7; color:#166534; font-weight:bold; text-align:center;">Drug A</td>
+                  <td style="padding:1px 2px; border:2px solid #86efac; background:#dcfce7; color:#166534; font-weight:bold; text-align:center;">Control</td>
+                  <td style="padding:1px 2px; border:2px solid #86efac; background:#dcfce7; color:#166534; font-weight:bold; text-align:center;">Drug A</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.97</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.58</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.97</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.58</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">1.04</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.62</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">1.04</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.62</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.97</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.58</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.97</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.58</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">1.04</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.62</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">1.04</td>
+                  <td style="padding:1px 2px; border:2px solid #fcd34d; background:#fef3c7; text-align:center;">0.62</td>
+                </tr>
+              </table>
+            </div>
+
+          </div>
+
+          <div style="font-size:12px; color:#555; line-height:1.6;">
+            <span style="display:inline-block;width:10px;height:10px;background:#dbeafe;border:1px solid #93c5fd;vertical-align:middle; margin-right:3px;"></span><b>Factor 1</b>: a row or column of labels (e.g. group names, concentrations) → becomes Factor 1 column in output<br>
+            <span style="display:inline-block;width:10px;height:10px;background:#dcfce7;border:1px solid #86efac;vertical-align:middle; margin-right:3px;"></span><b>Factor 2</b>: another row or column of labels → becomes Factor 2 column in output<br>
+            <span style="display:inline-block;width:10px;height:10px;background:#fef3c7;border:1px solid #fcd34d;vertical-align:middle; margin-right:3px;"></span><b>Values</b>: your data cells → becomes the Values column in output
+          </div>
+        </div>
+
+        <div id="vcMergedWarning" style="display:none; font-size:11px; color:#92400e; background:#fef3c7; border:1px solid #fcd34d; padding:6px 8px; border-radius:4px; margin-bottom:8px;">
+          ⚠️ Merged cells detected — filled forward. Please verify the table looks correct.
+        </div>
+
+        <!-- Role assignment toolbar -->
+        <div id="vcToolbar" style="display:none; margin-bottom:8px;">
+
+          <!-- Replicate direction -->
+          <div id="vcRepDir" style="display:none; background:#f0f9ff; border:1px solid #bae6fd; border-radius:6px; padding:7px 10px; margin-bottom:8px; font-size:12px; color:#0c4a6e;">
+          <div style="font-size:13px; color:#111; font-weight:600; margin-bottom:6px;">① Where are your replicates?</div>
+          <div style="display:flex; gap:8px;">
+
+            <!-- Columns option -->
+            <label style="flex:1; font-weight:normal; cursor:pointer; background:#fff; border:2px solid #bae6fd; border-radius:5px; padding:6px 7px; display:flex; flex-direction:column; gap:4px;" id="vcRepDirColsLabel">
+              <div style="display:flex; align-items:center; gap:4px; margin-bottom:2px;">
+                <input type="radio" name="vcRepDir" value="cols" checked style="margin:0;" onchange="document.getElementById('vcRepDirColsLabel').style.borderColor='#2563eb';document.getElementById('vcRepDirRowsLabel').style.borderColor='#bae6fd';">
+                <span style="font-weight:bold; font-size:11px;">Columns</span>
+              </div>
+              <div style="display:flex; align-items:center; gap:3px;">
+                <div style="display:flex; flex-direction:column; align-items:center; color:#555;">
+                  <div style="font-size:40px; line-height:1;">↓</div>
+                  <div style="font-size:11px;">replicates</div>
+                </div>
+                <table style="border-collapse:collapse; font-size:9px; flex:1;">
+                  <tr>
+                    <td style="padding:1px 3px; border:1px solid #93c5fd; background:#dbeafe; color:#1d4ed8; text-align:center; font-weight:bold;">Group A</td>
+                    <td style="padding:1px 3px; border:1px solid #93c5fd; background:#dbeafe; color:#1d4ed8; text-align:center; font-weight:bold;">Group A</td>
+                    <td style="padding:1px 3px; border:1px solid #93c5fd; background:#dbeafe; color:#1d4ed8; text-align:center; font-weight:bold;">Group B</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">98</td>
+                    <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">101</td>
+                    <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">82</td>
+                  </tr>
+                  <tr>
+                    <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">97</td>
+                    <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">100</td>
+                    <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">78</td>
+                  </tr>
+                </table>
+              </div>
+            </label>
+
+            <!-- Rows option -->
+            <label style="flex:1; font-weight:normal; cursor:pointer; background:#fff; border:2px solid #bae6fd; border-radius:5px; padding:6px 7px; display:flex; flex-direction:column; gap:4px;" id="vcRepDirRowsLabel">
+              <div style="display:flex; align-items:center; gap:4px; margin-bottom:2px;">
+                <input type="radio" name="vcRepDir" value="rows" style="margin:0;" onchange="document.getElementById('vcRepDirRowsLabel').style.borderColor='#2563eb';document.getElementById('vcRepDirColsLabel').style.borderColor='#bae6fd';">
+                <span style="font-weight:bold; font-size:11px;">Rows</span>
+              </div>
+              <table style="border-collapse:collapse; font-size:9px; width:100%;">
+                <tr>
+                  <td style="padding:1px 3px; border:1px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group A</td>
+                  <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">98</td>
+                  <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">101</td>
+                </tr>
+                <tr>
+                  <td style="padding:1px 3px; border:1px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group B</td>
+                  <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">82</td>
+                  <td style="padding:1px 3px; border:1px solid #fcd34d; background:#fef3c7; text-align:center;">78</td>
+                </tr>
+              </table>
+              <div style="display:flex; align-items:center; justify-content:center; color:#555; gap:2px;">
+                <div style="font-size:40px; line-height:1;">→</div>
+                <div style="font-size:11px;">replicates</div>
+              </div>
+            </label>
+
+          </div>
+        </div>
+
+        </div>
+
+        <!-- Table + role buttons side by side -->
+        <div id="vcTableAreaFlex" style="display:none; flex-direction:column; gap:6px; margin-bottom:8px;">
+          <div style="font-size:13px; color:#111; font-weight:600;">② Drag-select cells in the table, then click a role button to assign</div>
+          <div style="display:flex; flex-direction:row; gap:6px; align-items:flex-start;">
+          <div id="vcTableWrap" tabindex="0" style="flex:1; overflow:auto; max-height:260px; border:1px solid #ddd; border-radius:4px; -webkit-overflow-scrolling:touch;">
+            <table id="vcTable"></table>
+          </div>
+          <!-- Role buttons vertical panel -->
+          <div style="display:flex; flex-direction:column; gap:4px; min-width:72px;">
+            <div style="display:flex; align-items:center; gap:4px; margin-bottom:2px;">
+              <label style="font-size:11px; color:#555; font-weight:600;">Factors:</label>
+              <select id="vcNumFactors" style="font-size:11px; padding:1px 2px;" onchange="vcUpdateFactorButtons()">
+                <option value="1">1</option>
+                <option value="2" selected>2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+              </select>
+            </div>
+            <div style="font-size:11px; color:#555; font-weight:600; margin-bottom:2px;">Assign as:</div>
+            <button class="vc-role-btn vc-group" onclick="vcAssignRole('group')" style="width:100%;">Factor 1</button>
+            <button class="vc-role-btn vc-x" onclick="vcAssignRole('x')" style="width:100%;">Factor 2</button>
+            <button id="vcFactor3Btn" class="vc-role-btn vc-factor3" onclick="vcAssignRole('factor3')" style="width:100%; display:none;">Factor 3</button>
+            <button id="vcFactor4Btn" class="vc-role-btn vc-factor4" onclick="vcAssignRole('factor4')" style="width:100%; display:none;">Factor 4</button>
+            <button class="vc-role-btn vc-values" onclick="vcAssignRole('values')" style="width:100%;">Values</button>
+            <button class="vc-role-btn vc-skip" onclick="vcAssignRole('skip')" style="width:100%;">Skip</button>
+            <button class="vc-role-btn" onclick="vcClearRoles()" style="width:100%; font-size:11px; margin-top:4px;">Clear All</button>
+          </div>
+          </div>
+        </div>
+
+        <!-- Output column names + export buttons side by side -->
+        <div id="vcOutputActions" style="display:none; flex-direction:row; gap:8px; align-items:flex-start; margin-bottom:8px;">
+          <!-- Output column names -->
+          <div id="vcOutputNames" style="flex:1; min-width:0;">
+            <div style="font-size:13px; color:#111; font-weight:600; margin-bottom:6px;">③ Rename output columns</div>
+            <div style="display:flex; flex-direction:column; gap:4px;">
+              <div id="vcGroupColNameRow" style="display:none; align-items:center; gap:4px;">
+                <label style="font-size:12px; width:56px; flex-shrink:0; font-weight:normal;">Factor 1:</label>
+                <input id="vcGroupColName" type="text" value="Factor1" style="flex:1; min-width:0; font-size:12px;">
+              </div>
+              <div id="vcXColNameRow" style="display:none; align-items:center; gap:4px;">
+                <label style="font-size:12px; width:56px; flex-shrink:0; font-weight:normal;">Factor 2:</label>
+                <input id="vcXColName" type="text" value="Factor2" style="flex:1; min-width:0; font-size:12px;">
+              </div>
+              <div id="vcFactor3ColNameRow" style="display:none; align-items:center; gap:4px;">
+                <label style="font-size:12px; width:56px; flex-shrink:0; font-weight:normal;">Factor 3:</label>
+                <input id="vcFactor3ColName" type="text" value="Factor3" style="flex:1; min-width:0; font-size:12px;">
+              </div>
+              <div id="vcFactor4ColNameRow" style="display:none; align-items:center; gap:4px;">
+                <label style="font-size:12px; width:56px; flex-shrink:0; font-weight:normal;">Factor 4:</label>
+                <input id="vcFactor4ColName" type="text" value="Factor4" style="flex:1; min-width:0; font-size:12px;">
+              </div>
+              <div style="display:flex; align-items:center; gap:4px;">
+                <label style="font-size:12px; width:56px; flex-shrink:0; font-weight:normal;">Value:</label>
+                <input id="vcValueColName" type="text" value="Value" style="flex:1; min-width:0; font-size:12px;">
+              </div>
+            </div>
+          </div>
+          <!-- Export buttons -->
+          <div id="vcActions" style="display:flex; flex:1; flex-direction:column; gap:6px; min-width:0;">
+            <div style="font-size:13px; color:#111; font-weight:600; margin-bottom:6px;">④ Export converted data</div>
+            <button id="vcConvertBtn" style="font-size:12px; width:100%;">Convert &amp; Write to New Sheet</button>
+            <button id="vcCopyBtn" style="font-size:12px; width:100%;">Copy to Clipboard</button>
+          </div>
+        </div>
+
+        <div id="vcDoneMsg" style="display:none; padding:7px 10px; background:#eaf4ea; border:1px solid #a8d5a8; border-radius:4px; font-size:12px; color:#2d6e2d; margin-bottom:8px;"></div>
+      </div><!-- End Visual Converter -->
+
+      <hr style="border:none; border-top:1px solid #e5e7eb; margin:12px 0;">
+
+      <div style="font-weight:bold; font-size:11px; color:#888; margin-bottom:8px;">Classic Converter</div>
+
+        <div style="font-weight:bold; font-size:13px; margin-bottom:4px;">Data Table Converter</div>
+        <div style="font-size:11px; color:#666; margin-bottom:10px;">
+          Convert wide-format data (one column per group) to long format (one row per measurement) required by Figra.
+        </div>
+        <div style="margin-bottom:8px;">
+          <button id="conversionLoadBtn" style="font-size:12px; width:100%;">Load Your Data</button>
+        </div>
+        <div style="font-size:11px; color:#666; margin-bottom:8px;">Check ID columns to keep as-is (e.g. Sample). The rest will be stacked into rows. If your data has no ID column, leave all unchecked.</div>
+        <div id="conversionColumnList" style="max-height:140px; overflow-y:auto; border:1px solid #ddd; padding:6px; border-radius:4px; background:#fff; margin-bottom:8px; font-size:12px;">
+          <div style="color:#999; font-size:11px;">Load data first</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:8px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label style="font-size:12px; width:130px;">Variable column name:</label>
+            <input type="text" id="conversionVarName" value="Category" style="width:110px; font-size:12px;">
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label style="font-size:12px; width:130px;">Value column name:</label>
+            <input type="text" id="conversionValueName" value="Value" style="width:110px; font-size:12px;">
+          </div>
+        </div>
+        <div id="conversionPreview" style="display:none; margin-bottom:8px; border:1px solid #d0d0d0; border-radius:4px; max-height:140px; overflow:auto;"></div>
+        <div style="display:flex; gap:6px;">
+          <button id="conversionPreviewBtn" style="font-size:12px;">Preview Conversion</button>
+          <button id="conversionWriteBtn" style="font-size:12px;">Convert & Write to New Sheet</button>
+        </div>
+        <div id="conversionDoneMsg" style="display:none; margin-top:8px; padding:7px 10px; background:#eaf4ea; border:1px solid #a8d5a8; border-radius:4px; font-size:11px; color:#2d6e2d;">
+          ✅ Data converted and loaded! Go to <b>Data & Chart</b> tab, choose your chart type and click <b>Preview</b>.
+        </div>
+
+    </div><!-- End Tab 6: Converter -->
+
+    <!-- Tab 7: Analysis -->
     <div id="tab-analysis" class="tab-content">
+
+      <!-- Message shown for non-IC50 chart types -->
+      <div id="ic50UnsupportedMessage" style="display:none; color:#666; font-size:12px; padding:8px 0;">
+        Select <strong>IC50 Dose-Response</strong> or <strong>Grouped IC50 Dose-Response</strong> in the Data &amp; Chart tab.
+      </div>
 
       <!-- IC50 Analysis Section -->
       <div id="ic50AnalysisSection" style="padding-left: 10px;">
         <div class="row" style="margin-bottom: 8px;">
           <input type="checkbox" id="enableIC50Analysis" />
-          <label for="enableIC50Analysis"><strong>Enable IC50 Analysis</strong></label>
+          <label for="enableIC50Analysis" style="width:auto;font-weight:normal">Enable IC50 Analysis</label>
         </div>
 
         <!-- IC50 Options (shown when checkbox is checked) -->
         <div id="ic50OptionsContainer" style="display: none;">
 
           <!-- Display Options -->
-          <div class="row">
+          <div class="row" id="showIC50ValueRow">
             <input type="checkbox" id="showIC50Value" checked />
-            <label for="showIC50Value">Show IC50 value on plot</label>
+            <label for="showIC50Value" style="font-weight:normal;width:auto">Show IC50 value on plot</label>
           </div>
-          <div class="row">
+          <div class="row" id="showIC50LineRow">
             <input type="checkbox" id="showIC50Line" checked />
-            <label for="showIC50Line">Show IC50 reference lines</label>
+            <label for="showIC50Line" style="font-weight:normal;width:auto">Show IC50 line (vertical)</label>
+          </div>
+          <div class="row" id="showHalfMaxLineRow">
+            <input type="checkbox" id="showHalfMaxLine" />
+            <label for="showHalfMaxLine" style="font-weight:normal;width:auto">Show 50% response line (horizontal)</label>
           </div>
           <div class="row">
+            <input type="checkbox" id="ic50ShowLog10Labels" />
+            <label for="ic50ShowLog10Labels" style="font-weight:normal;width:auto">Show log<sub>10</sub> values on x-axis</label>
+          </div>
+          <div class="row" id="ic50DecimalLabelsRow">
+            <input type="checkbox" id="ic50DecimalLabels" checked />
+            <label for="ic50DecimalLabels" style="font-weight:normal;width:auto">Use decimal notation (e.g. 0.01 not 1e-2)</label>
+          </div>
+          <div class="row" id="showConfidenceBandRow">
             <input type="checkbox" id="showConfidenceBand" />
-            <label for="showConfidenceBand">Show confidence band</label>
+            <label for="showConfidenceBand" style="font-weight:normal;width:auto">Show confidence band</label>
           </div>
           <div class="row">
             <label for="ic50DataDisplay">Data display</label>
             <select id="ic50DataDisplay" style="width: 150px;">
               <option value="all_points">All data points</option>
-              <option value="mean_sd">Mean ± SD</option>
+              <option value="mean_sd" selected>Mean ± SD</option>
               <option value="mean_se">Mean ± SE</option>
             </select>
           </div>
+          <input type="hidden" id="ic50FittingMethod" value="drc" />
           <div class="row">
             <input type="checkbox" id="exportIC50ToSheet" checked />
-            <label for="exportIC50ToSheet">Export results to new sheet</label>
+            <label for="exportIC50ToSheet" style="font-weight:normal;width:auto">Export results to new sheet</label>
           </div>
 
           <!-- IC50 Result Display -->
@@ -1381,7 +2098,64 @@
 
     </div><!-- End Tab 6: Analysis -->
 
-    <!-- Advanced Panel removed - all controls moved to tabs above -->
+    <!-- Tab 7: Help -->
+    <div id="tab-help" class="tab-content">
+      <div style="padding: 12px 10px;">
+
+        <!-- Contact Support -->
+        <div style="margin-bottom: 20px;">
+          <div style="font-weight: bold; font-size: 13px; margin-bottom: 8px;">Contact Support</div>
+          <p style="font-size: 12px; color: #555; margin: 0 0 10px;">
+            Report a bug, ask a question, or request a new feature. Your email, Figra version, OS, Excel version, and current chart type will be pre-filled automatically.
+          </p>
+          <button onclick="openSupportForm()" style="padding: 8px 16px; background: #4C78A8; color: #fff; border: none; border-radius: 6px; font-size: 13px; cursor: pointer; font-weight: 500;">
+            Open Support Form
+          </button>
+        </div>
+
+        <hr style="border: none; border-top: 1px solid #e5e5e5; margin: 0 0 16px;">
+
+        <!-- Resources -->
+        <div style="font-weight: bold; font-size: 13px; margin-bottom: 8px;">Resources</div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <a href="https://h20gg702.github.io/figra-pages/issues.html" target="_blank"
+             style="font-size: 12px; color: #4C78A8; text-decoration: none;">
+            Known Issues &amp; Q&amp;A
+          </a>
+          <a href="https://h20gg702.github.io/figra-pages/terms.html" target="_blank"
+             style="font-size: 12px; color: #4C78A8; text-decoration: none;">
+            Terms of Use
+          </a>
+          <a href="https://h20gg702.github.io/figra-pages/privacy.html" target="_blank"
+             style="font-size: 12px; color: #4C78A8; text-decoration: none;">
+            Privacy Policy
+          </a>
+        </div>
+
+        <!-- Version info -->
+        <div style="margin-top: 20px; font-size: 11px; color: #999;">
+          Figra v<span id="helpTabVersion"></span>
+        </div>
+
+      </div>
+    </div><!-- End Tab 7: Help -->
+
+    <!-- Persistent action bar - always visible regardless of active tab -->
+    <div id="persistentActionBar" style="border-top:1px solid #e5e7eb; padding:8px 8px 4px 8px; margin-top:4px;">
+      <div class="row actions">
+        <button id="load">Load Data</button>
+        <button id="preview">Preview</button>
+        <button id="insert">Insert Figure to Sheet</button>
+      </div>
+      <div class="row actions" style="margin-top:4px;">
+        <button id="loadFromFigure">📁 Load from Figure</button>
+        <button id="saveFigure">💾 Save Figure</button>
+      </div>
+      <div class="row actions" style="margin-top:4px;">
+        <button id="downloadRCode">Download R Code</button>
+        <button id="writeRCodeToCell">📋 Copy R Code</button>
+      </div>
+    </div>
 
     <div id="status" style="margin-top: 12px; margin-left: 12px;"></div>
     <!-- Persistent Debug Panel -->
@@ -1420,8 +2194,8 @@
         histogram: `<svg viewBox="0 0 40 30"><rect x="2" y="18" width="6" height="10" fill="#4C78A8"/><rect x="10" y="10" width="6" height="18" fill="#4C78A8"/><rect x="18" y="4" width="6" height="24" fill="#4C78A8"/><rect x="26" y="12" width="6" height="16" fill="#4C78A8"/><rect x="34" y="20" width="4" height="8" fill="#4C78A8"/></svg>`,
         box: `<svg viewBox="0 0 40 30"><rect x="12" y="6" width="16" height="16" fill="none" stroke="#4C78A8" stroke-width="2"/><line x1="12" y1="14" x2="28" y2="14" stroke="#4C78A8" stroke-width="2"/><line x1="20" y1="2" x2="20" y2="6" stroke="#4C78A8" stroke-width="1.5"/><line x1="20" y1="22" x2="20" y2="26" stroke="#4C78A8" stroke-width="1.5"/><line x1="16" y1="2" x2="24" y2="2" stroke="#4C78A8" stroke-width="1.5"/><line x1="16" y1="26" x2="24" y2="26" stroke="#4C78A8" stroke-width="1.5"/></svg>`,
         box_dot: `<svg viewBox="0 0 40 30"><rect x="12" y="6" width="16" height="16" fill="none" stroke="#4C78A8" stroke-width="2"/><line x1="12" y1="14" x2="28" y2="14" stroke="#4C78A8" stroke-width="2"/><line x1="20" y1="2" x2="20" y2="6" stroke="#4C78A8" stroke-width="1.5"/><line x1="20" y1="22" x2="20" y2="26" stroke="#4C78A8" stroke-width="1.5"/><circle cx="18" cy="10" r="1.5" fill="#E15759"/><circle cx="22" cy="18" r="1.5" fill="#E15759"/><circle cx="20" cy="12" r="1.5" fill="#E15759"/></svg>`,
-        violin: `<svg viewBox="0 0 40 30"><path d="M20 2 Q28 8 28 15 Q28 22 20 28 Q12 22 12 15 Q12 8 20 2" fill="none" stroke="#4C78A8" stroke-width="2"/><line x1="20" y1="8" x2="20" y2="22" stroke="#4C78A8" stroke-width="1.5"/></svg>`,
-        violin_dot: `<svg viewBox="0 0 40 30"><path d="M20 2 Q28 8 28 15 Q28 22 20 28 Q12 22 12 15 Q12 8 20 2" fill="none" stroke="#4C78A8" stroke-width="2"/><circle cx="20" cy="10" r="1.5" fill="#E15759"/><circle cx="20" cy="15" r="1.5" fill="#E15759"/><circle cx="20" cy="20" r="1.5" fill="#E15759"/></svg>`,
+        violin: `<svg viewBox="0 0 40 30"><path d="M20 2 C28 4 26 10 22 14 C26 18 28 24 20 28 C12 24 14 18 18 14 C14 10 12 4 20 2 Z" fill="none" stroke="#4C78A8" stroke-width="1.8"/><line x1="20" y1="8" x2="20" y2="22" stroke="#4C78A8" stroke-width="1.5"/></svg>`,
+        violin_dot: `<svg viewBox="0 0 40 30"><path d="M20 2 C28 4 26 10 22 14 C26 18 28 24 20 28 C12 24 14 18 18 14 C14 10 12 4 20 2 Z" fill="none" stroke="#4C78A8" stroke-width="1.8"/><circle cx="19" cy="9" r="1.5" fill="#E15759"/><circle cx="21" cy="15" r="1.5" fill="#E15759"/><circle cx="19" cy="22" r="1.5" fill="#E15759"/></svg>`,
         dot: `<svg viewBox="0 0 40 30"><circle cx="10" cy="20" r="2.5" fill="#4C78A8"/><circle cx="10" cy="14" r="2.5" fill="#4C78A8"/><circle cx="10" cy="8" r="2.5" fill="#4C78A8"/><circle cx="20" cy="18" r="2.5" fill="#4C78A8"/><circle cx="20" cy="12" r="2.5" fill="#4C78A8"/><circle cx="30" cy="22" r="2.5" fill="#4C78A8"/><circle cx="30" cy="16" r="2.5" fill="#4C78A8"/><circle cx="30" cy="10" r="2.5" fill="#4C78A8"/></svg>`,
         bar: `<svg viewBox="0 0 40 30"><rect x="4" y="14" width="8" height="14" fill="#4C78A8"/><rect x="16" y="8" width="8" height="20" fill="#4C78A8"/><rect x="28" y="4" width="8" height="24" fill="#4C78A8"/></svg>`,
         bar_error: `<svg viewBox="0 0 40 30"><rect x="4" y="14" width="8" height="14" fill="#4C78A8"/><line x1="8" y1="10" x2="8" y2="14" stroke="#333" stroke-width="1.5"/><line x1="5" y1="10" x2="11" y2="10" stroke="#333" stroke-width="1.5"/><rect x="16" y="8" width="8" height="20" fill="#4C78A8"/><line x1="20" y1="4" x2="20" y2="8" stroke="#333" stroke-width="1.5"/><line x1="17" y1="4" x2="23" y2="4" stroke="#333" stroke-width="1.5"/><rect x="28" y="10" width="8" height="18" fill="#4C78A8"/><line x1="32" y1="6" x2="32" y2="10" stroke="#333" stroke-width="1.5"/><line x1="29" y1="6" x2="35" y2="6" stroke="#333" stroke-width="1.5"/></svg>`,
@@ -1430,14 +2204,15 @@
         bar_grouped_error: `<svg viewBox="0 0 40 30"><rect x="4" y="12" width="6" height="16" fill="#4C78A8"/><line x1="7" y1="8" x2="7" y2="12" stroke="#333" stroke-width="1"/><rect x="11" y="16" width="6" height="12" fill="#E15759"/><line x1="14" y1="12" x2="14" y2="16" stroke="#333" stroke-width="1"/><rect x="22" y="8" width="6" height="20" fill="#4C78A8"/><line x1="25" y1="4" x2="25" y2="8" stroke="#333" stroke-width="1"/><rect x="29" y="10" width="6" height="18" fill="#E15759"/><line x1="32" y1="6" x2="32" y2="10" stroke="#333" stroke-width="1"/></svg>`,
         bar_grouped_error_dot: `<svg viewBox="0 0 40 30"><rect x="4" y="12" width="6" height="16" fill="#4C78A8"/><line x1="7" y1="8" x2="7" y2="12" stroke="#333" stroke-width="1"/><circle cx="7" cy="18" r="1.2" fill="#333"/><rect x="11" y="16" width="6" height="12" fill="#E15759"/><circle cx="14" cy="20" r="1.2" fill="#333"/><rect x="22" y="8" width="6" height="20" fill="#4C78A8"/><circle cx="25" cy="14" r="1.2" fill="#333"/><rect x="29" y="10" width="6" height="18" fill="#E15759"/><circle cx="32" cy="16" r="1.2" fill="#333"/></svg>`,
         box_grouped: `<svg viewBox="0 0 40 30"><rect x="2" y="8" width="5" height="10" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="2" y1="13" x2="7" y2="13" stroke="#4C78A8" stroke-width="1.2"/><line x1="4.5" y1="4" x2="4.5" y2="8" stroke="#4C78A8" stroke-width="1"/><line x1="4.5" y1="18" x2="4.5" y2="24" stroke="#4C78A8" stroke-width="1"/><rect x="8" y="10" width="5" height="8" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="8" y1="14" x2="13" y2="14" stroke="#E15759" stroke-width="1.2"/><line x1="10.5" y1="6" x2="10.5" y2="10" stroke="#E15759" stroke-width="1"/><line x1="10.5" y1="18" x2="10.5" y2="22" stroke="#E15759" stroke-width="1"/><rect x="18" y="6" width="5" height="12" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="18" y1="12" x2="23" y2="12" stroke="#4C78A8" stroke-width="1.2"/><line x1="20.5" y1="2" x2="20.5" y2="6" stroke="#4C78A8" stroke-width="1"/><line x1="20.5" y1="18" x2="20.5" y2="26" stroke="#4C78A8" stroke-width="1"/><rect x="24" y="8" width="5" height="10" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="24" y1="13" x2="29" y2="13" stroke="#E15759" stroke-width="1.2"/><line x1="26.5" y1="4" x2="26.5" y2="8" stroke="#E15759" stroke-width="1"/><line x1="26.5" y1="18" x2="26.5" y2="24" stroke="#E15759" stroke-width="1"/></svg>`,
-        box_grouped_dot: `<svg viewBox="0 0 40 30"><rect x="2" y="8" width="5" height="10" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="2" y1="13" x2="7" y2="13" stroke="#4C78A8" stroke-width="1.2"/><circle cx="4.5" cy="11" r="1" fill="#333"/><circle cx="4.5" cy="16" r="1" fill="#333"/><rect x="8" y="10" width="5" height="8" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="8" y1="14" x2="13" y2="14" stroke="#E15759" stroke-width="1.2"/><circle cx="10.5" cy="12" r="1" fill="#333"/><circle cx="10.5" cy="16" r="1" fill="#333"/><rect x="22" y="6" width="5" height="12" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="22" y1="12" x2="27" y2="12" stroke="#4C78A8" stroke-width="1.2"/><circle cx="24.5" cy="9" r="1" fill="#333"/><circle cx="24.5" cy="15" r="1" fill="#333"/><rect x="28" y="8" width="5" height="10" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="28" y1="13" x2="33" y2="13" stroke="#E15759" stroke-width="1.2"/><circle cx="30.5" cy="11" r="1" fill="#333"/><circle cx="30.5" cy="16" r="1" fill="#333"/></svg>`,
-        violin_grouped: `<svg viewBox="0 0 40 30"><path d="M5 6 Q8 10 8 15 Q8 20 5 24 Q2 20 2 15 Q2 10 5 6" fill="none" stroke="#4C78A8" stroke-width="1.2"/><path d="M12 8 Q15 12 15 15 Q15 18 12 22 Q9 18 9 15 Q9 12 12 8" fill="none" stroke="#E15759" stroke-width="1.2"/><path d="M25 4 Q29 9 29 15 Q29 21 25 26 Q21 21 21 15 Q21 9 25 4" fill="none" stroke="#4C78A8" stroke-width="1.2"/><path d="M33 6 Q37 11 37 15 Q37 19 33 24 Q29 19 29 15 Q29 11 33 6" fill="none" stroke="#E15759" stroke-width="1.2"/></svg>`,
-        violin_grouped_dot: `<svg viewBox="0 0 40 30"><path d="M5 6 Q8 10 8 15 Q8 20 5 24 Q2 20 2 15 Q2 10 5 6" fill="none" stroke="#4C78A8" stroke-width="1.2"/><circle cx="5" cy="12" r="1" fill="#333"/><circle cx="5" cy="18" r="1" fill="#333"/><path d="M12 8 Q15 12 15 15 Q15 18 12 22 Q9 18 9 15 Q9 12 12 8" fill="none" stroke="#E15759" stroke-width="1.2"/><circle cx="12" cy="12" r="1" fill="#333"/><circle cx="12" cy="18" r="1" fill="#333"/><path d="M25 4 Q29 9 29 15 Q29 21 25 26 Q21 21 21 15 Q21 9 25 4" fill="none" stroke="#4C78A8" stroke-width="1.2"/><circle cx="25" cy="10" r="1" fill="#333"/><circle cx="25" cy="20" r="1" fill="#333"/><path d="M33 6 Q37 11 37 15 Q37 19 33 24 Q29 19 29 15 Q29 11 33 6" fill="none" stroke="#E15759" stroke-width="1.2"/><circle cx="33" cy="11" r="1" fill="#333"/><circle cx="33" cy="19" r="1" fill="#333"/></svg>`,
+        box_grouped_dot: `<svg viewBox="0 0 40 30"><rect x="2" y="8" width="5" height="10" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="2" y1="13" x2="7" y2="13" stroke="#4C78A8" stroke-width="1.2"/><line x1="4.5" y1="4" x2="4.5" y2="8" stroke="#4C78A8" stroke-width="1"/><line x1="4.5" y1="18" x2="4.5" y2="24" stroke="#4C78A8" stroke-width="1"/><circle cx="3.5" cy="10" r="1" fill="#E15759"/><circle cx="5.5" cy="16" r="1" fill="#E15759"/><circle cx="4" cy="22" r="1" fill="#E15759"/><rect x="8" y="10" width="5" height="8" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="8" y1="14" x2="13" y2="14" stroke="#E15759" stroke-width="1.2"/><line x1="10.5" y1="6" x2="10.5" y2="10" stroke="#E15759" stroke-width="1"/><line x1="10.5" y1="18" x2="10.5" y2="23" stroke="#E15759" stroke-width="1"/><circle cx="9.5" cy="12" r="1" fill="#333"/><circle cx="11.5" cy="17" r="1" fill="#333"/><circle cx="10" cy="21" r="1" fill="#333"/><rect x="22" y="6" width="5" height="12" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="22" y1="12" x2="27" y2="12" stroke="#4C78A8" stroke-width="1.2"/><line x1="24.5" y1="2" x2="24.5" y2="6" stroke="#4C78A8" stroke-width="1"/><line x1="24.5" y1="18" x2="24.5" y2="26" stroke="#4C78A8" stroke-width="1"/><circle cx="23.5" cy="8" r="1" fill="#E15759"/><circle cx="25.5" cy="15" r="1" fill="#E15759"/><circle cx="24" cy="24" r="1" fill="#E15759"/><rect x="28" y="8" width="5" height="10" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="28" y1="13" x2="33" y2="13" stroke="#E15759" stroke-width="1.2"/><line x1="30.5" y1="4" x2="30.5" y2="8" stroke="#E15759" stroke-width="1"/><line x1="30.5" y1="18" x2="30.5" y2="24" stroke="#E15759" stroke-width="1"/><circle cx="29.5" cy="11" r="1" fill="#333"/><circle cx="31.5" cy="16" r="1" fill="#333"/><circle cx="30" cy="22" r="1" fill="#333"/></svg>`,
+        violin_grouped: `<svg viewBox="0 0 40 30"><path d="M5 4 C8 6 8 11 6.5 15 C8 17 8 22 5 26 C2 22 2 17 3.5 15 C2 11 2 6 5 4 Z" fill="none" stroke="#4C78A8" stroke-width="1.2"/><path d="M12 4 C15 6 15 11 13.5 15 C15 17 15 22 12 26 C9 22 9 17 10.5 15 C9 11 9 6 12 4 Z" fill="none" stroke="#E15759" stroke-width="1.2"/><path d="M26 4 C29 6 29 11 27.5 15 C29 17 29 22 26 26 C23 22 23 17 24.5 15 C23 11 23 6 26 4 Z" fill="none" stroke="#4C78A8" stroke-width="1.2"/><path d="M33 4 C36 6 36 11 34.5 15 C36 17 36 22 33 26 C30 22 30 17 31.5 15 C30 11 30 6 33 4 Z" fill="none" stroke="#E15759" stroke-width="1.2"/></svg>`,
+        violin_grouped_dot: `<svg viewBox="0 0 40 30"><path d="M5 4 C8 6 8 11 6.5 15 C8 17 8 22 5 26 C2 22 2 17 3.5 15 C2 11 2 6 5 4 Z" fill="none" stroke="#4C78A8" stroke-width="1.2"/><circle cx="4.5" cy="9" r="1" fill="#E15759"/><circle cx="5.5" cy="20" r="1" fill="#E15759"/><path d="M12 4 C15 6 15 11 13.5 15 C15 17 15 22 12 26 C9 22 9 17 10.5 15 C9 11 9 6 12 4 Z" fill="none" stroke="#E15759" stroke-width="1.2"/><circle cx="11.5" cy="11" r="1" fill="#333"/><circle cx="12.5" cy="19" r="1" fill="#333"/><path d="M26 4 C29 6 29 11 27.5 15 C29 17 29 22 26 26 C23 22 23 17 24.5 15 C23 11 23 6 26 4 Z" fill="none" stroke="#4C78A8" stroke-width="1.2"/><circle cx="25.5" cy="8" r="1" fill="#E15759"/><circle cx="26.5" cy="21" r="1" fill="#E15759"/><path d="M33 4 C36 6 36 11 34.5 15 C36 17 36 22 33 26 C30 22 30 17 31.5 15 C30 11 30 6 33 4 Z" fill="none" stroke="#E15759" stroke-width="1.2"/><circle cx="32.5" cy="10" r="1" fill="#333"/><circle cx="33.5" cy="20" r="1" fill="#333"/></svg>`,
         line: `<svg viewBox="0 0 40 30"><polyline points="4,24 12,18 20,10 28,14 36,6" fill="none" stroke="#4C78A8" stroke-width="2"/><circle cx="4" cy="24" r="2" fill="#4C78A8"/><circle cx="12" cy="18" r="2" fill="#4C78A8"/><circle cx="20" cy="10" r="2" fill="#4C78A8"/><circle cx="28" cy="14" r="2" fill="#4C78A8"/><circle cx="36" cy="6" r="2" fill="#4C78A8"/></svg>`,
         line_grouped: `<svg viewBox="0 0 40 30"><polyline points="4,20 14,14 24,18 34,8" fill="none" stroke="#4C78A8" stroke-width="1.5"/><circle cx="4" cy="20" r="1.5" fill="#4C78A8"/><circle cx="14" cy="14" r="1.5" fill="#4C78A8"/><circle cx="24" cy="18" r="1.5" fill="#4C78A8"/><circle cx="34" cy="8" r="1.5" fill="#4C78A8"/><polyline points="4,26 14,20 24,22 34,16" fill="none" stroke="#E15759" stroke-width="1.5"/><circle cx="4" cy="26" r="1.5" fill="#E15759"/><circle cx="14" cy="20" r="1.5" fill="#E15759"/><circle cx="24" cy="22" r="1.5" fill="#E15759"/><circle cx="34" cy="16" r="1.5" fill="#E15759"/></svg>`,
         line_grouped_error: `<svg viewBox="0 0 40 30"><polyline points="4,16 14,10 24,14 34,6" fill="none" stroke="#4C78A8" stroke-width="1.5"/><line x1="4" y1="12" x2="4" y2="20" stroke="#4C78A8" stroke-width="1"/><line x1="14" y1="6" x2="14" y2="14" stroke="#4C78A8" stroke-width="1"/><polyline points="4,24 14,20 24,22 34,18" fill="none" stroke="#E15759" stroke-width="1.5"/><line x1="4" y1="20" x2="4" y2="28" stroke="#E15759" stroke-width="1"/><line x1="14" y1="16" x2="14" y2="24" stroke="#E15759" stroke-width="1"/></svg>`,
         line_grouped_error_raw: `<svg viewBox="0 0 40 30"><polyline points="4,16 14,10 24,14 34,6" fill="none" stroke="#4C78A8" stroke-width="1.5"/><line x1="4" y1="12" x2="4" y2="20" stroke="#4C78A8" stroke-width="1"/><line x1="14" y1="6" x2="14" y2="14" stroke="#4C78A8" stroke-width="1"/><circle cx="4" cy="16" r="1.5" fill="#4C78A8"/><circle cx="14" cy="10" r="1.5" fill="#4C78A8"/><polyline points="4,24 14,20 24,22 34,18" fill="none" stroke="#E15759" stroke-width="1.5"/><line x1="4" y1="20" x2="4" y2="28" stroke="#E15759" stroke-width="1"/><circle cx="4" cy="24" r="1.5" fill="#E15759"/><circle cx="14" cy="20" r="1.5" fill="#E15759"/></svg>`,
-        ic50_dose_response: `<svg viewBox="0 0 40 30"><path d="M4,26 Q10,26 16,24 Q22,20 28,10 Q32,4 38,4" fill="none" stroke="#4C78A8" stroke-width="2"/><line x1="20" y1="4" x2="20" y2="28" stroke="#dc2626" stroke-width="1" stroke-dasharray="2,2"/><circle cx="8" cy="25" r="1.5" fill="#333"/><circle cx="14" cy="24" r="1.5" fill="#333"/><circle cx="22" cy="16" r="1.5" fill="#333"/><circle cx="30" cy="6" r="1.5" fill="#333"/></svg>`
+        ic50_dose_response: `<svg viewBox="0 0 40 30"><path d="M4,26 Q10,26 16,24 Q22,20 28,10 Q32,4 38,4" fill="none" stroke="#4C78A8" stroke-width="2"/><line x1="20" y1="4" x2="20" y2="28" stroke="#dc2626" stroke-width="1" stroke-dasharray="2,2"/><circle cx="8" cy="25" r="1.5" fill="#333"/><circle cx="14" cy="24" r="1.5" fill="#333"/><circle cx="22" cy="16" r="1.5" fill="#333"/><circle cx="30" cy="6" r="1.5" fill="#333"/></svg>`,
+        ic50_grouped_dose_response: `<svg viewBox="0 0 40 30"><path d="M4,26 Q10,26 16,24 Q22,20 28,10 Q32,4 38,4" fill="none" stroke="#4C78A8" stroke-width="2"/><circle cx="8" cy="25" r="1.5" fill="#4C78A8"/><circle cx="16" cy="23" r="1.5" fill="#4C78A8"/><circle cx="26" cy="12" r="1.5" fill="#4C78A8"/><path d="M4,28 Q10,28 16,26 Q22,22 28,14 Q32,8 38,8" fill="none" stroke="#E15759" stroke-width="2"/><circle cx="8" cy="27" r="1.5" fill="#E15759"/><circle cx="16" cy="25" r="1.5" fill="#E15759"/><circle cx="26" cy="16" r="1.5" fill="#E15759"/></svg>`
       };
 
       window.chartLabels = {
@@ -1461,7 +2236,8 @@
         line_grouped: 'Grouped line plot',
         line_grouped_error: 'Grouped line (mean±error)',
         line_grouped_error_raw: 'Grouped line with error (raw data)',
-        ic50_dose_response: 'IC50 Dose-Response'
+        ic50_dose_response: 'IC50 Dose-Response',
+        ic50_grouped_dose_response: 'Grouped IC50 Dose-Response'
       };
 
       const dropdown = document.getElementById('chartTypeDropdown');
@@ -1529,6 +2305,94 @@
     <!-- taskpane.js は「普通の script」として読み込む -->
     <script src="./taskpane.js"></script>
 
+    <!-- Greek / Symbol picker panel -->
+    <div id="greekPickerPanel" style="
+      display:none; position:fixed; z-index:9999;
+      background:#fff; border:1px solid #d1d5db; border-radius:10px;
+      box-shadow:0 6px 24px rgba(0,0,0,0.18); padding:10px; width:228px;">
+      <div style="font-size:10px; color:#888; font-weight:600; letter-spacing:.5px; text-transform:uppercase; margin-bottom:6px; padding-bottom:4px; border-bottom:1px solid #eee;">
+        Greek &amp; Symbols
+        <button onclick="document.getElementById('greekPickerPanel').style.display='none'" style="float:right; background:none; border:none; cursor:pointer; font-size:13px; color:#aaa; line-height:1; padding:0;">✕</button>
+      </div>
+      <div style="font-size:9px; color:#aaa; margin-bottom:4px;">Lowercase</div>
+      <div class="greek-grid">
+        <button onclick="insertGreekSymbol('α')" title="alpha">α</button>
+        <button onclick="insertGreekSymbol('β')" title="beta">β</button>
+        <button onclick="insertGreekSymbol('γ')" title="gamma">γ</button>
+        <button onclick="insertGreekSymbol('δ')" title="delta">δ</button>
+        <button onclick="insertGreekSymbol('ε')" title="epsilon">ε</button>
+        <button onclick="insertGreekSymbol('ζ')" title="zeta">ζ</button>
+        <button onclick="insertGreekSymbol('η')" title="eta">η</button>
+        <button onclick="insertGreekSymbol('θ')" title="theta">θ</button>
+        <button onclick="insertGreekSymbol('ι')" title="iota">ι</button>
+        <button onclick="insertGreekSymbol('κ')" title="kappa">κ</button>
+        <button onclick="insertGreekSymbol('λ')" title="lambda">λ</button>
+        <button onclick="insertGreekSymbol('µ')" title="micro / mu">µ</button>
+        <button onclick="insertGreekSymbol('ν')" title="nu">ν</button>
+        <button onclick="insertGreekSymbol('ξ')" title="xi">ξ</button>
+        <button onclick="insertGreekSymbol('π')" title="pi">π</button>
+        <button onclick="insertGreekSymbol('ρ')" title="rho">ρ</button>
+        <button onclick="insertGreekSymbol('σ')" title="sigma">σ</button>
+        <button onclick="insertGreekSymbol('τ')" title="tau">τ</button>
+        <button onclick="insertGreekSymbol('υ')" title="upsilon">υ</button>
+        <button onclick="insertGreekSymbol('φ')" title="phi">φ</button>
+        <button onclick="insertGreekSymbol('χ')" title="chi">χ</button>
+        <button onclick="insertGreekSymbol('ψ')" title="psi">ψ</button>
+        <button onclick="insertGreekSymbol('ω')" title="omega">ω</button>
+      </div>
+      <div style="font-size:9px; color:#aaa; margin:6px 0 4px;">Uppercase</div>
+      <div class="greek-grid">
+        <button onclick="insertGreekSymbol('Γ')" title="Gamma">Γ</button>
+        <button onclick="insertGreekSymbol('Δ')" title="Delta">Δ</button>
+        <button onclick="insertGreekSymbol('Θ')" title="Theta">Θ</button>
+        <button onclick="insertGreekSymbol('Λ')" title="Lambda">Λ</button>
+        <button onclick="insertGreekSymbol('Ξ')" title="Xi">Ξ</button>
+        <button onclick="insertGreekSymbol('Π')" title="Pi">Π</button>
+        <button onclick="insertGreekSymbol('Σ')" title="Sigma">Σ</button>
+        <button onclick="insertGreekSymbol('Φ')" title="Phi">Φ</button>
+        <button onclick="insertGreekSymbol('Ψ')" title="Psi">Ψ</button>
+        <button onclick="insertGreekSymbol('Ω')" title="Omega">Ω</button>
+      </div>
+      <div style="font-size:9px; color:#aaa; margin:6px 0 4px;">Symbols</div>
+      <div class="greek-grid">
+        <button onclick="insertGreekSymbol('±')" title="plus-minus">±</button>
+        <button onclick="insertGreekSymbol('×')" title="multiply">×</button>
+        <button onclick="insertGreekSymbol('÷')" title="divide">÷</button>
+        <button onclick="insertGreekSymbol('≥')" title="greater or equal">≥</button>
+        <button onclick="insertGreekSymbol('≤')" title="less or equal">≤</button>
+        <button onclick="insertGreekSymbol('≠')" title="not equal">≠</button>
+        <button onclick="insertGreekSymbol('∞')" title="infinity">∞</button>
+        <button onclick="insertGreekSymbol('°')" title="degree">°</button>
+        <button onclick="insertGreekSymbol('·')" title="middle dot">·</button>
+        <button onclick="insertGreekSymbol('→')" title="right arrow">→</button>
+        <button onclick="insertGreekSymbol('←')" title="left arrow">←</button>
+        <button onclick="insertGreekSymbol('↑')" title="up arrow">↑</button>
+        <button onclick="insertGreekSymbol('↓')" title="down arrow">↓</button>
+      </div>
+    </div>
+    <style>
+      .greek-grid {
+        display: grid;
+        grid-template-columns: repeat(8, 1fr);
+        gap: 2px;
+      }
+      .greek-grid button {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 13px;
+        padding: 3px 0;
+        text-align: center;
+        line-height: 1.3;
+        color: #1a1a2e;
+      }
+      .greek-grid button:hover {
+        background: #e0e7ff;
+        border-color: #6366f1;
+        color: #4338ca;
+      }
+    </style>
 
 </body>
 </html>

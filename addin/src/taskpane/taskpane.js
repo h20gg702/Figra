@@ -4,7 +4,7 @@
 const ADDIN_VERSION = "1.0.0";
 
 // Grouped chart types constant (used throughout the file)
-const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw"];
+const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw", "ic50_grouped_dose_response"];
 
 // ========= Registration System =========
 const REGISTRATION_KEY = "figra_registered";
@@ -127,6 +127,7 @@ async function submitRegistration() {
 
     // Mark as registered and hide overlay
     setRegistered();
+    try { localStorage.setItem("figra_email", email); } catch(e) {}
     hideRegistrationOverlay();
 
     console.log("✅ Registration submitted successfully");
@@ -168,6 +169,60 @@ function initRegistration() {
 document.addEventListener("DOMContentLoaded", () => {
   initRegistration();
 });
+
+// ========= Support Form =========
+const SUPPORT_FORM_BASE = "https://docs.google.com/forms/d/e/1FAIpQLSeP2O069QoXC3fGLp7Js073qYzvi-iXepwbB8fvlCa554aSpw/viewform";
+const SUPPORT_FORM_FIELDS = {
+  email:        "entry.1685270148",
+  issueType:    "entry.1842912509",
+  os:           "entry.1693510977",
+  figraVersion: "entry.148900415",
+  excelVersion: "entry.262002855",
+  chartType:    "entry.1052282922",
+  description:  "entry.425982512"
+};
+
+window.openSupportForm = function openSupportForm() {
+  try {
+    const params = new URLSearchParams({ usp: "pp_url" });
+
+    // Pre-fill email from localStorage (saved during registration)
+    const savedEmail = localStorage.getItem("figra_email") || "";
+    if (savedEmail) params.append(SUPPORT_FORM_FIELDS.email, savedEmail);
+
+    // Pre-fill Figra version
+    params.append(SUPPORT_FORM_FIELDS.figraVersion, ADDIN_VERSION);
+
+    // Pre-fill OS from browser
+    const platform = (navigator.userAgentData?.platform || navigator.platform || "").toLowerCase();
+    const os = platform.includes("mac") ? "Mac" : platform.includes("win") ? "Windows" : "";
+    if (os) params.append(SUPPORT_FORM_FIELDS.os, os);
+
+    // Pre-fill Excel version + app type from Office diagnostics (if available)
+    try {
+      const excelVer = Office.context.diagnostics?.version || "";
+      const officePlatform = Office.context.diagnostics?.platform || "";
+      const appTypeLabel = {
+        "PC": "desktop", "Mac": "desktop",
+        "OfficeOnline": "Online", "iOS": "iPad/iPhone", "Android": "Android"
+      }[officePlatform] || officePlatform;
+      const excelVerFull = excelVer
+        ? (appTypeLabel ? `${excelVer} (${appTypeLabel})` : excelVer)
+        : appTypeLabel;
+      if (excelVerFull) params.append(SUPPORT_FORM_FIELDS.excelVersion, excelVerFull);
+    } catch(e) {}
+
+    // Pre-fill chart type from current selection
+    const currentChartType = document.getElementById("chartType")?.value || "";
+    if (currentChartType) params.append(SUPPORT_FORM_FIELDS.chartType, currentChartType);
+
+    const url = `${SUPPORT_FORM_BASE}?${params.toString()}`;
+    window.open(url, "_blank");
+  } catch(e) {
+    // Fallback: open plain form
+    window.open(SUPPORT_FORM_BASE, "_blank");
+  }
+}
 
 // ========= PNG Metadata Utilities =========
 // Lightweight PNG chunk reader/writer for embedding metadata
@@ -343,62 +398,6 @@ async function embedPngMetadata(pngBlob, metadataObj) {
   return new Blob([newData], { type: 'image/png' });
 }
 
-// ========= Custom Filename Dialog =========
-// Office Add-ins don't support prompt(), so we use custom HTML dialog
-function showFilenameDialog(defaultFilename) {
-  return new Promise((resolve) => {
-    const dialog = document.getElementById("filenameDialog");
-    const input = document.getElementById("filenameInput");
-    const saveBtn = document.getElementById("filenameSaveBtn");
-    const cancelBtn = document.getElementById("filenameCancelBtn");
-
-    // Set default value
-    input.value = defaultFilename;
-
-    // Show dialog
-    dialog.classList.add("show");
-    input.focus();
-    input.select();
-
-    // Handle save
-    const handleSave = () => {
-      let filename = input.value.trim() || defaultFilename;
-      if (!filename.toLowerCase().endsWith('.png')) {
-        filename += '.png';
-      }
-      cleanup();
-      resolve(filename);
-    };
-
-    // Handle cancel
-    const handleCancel = () => {
-      cleanup();
-      resolve(null);
-    };
-
-    // Handle Enter key
-    const handleKeyPress = (e) => {
-      if (e.key === 'Enter') {
-        handleSave();
-      } else if (e.key === 'Escape') {
-        handleCancel();
-      }
-    };
-
-    // Cleanup function
-    const cleanup = () => {
-      dialog.classList.remove("show");
-      saveBtn.removeEventListener("click", handleSave);
-      cancelBtn.removeEventListener("click", handleCancel);
-      input.removeEventListener("keypress", handleKeyPress);
-    };
-
-    // Add event listeners
-    saveBtn.addEventListener("click", handleSave);
-    cancelBtn.addEventListener("click", handleCancel);
-    input.addEventListener("keypress", handleKeyPress);
-  });
-}
 
 // ========= Debug Helper =========
 function debugLog(message) {
@@ -419,20 +418,17 @@ async function saveFigureWithMetadata() {
     setStatus("Preparing figure with metadata...");
     debugLog("Step 1: Starting save process");
 
-    // 1. Get current PNG from canvas/preview
-    const canvas = document.getElementById("plot");
-    if (!canvas) {
+    // 1. Get PNG from last render (correct DPI/resolution)
+    if (!lastRender?.b64) {
       setStatus("❌ No figure to save. Please preview first.");
       return;
     }
-    debugLog("Step 2: Canvas found");
+    debugLog("Step 2: lastRender.b64 found");
 
-    // Convert canvas to blob
-    const dataUrl = canvas.toDataURL("image/png");
-    debugLog("Step 3: Canvas converted to dataURL (length: " + dataUrl.length + ")");
-
-    const response = await fetch(dataUrl);
-    const pngBlob = await response.blob();
+    const binary = atob(lastRender.b64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    const pngBlob = new Blob([bytes], { type: "image/png" });
     debugLog("Step 4: PNG blob created (" + pngBlob.size + " bytes)");
 
     // 2. Collect metadata as single JSON object
@@ -517,64 +513,80 @@ async function saveFigureWithMetadata() {
     const pngWithMetadata = await embedPngMetadata(pngBlob, metadata);
     debugLog("Step 6: Metadata embedded (" + pngWithMetadata.size + " bytes)");
 
-    // 4. Show custom filename dialog
+    // 4. Build default filename from title
     const title = document.getElementById("titleText")?.value?.trim() || "plot";
     const defaultFilename = title.replace(/[^\w\-]+/g, "_") + ".png";
-    debugLog("Step 7: Showing filename dialog (default: " + defaultFilename + ")");
+    debugLog("Step 7: Default filename: " + defaultFilename);
 
-    // Show dialog and wait for user input
-    const filename = await showFilenameDialog(defaultFilename);
-    if (!filename) {
-      setStatus("⚠️ Save cancelled");
-      debugLog("Step 8: User cancelled");
-      return;
-    }
-    debugLog("Step 8: Filename confirmed: " + filename);
-
-    // 5. Show image in dialog for right-click save (works on Mac!)
-    debugLog("Step 9: Displaying image for right-click save...");
-
+    // 5. Create blob URL and show unified save dialog
     const blobUrl = URL.createObjectURL(pngWithMetadata);
-    debugLog("Step 10: Blob URL created");
+    debugLog("Step 8: Blob URL created");
 
-    // Set image source
     const imgElement = document.getElementById("saveImagePreview");
-    const filenameElement = document.getElementById("suggestedFilename");
+    const filenameInput = document.getElementById("suggestedFilename");
+    const instructionsEl = document.getElementById("saveInstructions");
     const dialog = document.getElementById("saveImageDialog");
     const closeBtn = document.getElementById("closeSaveImageDialog");
+    const downloadBtn = document.getElementById("downloadFigureBtn");
 
+    // Populate filename field
+    filenameInput.value = defaultFilename;
+
+    // Detect platform for instructions
+    const isMac = (typeof Office !== "undefined" && Office.context?.platform === "Mac");
+    if (isMac) {
+      instructionsEl.innerHTML = "🖱️ <strong>Drag</strong> the image below to your Desktop or a folder — the filename above will be used.<br>Or right-click the image and choose <strong>Save Image As…</strong>.";
+    } else {
+      instructionsEl.innerHTML = "Click <strong>⬇ Download</strong> to save with the filename above.<br>Or right-click the image and choose <strong>Save Image As…</strong>.";
+    }
+
+    // Set image
     imgElement.src = blobUrl;
-    filenameElement.textContent = filename;
-
-    // Make image draggable to desktop/Finder
     imgElement.draggable = true;
     imgElement.ondragstart = (e) => {
-      debugLog("Drag started - trying to save as: " + filename);
+      const fname = filenameInput.value.trim() || defaultFilename;
+      const finalName = fname.toLowerCase().endsWith('.png') ? fname : fname + '.png';
+      debugLog("Drag started as: " + finalName);
       try {
         e.dataTransfer.effectAllowed = "copy";
-        e.dataTransfer.setData("DownloadURL", `image/png:${filename}:${blobUrl}`);
-        debugLog("DataTransfer set successfully");
+        e.dataTransfer.setData("DownloadURL", `image/png:${finalName}:${blobUrl}`);
       } catch (err) {
         debugLog("DataTransfer error: " + err.message);
       }
     };
 
+    // Download button handler
+    const handleDownload = () => {
+      const fname = filenameInput.value.trim() || defaultFilename;
+      const finalName = fname.toLowerCase().endsWith('.png') ? fname : fname + '.png';
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = finalName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setStatus(`✅ Downloading: ${finalName}`);
+      debugLog("Download triggered: " + finalName);
+    };
+
     // Show dialog
     dialog.style.display = "block";
-    debugLog("Step 11: ✅ Image displayed!");
+    debugLog("Step 9: ✅ Save dialog displayed");
 
     // Handle close
     const handleClose = () => {
       dialog.style.display = "none";
       URL.revokeObjectURL(blobUrl);
       closeBtn.removeEventListener("click", handleClose);
+      downloadBtn.removeEventListener("click", handleDownload);
       imgElement.ondragstart = null;
-      debugLog("Step 12: Dialog closed, blob URL revoked");
+      debugLog("Dialog closed, blob URL revoked");
     };
 
     closeBtn.addEventListener("click", handleClose);
+    downloadBtn.addEventListener("click", handleDownload);
 
-    setStatus(`✅ Image ready to save!\n\nTRY THESE OPTIONS:\n\n1. DRAG the image to your Desktop or Finder\n\n2. Right-click → "Save Image As..."\n\nSave as: ${filename}`);
+    setStatus("✅ Figure ready to save.");
 
   } catch (e) {
     console.error('Save figure error:', e);
@@ -896,12 +908,15 @@ async function loadFromFigure() {
               for (let i = 0; i < lines.length; i++) {
                 const line = lines[i].trim();
                 const cellRange = newSheet.getRangeByIndexes(1 + i, statsStartCol, 1, 1);
+                cellRange.numberFormat = [["@"]];  // Force text format to prevent '=' being treated as formula
                 cellRange.values = [[line]];
 
                 // Format headers FIRST (with priority over significance colors)
-                if (line.startsWith('===') || line.startsWith('Category') ||
+                if (line.startsWith('>>') || line.startsWith('Category') ||
                     line.startsWith('Test:') || line.startsWith('Normality') ||
-                    line.startsWith('Post-hoc')) {
+                    line.startsWith('Post-hoc') || line.startsWith('Groups:') ||
+                    line.startsWith('Overall test:') || line.startsWith('Time point') ||
+                    line.startsWith('Summary')) {
                   cellRange.format.font.bold = true;
                   cellRange.format.fill.color = "#E7E6E6";
                 }
@@ -978,6 +993,11 @@ async function loadFromFigure() {
         // This is a safety net to ensure font, weight, title, etc. are set correctly
         const finalSettings = metadata.settings || {};
 
+        // Populate conversion column checkboxes
+        if (typeof window.populateConversionColumns === 'function') {
+          window.populateConversionColumns();
+        }
+
         // Populate vbracket timepoint dropdown and set saved value
         if (typeof populateVbracketTimepoints === 'function') {
           populateVbracketTimepoints();
@@ -1025,6 +1045,12 @@ async function loadFromFigure() {
         console.log("  titleWeight:", document.getElementById("titleWeight")?.value);
         console.log("  axisTitleWeight:", document.getElementById("axisTitleWeight")?.value);
         console.log("  axisTextWeight:", document.getElementById("axisTextWeight")?.value);
+
+        // Auto-trigger preview
+        setStatus("✅ Figure loaded. Generating preview...");
+        setTimeout(() => {
+          document.getElementById("preview")?.click();
+        }, 300);
 
       } catch (err) {
         console.error('Load figure error:', err);
@@ -1880,7 +1906,7 @@ function generateSubsetRCodeFromData(chartType, opts) {
         ggplotCode += `p <- ggplot(dat, aes(x = col1)) +\n`;
         ggplotCode += `  geom_histogram(bins = 20, fill = '${fillColor || '#4C78A8'}', color = '${strokeColor || '#1f2937'}', alpha = ${fillAlpha || 1}) +\n`;
         ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Histogram')}', x = '${xLabelOrig}', y = '${escapeForRLabel(ylab || 'Frequency')}') +\n`;
-        ggplotCode += `  theme_${themeName || 'classic'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
         break;
 
       case 'bar':
@@ -1888,7 +1914,7 @@ function generateSubsetRCodeFromData(chartType, opts) {
         ggplotCode += `p <- ggplot(dat, aes(x = col1, y = col2)) +\n`;
         ggplotCode += `  geom_bar(stat = 'identity', fill = '${fillColor || '#4C78A8'}', color = '${strokeColor || '#1f2937'}', alpha = ${fillAlpha || 1}, width = ${barWidth || 0.8}, linewidth = ${lineWidth || 0.5}) +\n`;
         ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Bar Plot')}', x = '${xLabelOrig}', y = '${yLabelOrig}') +\n`;
-        ggplotCode += `  theme_${themeName || 'classic'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
         break;
 
       case 'bar_grouped':
@@ -1902,7 +1928,7 @@ function generateSubsetRCodeFromData(chartType, opts) {
         ggplotCode += `  geom_bar(stat = 'identity', position = position_dodge(width = ${dodgeWidth || 0.9}), width = ${barWidth || 0.8}, color = '${strokeColor || '#1f2937'}', alpha = ${fillAlpha || 1}, linewidth = ${lineWidth || 0.5}) +\n`;
         ggplotCode += `  scale_fill_manual(values = ${groupColorsStr}) +\n`;
         ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Grouped Bar Plot')}', x = '${escapeForRLabel(originalHeaders[xColIndex - 1] || xlab || 'Category')}', y = '${escapeForRLabel(originalHeaders[yColIndex - 1] || ylab || 'Value')}', fill = '${escapeForRLabel(originalHeaders[groupColIndex - 1] || 'Group')}') +\n`;
-        ggplotCode += `  theme_${themeName || 'classic'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
         break;
 
       case 'bar_grouped_error':
@@ -1917,7 +1943,7 @@ function generateSubsetRCodeFromData(chartType, opts) {
         ggplotCode += `  geom_errorbar(aes(ymin = ${yColE} - ${errColE}, ymax = ${yColE} + ${errColE}), position = position_dodge(width = ${dodgeWidth || 0.9}), width = 0.25, linewidth = ${lineWidth * 0.8 || 0.4}) +\n`;
         ggplotCode += `  scale_fill_manual(values = ${groupColorsError}) +\n`;
         ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Grouped Bar Plot with Error')}', x = '${escapeForRLabel(originalHeaders[xColIndex - 1] || xlab || 'Category')}', y = '${escapeForRLabel(originalHeaders[yColIndex - 1] || ylab || 'Mean')}', fill = '${escapeForRLabel(originalHeaders[groupColIndex - 1] || 'Group')}') +\n`;
-        ggplotCode += `  theme_${themeName || 'classic'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
         break;
 
       case 'box_grouped':
@@ -1935,7 +1961,7 @@ function generateSubsetRCodeFromData(chartType, opts) {
         ggplotCode += `  geom_point(size = 3) +\n`;
         ggplotCode += `  scale_color_manual(values = ${groupColorsLine}) +\n`;
         ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Grouped Plot')}', x = '${escapeForRLabel(originalHeaders[xColIndex - 1] || xlab || 'X')}', y = '${escapeForRLabel(originalHeaders[yColIndex - 1] || ylab || 'Value')}', color = '${escapeForRLabel(originalHeaders[groupColIndex - 1] || 'Group')}') +\n`;
-        ggplotCode += `  theme_${themeName || 'classic'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
         break;
 
       case 'box':
@@ -1943,21 +1969,21 @@ function generateSubsetRCodeFromData(chartType, opts) {
         ggplotCode += `p <- ggplot(dat, aes(x = col1, y = col2)) +\n`;
         ggplotCode += `  geom_boxplot(fill = '${fillColor || '#4C78A8'}', color = '${strokeColor || '#1f2937'}', alpha = ${fillAlpha || 1}) +\n`;
         ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Box Plot')}', x = '${xLabelOrig}', y = '${yLabelOrig}') +\n`;
-        ggplotCode += `  theme_${themeName || 'classic'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
         break;
 
       case 'dot':
         ggplotCode += `p <- ggplot(dat, aes(x = col1, y = col2)) +\n`;
         ggplotCode += `  geom_point(color = '${fillColor || '#4C78A8'}', size = 3, alpha = ${fillAlpha || 1}) +\n`;
         ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Dot Plot')}', x = '${xLabelOrig}', y = '${yLabelOrig}') +\n`;
-        ggplotCode += `  theme_${themeName || 'classic'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
         break;
 
       default:
         ggplotCode += `# Chart type: ${chartType}\n`;
         ggplotCode += `p <- ggplot(dat, aes(x = col1, y = col2)) +\n`;
         ggplotCode += `  geom_point() +\n`;
-        ggplotCode += `  theme_${themeName || 'classic'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
     }
 
     // Add detailed theme customization for text sizes and appearance
@@ -2204,26 +2230,64 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
     let geomCode = '';
     let additionalGeoms = '';
 
-    if (chartType === 'bar' || chartType === 'bar_error') {
-      geomCode = `geom_bar(stat = 'identity', fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7})`;
-    } else if (chartType === 'bar_error_dot') {
-      // For bar_error_dot: need stat_summary for bars + error bars, plus geom_point for dots
-      const errorType = settings.errorBarType === 'SE' ? 'se' : (settings.errorBarType === 'CI95' ? 'ci95' : 'sd');
+    const isPerCat = settings.fillMode === 'per_category';
+    // No trailing + — the template at line "  ${geomCode} +" provides it
+    const scaleAndGuide = isPerCat
+      ? `\n  scale_fill_manual(values = ${groupColors}) +\n  guides(fill = 'none')`
+      : '';
+    const xAes = `col${settings.xColIndex || 1}`;
 
-      geomCode = `stat_summary(fun = mean, geom = 'bar', fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +
+    if (chartType === 'bar') {
+      if (isPerCat) {
+        geomCode = `geom_bar(stat = 'identity', aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide}`;
+      } else {
+        geomCode = `geom_bar(stat = 'identity', fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7})`;
+      }
+    } else if (chartType === 'bar_error') {
+      if (isPerCat) {
+        geomCode = `geom_col(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide} +
+  geom_errorbar(aes(ymin = col${settings.yColIndex || 2} - col${settings.errorColIndex || 3}, ymax = col${settings.yColIndex || 2} + col${settings.errorColIndex || 3}), width = 0.2, linewidth = ${settings.lineWidth || 0.7})`;
+      } else {
+        geomCode = `geom_col(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +
+  geom_errorbar(aes(ymin = col${settings.yColIndex || 2} - col${settings.errorColIndex || 3}, ymax = col${settings.yColIndex || 2} + col${settings.errorColIndex || 3}), width = 0.2, linewidth = ${settings.lineWidth || 0.7})`;
+      }
+    } else if (chartType === 'bar_error_dot') {
+      const errorType = settings.errorBarType === 'SE' ? 'se' : (settings.errorBarType === 'CI95' ? 'ci95' : 'sd');
+      if (isPerCat) {
+        geomCode = `stat_summary(aes(fill = ${xAes}), fun = mean, geom = 'bar', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide} +
   stat_summary(fun.data = mean_${errorType}, geom = 'errorbar', width = 0.2, linewidth = ${settings.lineWidth || 0.7}) +
   geom_point(position = position_jitter(width = ${(settings.barWidth || 0.4) * 0.15}, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 1}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16})`;
+      } else {
+        geomCode = `stat_summary(fun = mean, geom = 'bar', fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +
+  stat_summary(fun.data = mean_${errorType}, geom = 'errorbar', width = 0.2, linewidth = ${settings.lineWidth || 0.7}) +
+  geom_point(position = position_jitter(width = ${(settings.barWidth || 0.4) * 0.15}, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 1}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16})`;
+      }
     } else if (chartType === 'histogram') {
       geomCode = `geom_histogram(bins = ${settings.bins || 20}, fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9})`;
     } else if (chartType === 'box' || chartType === 'box_dot') {
-      geomCode = `geom_boxplot(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9})`;
+      if (isPerCat) {
+        geomCode = `geom_boxplot(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}) +${scaleAndGuide}`;
+      } else {
+        geomCode = `geom_boxplot(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9})`;
+      }
       if (chartType === 'box_dot') {
         additionalGeoms = `  geom_point(position = position_jitter(width = 0.15, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.6}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16}) +\n`;
       }
     } else if (chartType === 'violin' || chartType === 'violin_dot') {
-      geomCode = `geom_violin(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9})`;
+      if (isPerCat) {
+        geomCode = `geom_violin(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}) +${scaleAndGuide}`;
+      } else {
+        geomCode = `geom_violin(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9})`;
+      }
       if (chartType === 'violin_dot') {
         additionalGeoms = `  geom_point(position = position_jitter(width = 0.15, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.6}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16}) +\n`;
+      }
+    } else if (chartType === 'dot') {
+      if (isPerCat) {
+        const scaleColor = `\n  scale_color_manual(values = ${groupColors}) +\n  guides(color = 'none')`;
+        geomCode = `geom_point(aes(color = ${xAes}), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}, shape = ${settings.dotShape || 16}) +${scaleColor}`;
+      } else {
+        geomCode = `geom_point(color = '${settings.dotColor || '#4C78A8'}', size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}, shape = ${settings.dotShape || 16})`;
       }
     } else {
       geomCode = `geom_point(color = '${settings.fillColor || '#4C78A8'}', size = 3, alpha = ${settings.fillAlpha || 0.9})`;
@@ -2356,6 +2420,195 @@ ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
     }
 
     code += `\nprint(p)\n`;
+  } else if (chartType === 'ic50_grouped_dose_response') {
+    // Grouped IC50 Dose-Response curve
+    const groupColName = `col${settings.groupColIndex || 1}`;
+    const xColName = `col${settings.xColIndex || 2}`;
+    const yColName = `col${settings.yColIndex || 3}`;
+    const curveWidth = settings.ic50CurveWidth || 1.5;
+    const pointSize = settings.ic50PointSize || 3;
+    const pointAlpha = settings.ic50PointAlpha ?? 1;
+    const dataDisplay = settings.ic50DataDisplay || 'mean_sd';
+    const fittingMethod = settings.ic50FittingMethod || 'drc';
+    const groupColors = settings.groupColors || ['#4C78A8', '#E15759', '#76B7B2', '#F28E2B', '#59A14F', '#EDC948'];
+    const numGroups = settings.numGroups || 2;
+    const colorVec = groupColors.slice(0, numGroups).map(c => `'${c}'`).join(', ');
+    const xScaleGrouped = settings.xScale || 'log10';
+    const showLog10LabelsGrouped = settings.ic50ShowLog10Labels || false;
+    const useDecimalLabelsGrouped = settings.ic50DecimalLabels !== false;
+    const showIC50Line = settings.showIC50Line !== false;
+    const showHalfMaxLine = settings.showHalfMaxLine || false;
+    const xIsLog10 = settings.ic50XisLog10 || false;
+    const ic50LineWidth = settings.ic50LineWidth || 0.8;
+    const ic50LineAlpha = settings.ic50LineAlpha ?? 1;
+    const halfMaxLineColor = settings.ic50HalfLineColor || '#808080';
+    const halfMaxLineWidth = settings.ic50HalfLineWidth || 0.5;
+    const halfMaxLineAlpha = settings.ic50HalfLineAlpha ?? 1;
+
+    let groupedFitSection;
+    if (fittingMethod === 'drc') {
+      groupedFitSection = `
+# Fit all groups using drc (4PL log-logistic, recommended)
+# install.packages('drc')
+library(drc)
+fit_drc <- tryCatch(drm(resp ~ conc, curveid = group, data = dat, fct = LL.4()), error = function(e) NULL)
+
+# Extract IC50 for each group
+ic50_values <- setNames(rep(NA_real_, length(groups)), groups)
+if (!is.null(fit_drc)) {
+  ed_results <- ED(fit_drc, 50, display = FALSE)
+  for (grp in groups) {
+    row_name <- paste0('e:', grp, ':50')
+    if (row_name %in% rownames(ed_results)) ic50_values[grp] <- ed_results[row_name, 'Estimate']
+  }
+}
+
+# Generate smooth curves
+conc_seq <- 10^seq(log10(min(dat$conc)), log10(max(dat$conc)), length.out = 500)
+curve_list <- lapply(groups, function(grp) {
+  if (is.null(fit_drc)) return(NULL)
+  nd <- data.frame(conc = conc_seq, group = factor(grp, levels = groups))
+  tryCatch(data.frame(group = grp, conc = conc_seq,
+                      resp = predict(fit_drc, newdata = nd)), error = function(e) NULL)
+})
+all_curves <- do.call(rbind, Filter(Negate(is.null), curve_list))
+all_curves$group <- factor(all_curves$group, levels = groups)`;
+    } else {
+      const fit4PLCode = fittingMethod === 'nlsLM' ? `tryCatch(minpack.lm::nlsLM(
+    resp ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
+    data = gd,
+    start = list(Bottom = bottom_i, Top = top_i, IC50 = ic50_i, Hill = 1),
+    lower = c(0, 0, min(gd$conc)/10, 0.1),
+    upper = c(max(gd$resp), max(gd$resp)*1.5, max(gd$conc)*10, 10),
+    control = minpack.lm::nls.lm.control(maxiter = 500)
+  ), error = function(e) NULL)` : `tryCatch(nls(
+    resp ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
+    data = gd,
+    start = list(Bottom = bottom_i, Top = top_i, IC50 = ic50_i, Hill = 1),
+    algorithm = 'port',
+    lower = c(0, 0, min(gd$conc)/10, 0.1),
+    upper = c(max(gd$resp), max(gd$resp)*1.5, max(gd$conc)*10, 10),
+    control = list(maxiter = 500, warnOnly = TRUE)
+  ), error = function(e) NULL)`;
+
+      const fit3PLCode = fittingMethod === 'nlsLM' ? `tryCatch(minpack.lm::nlsLM(
+      resp ~ Top / (1 + (conc / IC50)^Hill),
+      data = gd,
+      start = list(Top = top_i, IC50 = ic50_i, Hill = 1),
+      lower = c(0, min(gd$conc)/10, 0.1),
+      upper = c(max(gd$resp)*1.5, max(gd$conc)*10, 10),
+      control = minpack.lm::nls.lm.control(maxiter = 500)
+    ), error = function(e) NULL)` : `tryCatch(nls(
+      resp ~ Top / (1 + (conc / IC50)^Hill),
+      data = gd,
+      start = list(Top = top_i, IC50 = ic50_i, Hill = 1),
+      algorithm = 'port',
+      lower = c(0, min(gd$conc)/10, 0.1),
+      upper = c(max(gd$resp)*1.5, max(gd$conc)*10, 10),
+      control = list(maxiter = 500, warnOnly = TRUE)
+    ), error = function(e) NULL)`;
+
+      const extraLib = fittingMethod === 'nlsLM' ? `# install.packages('minpack.lm')\nlibrary(minpack.lm)\n` : '';
+
+      groupedFitSection = `${extraLib}
+# Fit 4PL model for each group
+fit_list    <- vector('list', length(groups))
+names(fit_list) <- groups
+ic50_values <- setNames(rep(NA_real_, length(groups)), groups)
+
+for (grp in groups) {
+  gd <- dat[dat$group == grp, ]
+  bottom_i <- min(gd$resp); top_i <- max(gd$resp); ic50_i <- median(gd$conc)
+
+  f4 <- ${fit4PLCode}
+
+  if (!is.null(f4)) {
+    fit_list[[grp]] <- f4
+    ic50_values[[grp]] <- coef(f4)['IC50']
+  } else {
+    f3 <- ${fit3PLCode}
+    if (!is.null(f3)) {
+      fit_list[[grp]] <- f3
+      ic50_values[[grp]] <- coef(f3)['IC50']
+    }
+  }
+}
+
+# Generate smooth curves
+conc_seq <- 10^seq(log10(min(dat$conc)), log10(max(dat$conc)), length.out = 500)
+all_curves <- do.call(rbind, Filter(Negate(is.null), lapply(groups, function(grp) {
+  f <- fit_list[[grp]]
+  if (is.null(f)) return(NULL)
+  data.frame(group = grp, conc = conc_seq, resp = predict(f, newdata = data.frame(conc = conc_seq)))
+})))
+all_curves$group <- factor(all_curves$group, levels = groups)`;
+    }
+
+    code += `library(ggplot2)
+
+# Prepare data
+dat$group <- as.factor(dat$${groupColName})
+dat$conc  <- as.numeric(dat$${xColName})
+dat$resp  <- as.numeric(dat$${yColName})
+${xIsLog10 ? `dat$conc <- 10^dat$conc  # back-transform log10 concentrations to linear for fitting
+` : ''}dat <- dat[complete.cases(dat$group, dat$conc, dat$resp), ]
+dat <- dat[dat$conc > 0, ]
+
+groups <- levels(dat$group)
+color_vec <- c(${colorVec})
+names(color_vec) <- groups
+${groupedFitSection}
+
+${dataDisplay === 'mean_sd' || dataDisplay === 'mean_se' ? `# Summary statistics per group and concentration
+sm <- aggregate(resp ~ group + conc, data = dat, FUN = function(x)
+  c(mean = mean(x), ${dataDisplay === 'mean_sd' ? 'err = sd(x)' : 'err = sd(x)/sqrt(length(x))'}))
+sm <- do.call(data.frame, sm)
+colnames(sm) <- c('group', 'conc', 'mean', 'error')
+sm$group <- factor(sm$group, levels = groups)
+
+p <- ggplot(sm, aes(x = conc, y = mean, color = group)) +
+  geom_errorbar(aes(ymin = mean - error, ymax = mean + error),
+                width = 0.1, linewidth = 0.5) +
+  geom_point(size = ${pointSize}, alpha = ${pointAlpha}) +
+` : `p <- ggplot(dat, aes(x = conc, y = resp, color = group)) +
+  geom_point(size = ${pointSize}, alpha = ${pointAlpha}) +
+`}  geom_line(data = all_curves, aes(x = conc, y = resp, color = group),
+             linewidth = ${curveWidth}) +
+  scale_color_manual(values = color_vec) +
+${xScaleGrouped === 'log10' ? (showLog10LabelsGrouped ? `conc_pos <- dat$conc[is.finite(dat$conc) & dat$conc > 0]\nif (length(conc_pos) > 0) {\n  x_breaks_log <- 10^(seq(floor(log10(min(conc_pos))), ceiling(log10(max(conc_pos))), by=1))\n  p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)\n} else {\n  p <- p + scale_x_log10(labels = function(x) log10(x))\n}\np <- p +` : (useDecimalLabelsGrouped ? `  scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#")) +\n  annotation_logticks(sides = 'b') +` : `  scale_x_log10() +\n  annotation_logticks(sides = 'b') +`)) : xScaleGrouped === 'log2' ? `  scale_x_continuous(trans = 'log2') +` : ''}
+  labs(
+    title = '${settings.title || 'Grouped Dose-Response'}',
+    x = '${settings.xLabel || 'Concentration'}',
+    y = '${settings.yLabel || 'Response (%)'}'
+  ) +
+  theme_${settings.themeName}(base_family = '${settings.fontFamily}') +
+  theme(
+    plot.background  = element_rect(fill = 'white', color = NA),
+    panel.background = element_rect(fill = 'white', color = NA),
+    plot.title    = element_text(size = ${settings.titleSize}, hjust = 0.5),
+    axis.title.x  = element_text(size = ${settings.xAxisTitleSize}),
+    axis.title.y  = element_text(size = ${settings.yAxisTitleSize}),
+    axis.text.x   = element_text(size = ${settings.xAxisTextSize}, color = 'black'),
+    axis.text.y   = element_text(size = ${settings.yAxisTextSize}, color = 'black'),
+    legend.text   = element_text(size = ${settings.legendTextSize})
+  )
+
+${showIC50Line ? `# Add vertical IC50 reference lines (one per group, using group color)
+for (grp in groups) {
+  if (!is.na(ic50_values[grp])) {
+    p <- p + geom_vline(xintercept = ic50_values[grp], linetype = 'dashed',
+                        color = color_vec[grp], linewidth = ${ic50LineWidth}, alpha = ${ic50LineAlpha})
+  }
+}
+` : ''}${showHalfMaxLine ? `# Add 50% response line
+p <- p + geom_hline(yintercept = 50, linetype = 'dashed', color = '${halfMaxLineColor}', linewidth = ${halfMaxLineWidth}, alpha = ${halfMaxLineAlpha})
+` : ''}
+# Print IC50 results
+cat('IC50 values:\\n')
+print(data.frame(Group = groups, IC50 = unname(ic50_values)))
+
+print(p)
+`;
   } else if (chartType === 'ic50_dose_response') {
     // IC50 Dose-Response curve
     const xColName = `col${settings.xColIndex || 1}`;
@@ -2366,17 +2619,72 @@ ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
     const pointColor = settings.ic50PointColor || '#1f2937';
     const pointAlpha = settings.ic50PointAlpha ?? 1;
     const lineColor = settings.ic50LineColor || '#dc2626';
+    const lineWidth = settings.ic50LineWidth || 0.8;
+    const lineAlpha = settings.ic50LineAlpha ?? 1;
+    const halfLineColor = settings.ic50HalfLineColor || '#808080';
+    const halfLineWidth = settings.ic50HalfLineWidth || 0.5;
+    const halfLineAlpha = settings.ic50HalfLineAlpha ?? 1;
+    const xIsLog10 = settings.ic50XisLog10 || false;
+    const xScaleSingle = settings.xScale || 'log10';
+    const showLog10LabelsSingle = settings.ic50ShowLog10Labels || false;
+    const useDecimalLabelsSingle = settings.ic50DecimalLabels !== false;
     const showIC50Value = settings.showIC50Value !== false;
     const showIC50Line = settings.showIC50Line !== false;
-    const dataDisplay = settings.ic50DataDisplay || 'all_points';
+    const showHalfMaxLine = settings.showHalfMaxLine || false;
+    const dataDisplay = settings.ic50DataDisplay || 'mean_sd';
+    const fittingMethod = settings.ic50FittingMethod || 'drc';
 
-    code += `# Prepare data for IC50 fitting
-dat$conc <- as.numeric(dat$${xColName})
-dat$response <- as.numeric(dat$${yColName})
+    let fitSection;
+    if (fittingMethod === 'drc') {
+      fitSection = `
+# Fit using drc package (4PL log-logistic, recommended)
+# install.packages('drc')
+library(drc)
+fit <- tryCatch(drm(response ~ conc, data = dat, fct = LL.4()), error = function(e) NULL)
 
-# Remove missing values
-dat <- dat[complete.cases(dat$conc, dat$response), ]
+# Extract IC50 with 95% confidence interval
+ic50_value <- if (!is.null(fit)) ED(fit, 50, display = FALSE)[1, "Estimate"] else NA`;
+    } else {
+      const fitCode4PL = fittingMethod === 'nlsLM' ? `
+  # install.packages('minpack.lm')
+  minpack.lm::nlsLM(
+    response ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
+    data = dat,
+    start = list(Bottom = bottom_init, Top = top_init, IC50 = ic50_init, Hill = hill_init),
+    lower = c(0, 0, min(dat$conc)/10, 0.1),
+    upper = c(max(dat$response), max(dat$response)*1.5, max(dat$conc)*10, 10),
+    control = minpack.lm::nls.lm.control(maxiter = 500)
+  )` : `
+  nls(
+    response ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
+    data = dat,
+    start = list(Bottom = bottom_init, Top = top_init, IC50 = ic50_init, Hill = hill_init),
+    algorithm = 'port',
+    lower = c(0, 0, min(dat$conc)/10, 0.1),
+    upper = c(max(dat$response), max(dat$response)*1.5, max(dat$conc)*10, 10),
+    control = list(maxiter = 500, warnOnly = TRUE)
+  )`;
 
+      const fitCode3PL = fittingMethod === 'nlsLM' ? `
+    minpack.lm::nlsLM(
+      response ~ Top / (1 + (conc / IC50)^Hill),
+      data = dat,
+      start = list(Top = top_init, IC50 = ic50_init, Hill = hill_init),
+      lower = c(0, min(dat$conc)/10, 0.1),
+      upper = c(max(dat$response)*1.5, max(dat$conc)*10, 10),
+      control = minpack.lm::nls.lm.control(maxiter = 500)
+    )` : `
+    nls(
+      response ~ Top / (1 + (conc / IC50)^Hill),
+      data = dat,
+      start = list(Top = top_init, IC50 = ic50_init, Hill = hill_init),
+      algorithm = 'port',
+      lower = c(0, min(dat$conc)/10, 0.1),
+      upper = c(max(dat$response)*1.5, max(dat$conc)*10, 10),
+      control = list(maxiter = 500, warnOnly = TRUE)
+    )`;
+
+      fitSection = `
 # 4-Parameter Logistic (4PL) model for IC50
 # Model: response = Bottom + (Top - Bottom) / (1 + (conc/IC50)^Hill)
 
@@ -2387,33 +2695,24 @@ ic50_init <- median(dat$conc, na.rm = TRUE)
 hill_init <- 1
 
 # Fit the 4PL model
-fit <- tryCatch({
-  nls(
-    response ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
-    data = dat,
-    start = list(Bottom = bottom_init, Top = top_init, IC50 = ic50_init, Hill = hill_init),
-    algorithm = 'port',
-    lower = c(0, 0, min(dat$conc)/10, 0.1),
-    upper = c(max(dat$response), max(dat$response)*1.5, max(dat$conc)*10, 10),
-    control = list(maxiter = 500, warnOnly = TRUE)
-  )
+fit <- tryCatch({${fitCode4PL}
 }, error = function(e) {
   # Fallback to 3PL (fixed Bottom = 0)
-  tryCatch({
-    nls(
-      response ~ Top / (1 + (conc / IC50)^Hill),
-      data = dat,
-      start = list(Top = top_init, IC50 = ic50_init, Hill = hill_init),
-      algorithm = 'port',
-      lower = c(0, min(dat$conc)/10, 0.1),
-      upper = c(max(dat$response)*1.5, max(dat$conc)*10, 10),
-      control = list(maxiter = 500, warnOnly = TRUE)
-    )
+  tryCatch({${fitCode3PL}
   }, error = function(e2) NULL)
 })
 
 # Extract IC50 value
-ic50_value <- if (!is.null(fit)) coef(fit)['IC50'] else NA
+ic50_value <- if (!is.null(fit)) coef(fit)['IC50'] else NA`;
+    }
+
+    code += `# Prepare data for IC50 fitting
+dat$conc <- as.numeric(dat$${xColName})
+${xIsLog10 ? `dat$conc <- 10^dat$conc  # back-transform log10 concentrations to linear for fitting\n` : ''}dat$response <- as.numeric(dat$${yColName})
+
+# Remove missing values
+dat <- dat[complete.cases(dat$conc, dat$response), ]
+${fitSection}
 
 # Generate curve data for plotting
 curve_data <- data.frame(
@@ -2439,7 +2738,7 @@ p <- ggplot(summary_data, aes(x = conc, y = mean)) +
 ` : `# Create the plot with all data points
 p <- ggplot(dat, aes(x = conc, y = response)) +
   geom_point(size = ${pointSize}, color = '${pointColor}', alpha = ${pointAlpha}) +
-`}  scale_x_log10() +
+`}${xScaleSingle === 'log10' ? (showLog10LabelsSingle ? `conc_pos <- dat$conc[is.finite(dat$conc) & dat$conc > 0]\nif (length(conc_pos) > 0) {\n  x_breaks_log <- 10^(seq(floor(log10(min(conc_pos))), ceiling(log10(max(conc_pos))), by=1))\n  p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)\n} else {\n  p <- p + scale_x_log10(labels = function(x) log10(x))\n}\np <- p +` : (useDecimalLabelsSingle ? `  scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#")) +\n  annotation_logticks(sides = 'b') +` : `  scale_x_log10() +\n  annotation_logticks(sides = 'b') +`)) : xScaleSingle === 'log2' ? `  scale_x_continuous(trans = 'log2') +` : ''}
   labs(
     title = '${settings.title || 'Dose-Response Curve'}',
     x = '${settings.xLabel || 'Concentration'}',
@@ -2462,13 +2761,13 @@ if (!is.null(fit)) {
                      color = '${curveColor}', linewidth = ${curveWidth})
 }
 
-${showIC50Line ? `# Add IC50 reference lines
+${showIC50Line ? `# Add IC50 reference line
 if (!is.na(ic50_value)) {
-  y_at_ic50 <- predict(fit, newdata = data.frame(conc = ic50_value))
   p <- p +
-    geom_vline(xintercept = ic50_value, linetype = 'dashed', color = '${lineColor}', linewidth = 0.8) +
-    geom_hline(yintercept = y_at_ic50, linetype = 'dashed', color = 'gray50', linewidth = 0.5)
+    geom_vline(xintercept = ic50_value, linetype = 'dashed', color = '${lineColor}', linewidth = ${lineWidth}, alpha = ${lineAlpha})
 }
+` : ''}${showHalfMaxLine ? `# Add 50% response line
+p <- p + geom_hline(yintercept = 50, linetype = 'dashed', color = '${halfLineColor}', linewidth = ${halfLineWidth}, alpha = ${halfLineAlpha})
 ` : ''}
 ${showIC50Value ? `# Add IC50 annotation
 if (!is.na(ic50_value)) {
@@ -5113,8 +5412,9 @@ async function downloadRCodeHandler() {
 
 // Write R code to clipboard handler
 async function writeRCodeToCellHandler() {
+  let rCode;
   try {
-    const rCode = extractRelevantRCode();  // Try extraction again
+    rCode = extractRelevantRCode();
 
     if (rCode.includes("Please click 'Preview' first")) {
       setStatus("⚠️ Please preview chart first before exporting R code");
@@ -5125,12 +5425,23 @@ async function writeRCodeToCellHandler() {
     await navigator.clipboard.writeText(rCode);
     setStatus("✅ R code copied to clipboard! Paste into R/RStudio.");
   } catch (e) {
-    console.error('Copy R code error:', e);
-    // Fallback to cell writing if clipboard fails
+    console.warn('Clipboard API failed, trying execCommand fallback:', e);
+    // Fallback for Excel Online where Clipboard API is blocked by permissions policy
     try {
-      await writeRCodeToCell(rCode);
+      const ta = document.createElement("textarea");
+      ta.value = rCode;
+      ta.style.cssText = "position:fixed;opacity:0;pointer-events:none;";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      if (ok) {
+        setStatus("✅ R code copied to clipboard! Paste into R/RStudio.");
+      } else {
+        setStatus("❌ Could not copy R code. Please use Download R Code instead.");
+      }
     } catch (e2) {
-      setStatus("Error: " + (e?.message || e));
+      setStatus("❌ Could not copy R code. Please use Download R Code instead.");
     }
   }
 }
@@ -5164,7 +5475,7 @@ function collectCurrentSettings() {
     axisTextWeight: el("axisTextWeight")?.value || "plain",
 
     // Theme
-    themeName: el("ggtheme")?.value || "minimal",
+    themeName: el("ggtheme")?.value || "bw",
 
     // Colors
     fillColor: el("fillColor")?.value || "#4C78A8",
@@ -5187,6 +5498,7 @@ function collectCurrentSettings() {
     tableStyleLabels: el("tableStyleLabels")?.checked || false,
     xScale: el("xScale")?.value || "linear",
     yScale: el("yScale")?.value || "linear",
+    xBreaksMode: el("xBreaksMode")?.value || "auto",
 
     // Axis rotation
     xAxisRotation: el("xAxisRotation")?.value || "0",
@@ -5219,6 +5531,7 @@ function collectCurrentSettings() {
 
     // Statistics
     addStatistics: el("addStatistics")?.checked ? "true" : "false",
+    showBrackets: el("showBrackets")?.checked !== false,
     errorBarType: el("errorBarType")?.value || "sd",
     statisticalTestMode: el("statisticalTestMode")?.value || "auto",
     // When manual mode, use dataType to determine test; when auto, use "auto"
@@ -5234,6 +5547,7 @@ function collectCurrentSettings() {
     statSymbolSize: el("statSymbolSize")?.value || "6",
     significanceLevel: el("significanceLevel")?.value || "0.05",
     comparisonMode: document.querySelector('input[name="comparisonMode"]:checked')?.value || "significant",
+    fillMode: document.querySelector('input[name="fillMode"]:checked')?.value || "single",
     postHocTest: (el("dataTypeSelect")?.value === "nonparametric" ? el("postHocTestNonparam")?.value : el("postHocTest")?.value) || "tukey",
     controlGroup: el("dunnettControl")?.value || "",
     dataType: el("dataTypeSelect")?.value || "parametric",
@@ -5514,6 +5828,7 @@ function applySettingsToUI(settings) {
   setChecked("tableStyleLabels", settings.tableStyleLabels);
   setValue("xScale", settings.xScale);
   setValue("yScale", settings.yScale);
+  setValue("xBreaksMode", settings.xBreaksMode);
 
   // Axis rotation
   setValue("xAxisRotation", settings.xAxisRotation);
@@ -5550,7 +5865,13 @@ function applySettingsToUI(settings) {
   setValue("symbolType", settings.symbolType);
   setValue("statSymbolSize", settings.statSymbolSize);
   setValue("significanceLevel", settings.significanceLevel);
-  setValue("postHocTest", settings.postHocTest);
+  // Restore post-hoc selection to the correct dropdown based on value type
+  const nonParamValues = ["dunn", "dunn_holm", "steel"];
+  if (nonParamValues.includes(settings.postHocTest)) {
+    setValue("postHocTestNonparam", settings.postHocTest);
+  } else {
+    setValue("postHocTest", settings.postHocTest);
+  }
 
   // VBracket legend settings (position dropdown removed - manual X/Y only)
   setValue("vbracketTimepoint", settings.vbracketTimepoint);
@@ -5569,6 +5890,17 @@ function applySettingsToUI(settings) {
   if (settings.comparisonMode) {
     const radio = document.getElementById(settings.comparisonMode);
     if (radio) radio.checked = true;
+  }
+
+  // Fill mode (radio buttons - for bar_error_dot)
+  if (settings.fillMode) {
+    const fillModeRadio = document.getElementById(
+      settings.fillMode === 'per_category' ? 'fillModePerCategory' : 'fillModeSingle'
+    );
+    if (fillModeRadio) {
+      fillModeRadio.checked = true;
+      fillModeRadio.dispatchEvent(new Event('change'));
+    }
   }
 
   // Number of bins
@@ -5652,14 +5984,27 @@ function updateEventHandlersWithDebug() {
     loadPresetBtn.parentNode.replaceChild(newLoadPresetBtn, loadPresetBtn);
     newLoadPresetBtn.addEventListener("click", loadSettingsFromSheet);
   }
+
+  const refreshPresetBtn = document.getElementById("refreshPreset");
+  if (refreshPresetBtn) {
+    refreshPresetBtn.addEventListener("click", () => {
+      refreshPresetList().then(() => setStatus("✅ Preset list refreshed"));
+    });
+  }
 }
 
 // ---- 初期化 ----
 Office.onReady(() => {
-  // Display version in title
+  // Display version in title and Help tab
   const versionSpan = document.getElementById("appVersion");
-  if (versionSpan) {
-    versionSpan.textContent = `v${ADDIN_VERSION}`;
+  if (versionSpan) versionSpan.textContent = `v${ADDIN_VERSION}`;
+  const helpTabVersion = document.getElementById("helpTabVersion");
+  if (helpTabVersion) helpTabVersion.textContent = ADDIN_VERSION;
+
+  // Hide 💾 Save Figure button for Mac desktop users (they use Insert Figure to Sheet)
+  if (Office.context?.platform === "Mac") {
+    const saveFigureBtn = document.getElementById("saveFigure");
+    if (saveFigureBtn) saveFigureBtn.style.display = "none";
   }
 
   // === Advanced 決め打ちトグル（確実表示） ===
@@ -5847,7 +6192,7 @@ Office.onReady(() => {
     ];
 
     // IC50 chart type - hide all standard controls (has its own IC50 Style section)
-    const isIC50 = chartType === 'ic50_dose_response';
+    const isIC50 = chartType === 'ic50_dose_response' || chartType === 'ic50_grouped_dose_response';
 
     // Bar Interior: Show for single-group charts (NOT grouped, NOT line, NOT IC50)
     if (barInteriorRow) {
@@ -5927,11 +6272,16 @@ Office.onReady(() => {
     const groupColorRow = document.getElementById("groupColorRow");
     const groupColumnRow = document.getElementById("groupColumnRow");
     const errorColumnRow = document.getElementById("errorColumnRow");
+    const fillModeRow = document.getElementById("fillModeRow");
+    const fillColorSubRow = document.getElementById("fillColorSubRow");
 
     if (!lx || !ly) return;
 
     // Define grouped chart types
     const isGrouped = GROUPED_CHART_TYPES.includes(v);
+
+    // Chart types that use per-category colors (non-grouped but multi-color)
+    const isPerCategoryColor = ["bar_error_dot", "bar", "bar_error", "box", "box_dot", "violin", "violin_dot", "dot"].includes(v);
 
     // Charts that need error column selector (pre-calculated error data)
     const needsErrorColumn = v === "line_grouped_error" ||
@@ -5946,6 +6296,19 @@ Office.onReady(() => {
       if (xScaleSelect) {
         xScaleSelect.value = "log10";
       }
+    } else if (v === "ic50_grouped_dose_response") {
+      lx.textContent = "Concentration";
+      ly.textContent = "Response (%)";
+      // Set x-axis to log10 scale by default for dose-response curves
+      const xScaleSelectG = document.getElementById("xScale");
+      if (xScaleSelectG) {
+        xScaleSelectG.value = "log10";
+      }
+      // Show group column selector and group color controls
+      if (groupColumnRow) groupColumnRow.style.display = "flex";
+      if (groupColorRow) groupColorRow.style.display = "flex";
+      const groupColorLabel = document.getElementById("groupColorRowLabel");
+      if (groupColorLabel) groupColorLabel.textContent = "Group Colors";
     } else if (v === "box") {
       lx.textContent = "X Axis (optional)";
       ly.textContent = "Y Axis";
@@ -5957,6 +6320,8 @@ Office.onReady(() => {
       ly.textContent = "Y Axis";
       // Show group color controls for all grouped chart variants
       if (groupColorRow) groupColorRow.style.display = "flex";
+      const groupColorLabel = document.getElementById("groupColorRowLabel");
+      if (groupColorLabel) groupColorLabel.textContent = "Group Colors";
       // Show group column selector for grouped charts
       if (groupColumnRow) groupColumnRow.style.display = "flex";
       // Set default bar width to 0.9 for grouped charts
@@ -5965,14 +6330,33 @@ Office.onReady(() => {
         // Always set to 0.9 for grouped charts (override the 0.4 HTML default)
         barWidthInput.value = "0.9";
       }
+    } else if (isPerCategoryColor) {
+      lx.textContent = "X Axis";
+      ly.textContent = "Y Axis";
+      if (groupColumnRow) groupColumnRow.style.display = "none";
+      const groupColorLabel = document.getElementById("groupColorRowLabel");
+      if (groupColorLabel) groupColorLabel.textContent = "Category Colors";
+      // Show fill mode toggle, reset to "single" on chart type switch
+      if (fillModeRow) fillModeRow.style.display = "flex";
+      const singleRadio = document.getElementById("fillModeSingle");
+      if (singleRadio) singleRadio.checked = true;
+      // Ensure single-color state: show fill color, hide category colors
+      if (fillColorSubRow) fillColorSubRow.style.display = "flex";
+      if (groupColorRow) groupColorRow.style.display = "none";
     } else {
       // histogram and others
       lx.textContent = "X Axis";
       ly.textContent = "Y Axis";
     }
 
-    // Hide group controls for non-grouped chart types
-    if (!isGrouped) {
+    // Hide fill mode row and restore fill color row for non-bar_error_dot charts
+    if (!isPerCategoryColor) {
+      if (fillModeRow) fillModeRow.style.display = "none";
+      if (fillColorSubRow) fillColorSubRow.style.display = "flex";
+    }
+
+    // Hide group controls for non-grouped chart types (except per-category color charts)
+    if (!isGrouped && !isPerCategoryColor) {
       if (groupColorRow) groupColorRow.style.display = "none";
       if (groupColumnRow) groupColumnRow.style.display = "none";
       // Reset bar width to default for non-grouped charts (only if it was 0.9)
@@ -6036,41 +6420,99 @@ Office.onReady(() => {
 
     // Update IC50 Analysis controls
     updateIC50AnalysisVisibility();
+
+    // Update group color labels for new chart type
+    updateGroupColorLabels();
   }
 
   // IC50 Analysis visibility control
   function updateIC50AnalysisVisibility() {
     const chartType = document.getElementById("chartType")?.value || "";
+    const ic50AnalysisSection = document.getElementById("ic50AnalysisSection");
     const enableIC50Checkbox = document.getElementById("enableIC50Analysis");
     const ic50OptionsContainer = document.getElementById("ic50OptionsContainer");
     const ic50StyleSection = document.getElementById("ic50StyleSection");
+    const ic50CurveColorRow = document.getElementById("ic50CurveColorRow");
+    const ic50PointColorRow = document.getElementById("ic50PointColorRow");
+    const isIC50Chart = chartType === "ic50_dose_response" || chartType === "ic50_grouped_dose_response";
+    const isGrouped = chartType === "ic50_grouped_dose_response";
 
-    if (chartType === "ic50_dose_response") {
-      // Auto-check and show options when IC50 chart type is selected
-      if (enableIC50Checkbox) {
-        enableIC50Checkbox.checked = true;
-      }
-      if (ic50OptionsContainer) {
-        ic50OptionsContainer.style.display = "block";
-      }
-      // Show IC50 styling in Colors & Style tab
-      if (ic50StyleSection) {
-        ic50StyleSection.style.display = "block";
-      }
+    // Rows only relevant for single IC50 (annotation lines, value label, confidence band)
+    const singleOnlyRows = ["showIC50ValueRow", "showConfidenceBandRow"];
+
+    const ic50UnsupportedMessage = document.getElementById("ic50UnsupportedMessage");
+
+    const ic50DataChartOptions = document.getElementById("ic50DataChartOptions");
+    const xScaleRow = document.getElementById("xScaleRow");
+    const yScaleRow = document.getElementById("yScaleRow");
+
+    if (isIC50Chart) {
+      if (ic50UnsupportedMessage) ic50UnsupportedMessage.style.display = "none";
+      if (ic50AnalysisSection) ic50AnalysisSection.style.display = "block";
+      if (enableIC50Checkbox) enableIC50Checkbox.checked = true;
+      if (ic50OptionsContainer) ic50OptionsContainer.style.display = "block";
+      if (ic50StyleSection) ic50StyleSection.style.display = "block";
+      if (ic50DataChartOptions) ic50DataChartOptions.style.display = "block";
+      // X scale is always log10 for dose-response curves — show it but auto-set to log10
+      const xScaleSelect = document.getElementById("xScale");
+      if (xScaleSelect) xScaleSelect.value = "log10";
+      if (yScaleRow) yScaleRow.style.display = "none";
+
+      // Hide single-group color pickers for grouped type — Group Colors controls those
+      if (ic50CurveColorRow) ic50CurveColorRow.style.display = isGrouped ? "none" : "";
+      if (ic50PointColorRow) ic50PointColorRow.style.display = isGrouped ? "none" : "";
+
+      // Single shape row vs per-group shape section
+      const ic50PointShapeRow = document.getElementById("ic50PointShapeRow");
+      const ic50GroupShapeSection = document.getElementById("ic50GroupShapeSection");
+      if (ic50PointShapeRow) ic50PointShapeRow.style.display = isGrouped ? "none" : "";
+      if (ic50GroupShapeSection) ic50GroupShapeSection.style.display = isGrouped ? "" : "none";
+
+      // IC50 line (vertical) section header + color row: hide color for grouped (uses group colors)
+      const ic50VerticalLineHeader = document.getElementById("ic50VerticalLineHeader");
+      const ic50LineColorRow = document.getElementById("ic50LineColorRow");
+      const ic50VerticalLineTitleLabel = document.getElementById("ic50VerticalLineTitleLabel");
+      if (ic50VerticalLineHeader) ic50VerticalLineHeader.style.display = "";
+      if (ic50LineColorRow) ic50LineColorRow.style.display = isGrouped ? "none" : "";
+      if (ic50VerticalLineTitleLabel) ic50VerticalLineTitleLabel.textContent = isGrouped ? "IC50 lines (vertical)" : "IC50 line (vertical)";
+
+      // 50% line (horizontal) section: shown for both single and grouped
+      const ic50HalfLineHeader = document.getElementById("ic50HalfLineHeader");
+      const ic50HalfLineColorRow = document.getElementById("ic50HalfLineColorRow");
+      const ic50HalfLineWidthRow = document.getElementById("ic50HalfLineWidthRow");
+      const ic50HalfLineAlphaRow = document.getElementById("ic50HalfLineAlphaRow");
+      if (ic50HalfLineHeader) ic50HalfLineHeader.style.display = "";
+      if (ic50HalfLineColorRow) ic50HalfLineColorRow.style.display = "";
+      if (ic50HalfLineWidthRow) ic50HalfLineWidthRow.style.display = "";
+      if (ic50HalfLineAlphaRow) ic50HalfLineAlphaRow.style.display = "";
+
+      // Hide single-only options for grouped type
+      singleOnlyRows.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = isGrouped ? "none" : "flex";
+      });
+
+      // Decimal labels option: only relevant when NOT showing log10 labels
+      const ic50DecimalLabelsRow = document.getElementById("ic50DecimalLabelsRow");
+      const showLog10Labels = document.getElementById("ic50ShowLog10Labels")?.checked || false;
+      if (ic50DecimalLabelsRow) ic50DecimalLabelsRow.style.display = showLog10Labels ? "none" : "";
     } else {
-      // Uncheck and hide options for other chart types
-      if (enableIC50Checkbox) {
-        enableIC50Checkbox.checked = false;
-      }
-      if (ic50OptionsContainer) {
-        ic50OptionsContainer.style.display = "none";
-      }
-      // Hide IC50 styling in Colors & Style tab
-      if (ic50StyleSection) {
-        ic50StyleSection.style.display = "none";
-      }
+      if (ic50UnsupportedMessage) ic50UnsupportedMessage.style.display = "block";
+      if (ic50AnalysisSection) ic50AnalysisSection.style.display = "none";
+      if (enableIC50Checkbox) enableIC50Checkbox.checked = false;
+      if (ic50OptionsContainer) ic50OptionsContainer.style.display = "none";
+      if (ic50StyleSection) ic50StyleSection.style.display = "none";
+      if (ic50DataChartOptions) ic50DataChartOptions.style.display = "none";
+      if (xScaleRow) xScaleRow.style.display = "";
+      if (yScaleRow) yScaleRow.style.display = "";
     }
   }
+
+  // When ic50ShowLog10Labels changes, toggle decimal labels row visibility
+  document.getElementById("ic50ShowLog10Labels")?.addEventListener("change", function() {
+    const ic50DecimalLabelsRow = document.getElementById("ic50DecimalLabelsRow");
+    if (ic50DecimalLabelsRow) ic50DecimalLabelsRow.style.display = this.checked ? "none" : "";
+  });
 
   // IC50 checkbox toggle handler
   function updateIC50OptionsVisibility() {
@@ -6081,6 +6523,880 @@ Office.onReady(() => {
       ic50OptionsContainer.style.display = enableIC50Checkbox.checked ? "block" : "none";
     }
   }
+
+  // ── Reset-to-defaults handlers ──────────────────────────────────────────
+
+  function setVal(id, val) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (el.type === 'checkbox') el.checked = val;
+    else if (el.type === 'radio') el.checked = val;
+    else el.value = val;
+    el.dispatchEvent(new Event('change'));
+  }
+  function setColor(pickerId, textId, hex) {
+    const p = document.getElementById(pickerId);
+    const t = document.getElementById(textId);
+    if (p) p.value = hex;
+    if (t) t.value = hex;
+  }
+
+  document.getElementById("resetTab2")?.addEventListener("click", function() {
+    setColor("fillPicker",     "fillColor",   "#4C78A8");
+    setColor("strokePicker",   "strokeColor", "#1F2937");
+    setVal("fillAlpha",    "0.9");
+    setVal("lineWidth",    "0.7");
+    setVal("barWidth",     "0.4");
+    setVal("dodgeWidth",   "0.9");
+    setVal("dotSize",      "4");
+    setVal("dotAlpha",     "1");
+    setColor("dotColorPicker", "dotColor",    "#333333");
+    setVal("dotShape",     "16");
+    // Reset group colors to defaults
+    const defaultGroupColors = ["#4C78A8","#E15759","#57C4AD","#E9C46A","#F76C6C","#A8DADC","#B07AA1","#FF9DA7","#9C755F","#BAB0AC"];
+    defaultGroupColors.forEach((hex, i) => setColor(`groupPicker${i+1}`, `groupColor${i+1}`, hex));
+    // Reset fill mode to single
+    const single = document.getElementById("fillModeSingle");
+    if (single) { single.checked = true; single.dispatchEvent(new Event('change')); }
+  });
+
+  document.getElementById("resetTab3")?.addEventListener("click", function() {
+    setVal("fontFam",          "Arial");
+    setVal("showTitle",        false);
+    setVal("titleText",        "");
+    setVal("titleSize",        "24");
+    setVal("titleWeight",      "plain");
+    setVal("showXLabel",       true);
+    setVal("xLabel",           "");
+    setVal("xAxisTitleSize",   "20");
+    setVal("xAxisTextSize",    "18");
+    setVal("showYLabel",       true);
+    setVal("yLabel",           "");
+    setVal("yAxisTitleSize",   "20");
+    setVal("yAxisTextSize",    "18");
+    setVal("legendTextSize",   "16");
+    setVal("axisTitleWeight",  "plain");
+    setVal("axisTextWeight",   "plain");
+  });
+
+  document.getElementById("resetTab4")?.addEventListener("click", function() {
+    setVal("ggtheme",        "bw");
+    setVal("xScale",         "linear");
+    setVal("yScale",         "linear");
+    setVal("rotation",       "0");
+    setVal("xAxisRotation",  "0");
+    setVal("yAxisRotation",  "0");
+    setVal("xAxisHjust",     "0.5");
+    setVal("xAxisVjust",     "0.5");
+    setVal("yAxisHjust",     "0.5");
+    setVal("yAxisVjust",     "0.5");
+    setVal("xMin",           "");
+    setVal("xMax",           "");
+    setVal("yMin",           "");
+    setVal("yMax",           "");
+  });
+
+  // ── End Reset-to-defaults ────────────────────────────────────────────────
+
+  // ── Data Table Converter ─────────────────────────────────────────────────
+
+  // Hide/show the Expected Data Format diagram
+  document.getElementById("hideFormatGuide")?.addEventListener("change", (e) => {
+    const diagram = document.getElementById("formatGuideDiagram");
+    if (diagram) diagram.style.display = e.target.checked ? "none" : "block";
+  });
+
+  // ========= Visual Converter =========
+  let vcData = [];    // 2D array [row][col] of cell values
+  let vcRoles = [];   // 2D array [row][col] of roles: null | 'group' | 'x' | 'values' | 'skip'
+  let vcSelecting = false;
+  let vcSelStart = null;  // {r, c}
+  let vcSelEnd = null;    // {r, c}
+
+  document.getElementById("vcLoadBtn")?.addEventListener("click", async () => {
+    try {
+      setStatus("Loading data for Visual Converter...");
+      await Excel.run(async (context) => {
+        const range = context.workbook.getSelectedRange();
+        range.load(["values", "rowIndex", "columnIndex", "rowCount", "columnCount"]);
+        await context.sync();
+
+        const numRows = range.rowCount;
+        const numCols = range.columnCount;
+
+        // Deep copy values
+        vcData = range.values.map(row => [...row]);
+        vcRoles = Array.from({length: numRows}, () => Array(numCols).fill(null));
+
+        // Detect & forward-fill merged cells (Office.js returns "" for non-anchor cells)
+        let hasMerged = false;
+        try {
+          const mergedAreas = range.getMergedAreasOrNullObject();
+          mergedAreas.load("isNullObject");
+          await context.sync();
+
+          if (!mergedAreas.isNullObject) {
+            mergedAreas.areas.load("count");
+            await context.sync();
+
+            const count = mergedAreas.areas.count;
+            if (count > 0) {
+              const areaItems = [];
+              for (let i = 0; i < count; i++) {
+                const a = mergedAreas.areas.getItemAt(i);
+                a.load(["rowIndex", "columnIndex", "rowCount", "columnCount", "values"]);
+                areaItems.push(a);
+              }
+              await context.sync();
+
+              for (const a of areaItems) {
+                if (a.rowCount > 1 || a.columnCount > 1) {
+                  hasMerged = true;
+                  const val = a.values[0][0];
+                  const r0 = a.rowIndex - range.rowIndex;
+                  const c0 = a.columnIndex - range.columnIndex;
+                  for (let r = r0; r < r0 + a.rowCount; r++) {
+                    for (let c = c0; c < c0 + a.columnCount; c++) {
+                      if (r >= 0 && r < numRows && c >= 0 && c < numCols) {
+                        vcData[r][c] = val;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (mergeErr) {
+          console.log("Merge detection skipped:", mergeErr.message);
+        }
+
+        // Fallback: simple horizontal forward-fill for empty strings in first few rows
+        // (handles cases where getMergedAreas is unavailable)
+        for (let r = 0; r < Math.min(numRows, 5); r++) {
+          for (let c = 1; c < numCols; c++) {
+            if ((vcData[r][c] === "" || vcData[r][c] === null) &&
+                vcData[r][c-1] !== "" && vcData[r][c-1] !== null) {
+              vcData[r][c] = vcData[r][c-1];
+              hasMerged = true;
+            }
+          }
+        }
+
+        const warning = document.getElementById("vcMergedWarning");
+        if (warning) warning.style.display = hasMerged ? "block" : "none";
+
+        vcRenderTable();
+        vcEnsureKeyListener();
+
+        document.getElementById("vcToolbar").style.display = "block";
+        document.getElementById("vcRepDir").style.display = "block";
+        document.getElementById("vcTableAreaFlex").style.display = "flex";
+        document.getElementById("vcOutputActions").style.display = "flex";
+        document.getElementById("vcDoneMsg").style.display = "none";
+
+        setStatus(`Loaded ${numRows} × ${numCols} cells. Select cells and assign roles.`);
+      });
+    } catch (e) {
+      setStatus("❌ Error loading data: " + (e?.message || e));
+      console.error(e);
+    }
+  });
+
+  function vcRenderTable() {
+    const wrap = document.getElementById("vcTableWrap");
+    if (!wrap || !vcData.length) return;
+    const numRows = vcData.length;
+    const numCols = vcData[0].length;
+    let html = '<table id="vcTable">';
+    for (let r = 0; r < numRows; r++) {
+      html += "<tr>";
+      for (let c = 0; c < numCols; c++) {
+        const role = vcRoles[r][c];
+        const cls = role ? `vc-${role}` : "";
+        const val = vcData[r][c] !== null && vcData[r][c] !== undefined ? String(vcData[r][c]).replace(/&/g,"&amp;").replace(/</g,"&lt;") : "";
+        html += `<td class="${cls}" data-r="${r}" data-c="${c}">${val}</td>`;
+      }
+      html += "</tr>";
+    }
+    html += "</table>";
+    wrap.innerHTML = html;
+
+    const table = document.getElementById("vcTable");
+    if (!table) return;
+    table.addEventListener("mousedown", vcOnMouseDown);
+    table.addEventListener("mousemove", vcOnMouseMove);
+  }
+
+  function vcGetCell(e) {
+    const td = e.target.closest("td[data-r]");
+    if (!td) return null;
+    return { r: parseInt(td.dataset.r), c: parseInt(td.dataset.c) };
+  }
+
+  // Auto-scroll interval handle
+  let vcScrollInterval = null;
+
+  function vcStartAutoScroll(wrap, direction) {
+    vcStopAutoScroll();
+    vcScrollInterval = setInterval(() => {
+      wrap.scrollTop += direction * 20;
+    }, 50);
+  }
+
+  function vcStopAutoScroll() {
+    if (vcScrollInterval !== null) {
+      clearInterval(vcScrollInterval);
+      vcScrollInterval = null;
+    }
+  }
+
+  // Attach keydown listener to vcTableWrap once after data is loaded
+  let vcKeyListenerAttached = false;
+  function vcEnsureKeyListener() {
+    if (vcKeyListenerAttached) return;
+    const wrap = document.getElementById("vcTableWrap");
+    if (!wrap) return;
+    wrap.addEventListener("keydown", vcOnKeyDown);
+    vcKeyListenerAttached = true;
+  }
+
+  function vcOnMouseDown(e) {
+    const cell = vcGetCell(e);
+    if (!cell) return;
+    // Focus the wrap so keyboard events work
+    const wrap = document.getElementById("vcTableWrap");
+    if (wrap) wrap.focus({ preventScroll: true });
+    // Shift+click: extend existing selection without resetting start
+    if (e.shiftKey && vcSelStart) {
+      vcSelEnd = cell;
+      vcHighlight();
+      e.preventDefault();
+      return;
+    }
+    vcSelecting = true;
+    vcSelStart = cell;
+    vcSelEnd = cell;
+    vcHighlight();
+    e.preventDefault();
+  }
+
+  function vcOnKeyDown(e) {
+    if (!vcData.length || !vcSelStart) return;
+    const numRows = vcData.length;
+    const numCols = vcData[0]?.length || 0;
+    let dr = 0, dc = 0;
+    switch (e.key) {
+      case "ArrowUp":    dr = -1; break;
+      case "ArrowDown":  dr =  1; break;
+      case "ArrowLeft":  dc = -1; break;
+      case "ArrowRight": dc =  1; break;
+      default: return;
+    }
+    e.preventDefault();
+    // Cursor is always vcSelEnd (the moving end of the selection)
+    let r = vcSelEnd ? vcSelEnd.r : vcSelStart.r;
+    let c = vcSelEnd ? vcSelEnd.c : vcSelStart.c;
+    if (e.metaKey || e.ctrlKey) {
+      // Cmd/Ctrl+Arrow: jump to edge
+      if (dr < 0) r = 0;
+      else if (dr > 0) r = numRows - 1;
+      if (dc < 0) c = 0;
+      else if (dc > 0) c = numCols - 1;
+    } else {
+      r = Math.max(0, Math.min(numRows - 1, r + dr));
+      c = Math.max(0, Math.min(numCols - 1, c + dc));
+    }
+    if (!e.shiftKey) {
+      // Plain arrow: move anchor and cursor together (new single-cell selection)
+      vcSelStart = { r, c };
+    }
+    vcSelEnd = { r, c };
+    vcHighlight();
+    vcScrollCellIntoView(r, c);
+  }
+
+  function vcScrollCellIntoView(r, c) {
+    const wrap = document.getElementById("vcTableWrap");
+    const table = document.getElementById("vcTable");
+    if (!wrap || !table) return;
+    const td = table.querySelector(`td[data-r="${r}"][data-c="${c}"]`);
+    if (!td) return;
+    // Vertical
+    const tdTop = td.offsetTop;
+    const tdBottom = tdTop + td.offsetHeight;
+    if (tdTop < wrap.scrollTop) {
+      wrap.scrollTop = tdTop - 2;
+    } else if (tdBottom > wrap.scrollTop + wrap.clientHeight) {
+      wrap.scrollTop = tdBottom - wrap.clientHeight + 2;
+    }
+    // Horizontal
+    const tdLeft = td.offsetLeft;
+    const tdRight = tdLeft + td.offsetWidth;
+    if (tdLeft < wrap.scrollLeft) {
+      wrap.scrollLeft = tdLeft - 2;
+    } else if (tdRight > wrap.scrollLeft + wrap.clientWidth) {
+      wrap.scrollLeft = tdRight - wrap.clientWidth + 2;
+    }
+  }
+
+  function vcOnMouseMove(e) {
+    if (!vcSelecting) return;
+    const cell = vcGetCell(e);
+    if (cell) {
+      vcSelEnd = cell;
+      vcHighlight();
+    }
+    // Auto-scroll when cursor is near the top or bottom edge of the table wrapper
+    const wrap = document.getElementById("vcTableWrap");
+    if (wrap) {
+      const rect = wrap.getBoundingClientRect();
+      const zone = 30; // px from edge to trigger scroll
+      if (e.clientY > rect.bottom - zone) {
+        vcStartAutoScroll(wrap, 1);   // scroll down
+      } else if (e.clientY < rect.top + zone) {
+        vcStartAutoScroll(wrap, -1);  // scroll up
+      } else {
+        vcStopAutoScroll();
+      }
+    }
+  }
+
+  document.addEventListener("mouseup", () => {
+    if (vcSelecting) vcSelecting = false;
+    vcStopAutoScroll();
+  });
+
+  function vcHighlight() {
+    if (!vcSelStart || !vcSelEnd) return;
+    const rMin = Math.min(vcSelStart.r, vcSelEnd.r);
+    const rMax = Math.max(vcSelStart.r, vcSelEnd.r);
+    const cMin = Math.min(vcSelStart.c, vcSelEnd.c);
+    const cMax = Math.max(vcSelStart.c, vcSelEnd.c);
+
+    const table = document.getElementById("vcTable");
+    if (!table) return;
+    table.querySelectorAll("td.vc-sel").forEach(td => td.classList.remove("vc-sel"));
+    table.querySelectorAll("td.vc-cursor").forEach(td => td.classList.remove("vc-cursor"));
+    for (let r = rMin; r <= rMax; r++) {
+      for (let c = cMin; c <= cMax; c++) {
+        const td = table.querySelector(`td[data-r="${r}"][data-c="${c}"]`);
+        if (td) td.classList.add("vc-sel");
+      }
+    }
+    // Mark cursor cell (vcSelEnd) with a distinct inset border
+    const cursor = table.querySelector(`td[data-r="${vcSelEnd.r}"][data-c="${vcSelEnd.c}"]`);
+    if (cursor) cursor.classList.add("vc-cursor");
+  }
+
+  window.vcAssignRole = function(role) {
+    if (!vcSelStart || !vcSelEnd) {
+      setStatus("Drag to select cells first, then assign a role.");
+      return;
+    }
+    const rMin = Math.min(vcSelStart.r, vcSelEnd.r);
+    const rMax = Math.max(vcSelStart.r, vcSelEnd.r);
+    const cMin = Math.min(vcSelStart.c, vcSelEnd.c);
+    const cMax = Math.max(vcSelStart.c, vcSelEnd.c);
+
+    for (let r = rMin; r <= rMax; r++) {
+      for (let c = cMin; c <= cMax; c++) {
+        vcRoles[r][c] = role;
+      }
+    }
+
+    vcRenderTable();
+    vcUpdateColNames();
+    vcSelStart = null;
+    vcSelEnd = null;
+  };
+
+  window.vcClearRoles = function() {
+    if (!vcData.length) return;
+    vcRoles = Array.from({length: vcData.length}, () => Array(vcData[0].length).fill(null));
+    vcRenderTable();
+    vcUpdateColNames();
+    vcSelStart = null;
+    vcSelEnd = null;
+  };
+
+  window.vcUpdateFactorButtons = function() {
+    const n = parseInt(document.getElementById("vcNumFactors")?.value || "2");
+    const f3 = document.getElementById("vcFactor3Btn");
+    const f4 = document.getElementById("vcFactor4Btn");
+    if (f3) f3.style.display = n >= 3 ? "" : "none";
+    if (f4) f4.style.display = n >= 4 ? "" : "none";
+  };
+
+  function vcUpdateColNames() {
+    const hasGroup   = vcRoles.some(row => row.includes("group"));
+    const hasX       = vcRoles.some(row => row.includes("x"));
+    const hasFactor3 = vcRoles.some(row => row.includes("factor3"));
+    const hasFactor4 = vcRoles.some(row => row.includes("factor4"));
+    const groupRow = document.getElementById("vcGroupColNameRow");
+    const xRow     = document.getElementById("vcXColNameRow");
+    const f3Row    = document.getElementById("vcFactor3ColNameRow");
+    const f4Row    = document.getElementById("vcFactor4ColNameRow");
+    if (groupRow) groupRow.style.display = hasGroup   ? "flex" : "none";
+    if (xRow)     xRow.style.display     = hasX       ? "flex" : "none";
+    if (f3Row)    f3Row.style.display    = hasFactor3 ? "flex" : "none";
+    if (f4Row)    f4Row.style.display    = hasFactor4 ? "flex" : "none";
+  }
+
+  function vcBuildOutputRows() {
+    const groupColName = document.getElementById("vcGroupColName")?.value.trim() || "Factor1";
+    const xColName     = document.getElementById("vcXColName")?.value.trim() || "Factor2";
+    const valueColName = document.getElementById("vcValueColName")?.value.trim() || "Value";
+    const numRows = vcData.length;
+    const numCols = vcData[0].length;
+    const groupCells = [], xCells = [], valueCells = [], factor3Cells = [], factor4Cells = [];
+    for (let r = 0; r < numRows; r++) {
+      for (let c = 0; c < numCols; c++) {
+        const role = vcRoles[r][c];
+        const val = vcData[r][c];
+        if (role === "group")        groupCells.push({r, c, val});
+        else if (role === "x")       xCells.push({r, c, val});
+        else if (role === "values")  valueCells.push({r, c, val});
+        else if (role === "factor3") factor3Cells.push({r, c, val});
+        else if (role === "factor4") factor4Cells.push({r, c, val});
+      }
+    }
+    if (valueCells.length === 0) {
+      setStatus("❌ No cells assigned as 'Values'. Select data cells and click Values.");
+      return null;
+    }
+    const valRows = [...new Set(valueCells.map(v => v.r))].sort((a,b) => a-b);
+    const valCols = [...new Set(valueCells.map(v => v.c))].sort((a,b) => a-b);
+    const autoSkipRows = new Set();
+    const groupLabelForCol = {};
+    for (const row of valRows) {
+      const rowVals = valCols.map(c => vcData[row][c]);
+      const allText = rowVals.every(v => v === null || v === "" || isNaN(Number(v)));
+      if (allText) {
+        autoSkipRows.add(row);
+        for (const col of valCols) {
+          const label = String(vcData[row][col] ?? "");
+          groupLabelForCol[col] = groupLabelForCol[col] ? groupLabelForCol[col] + " " + label : label;
+        }
+      }
+    }
+    for (const gc of groupCells) {
+      if (!valRows.includes(gc.r)) {
+        const label = String(gc.val ?? "");
+        groupLabelForCol[gc.c] = groupLabelForCol[gc.c] ? groupLabelForCol[gc.c] + " " + label : label;
+      }
+    }
+    for (const c of valCols) {
+      if (!groupLabelForCol[c]) groupLabelForCol[c] = String(vcData[0][c] ?? `Col${c+1}`);
+    }
+    const numFactors = parseInt(document.getElementById("vcNumFactors")?.value || "2");
+    const factor3ColName = document.getElementById("vcFactor3ColName")?.value.trim() || "Factor3";
+    const factor4ColName = document.getElementById("vcFactor4ColName")?.value.trim() || "Factor4";
+    // Factor 3: detect horizontal (header row) vs vertical (label column)
+    const factor3IsHorizontal = factor3Cells.length > 0 && new Set(factor3Cells.map(f => f.r)).size === 1;
+    const factor3LabelForRow = {}, factor3LabelForCol = {};
+    for (const fc of factor3Cells) {
+      if (fc.val !== null && fc.val !== undefined && fc.val !== "") {
+        factor3LabelForRow[fc.r] = String(fc.val);
+        factor3LabelForCol[fc.c] = String(fc.val);
+      }
+    }
+    // Factor 4: detect horizontal (header row) vs vertical (label column)
+    const factor4IsHorizontal = factor4Cells.length > 0 && new Set(factor4Cells.map(f => f.r)).size === 1;
+    const factor4LabelForRow = {}, factor4LabelForCol = {};
+    for (const fc of factor4Cells) {
+      if (fc.val !== null && fc.val !== undefined && fc.val !== "") {
+        factor4LabelForRow[fc.r] = String(fc.val);
+        factor4LabelForCol[fc.c] = String(fc.val);
+      }
+    }
+    // Helper: get the right label for factor3/4 based on orientation
+    const getF3 = (row, col) => factor3IsHorizontal ? (factor3LabelForCol[col] ?? "") : (getF3(row, col));
+    const getF4 = (row, col) => factor4IsHorizontal ? (factor4LabelForCol[col] ?? "") : (getF4(row, col));
+    const repDir = document.querySelector('input[name="vcRepDir"]:checked')?.value || "cols";
+    const groupIsVertical = groupCells.length > 0 && new Set(groupCells.map(g => g.c)).size === 1;
+    const xIsVerticalCol  = xCells.length > 0    && new Set(xCells.map(x => x.c)).size === 1;
+    let outputRows;
+    if (repDir === "rows" || groupIsVertical || xIsVerticalCol) {
+      const xRowSetR = new Set(xCells.map(x => x.r));
+      const xColSetR = new Set(xCells.map(x => x.c));
+      const xIsHeaderRowInRowBranch = xCells.length > 0 && xRowSetR.size === 1 && xColSetR.size > 1;
+      const groupIsHorizontal = groupCells.length > 0 && new Set(groupCells.map(g => g.r)).size === 1;
+      if (groupIsVertical && xIsHeaderRowInRowBranch) {
+        // Group goes DOWN (vertical column), X is a header row (horizontal)
+        const groupLabelForRow = {};
+        for (const gc of groupCells) groupLabelForRow[gc.r] = String(gc.val ?? "");
+        const xLabelForCol = {};
+        for (const xc of xCells) xLabelForCol[xc.c] = String(xc.val ?? "");
+        const header = [groupColName, xColName];
+        if (numFactors >= 3) header.push(factor3ColName);
+        if (numFactors >= 4) header.push(factor4ColName);
+        header.push(valueColName);
+        outputRows = [header];
+        for (const row of valRows) {
+          if (autoSkipRows.has(row)) continue;
+          const grpLabel = groupLabelForRow[row] ?? "";
+          for (const col of valCols) {
+            const outRow = [grpLabel, xLabelForCol[col] ?? ""];
+            if (numFactors >= 3) outRow.push(getF3(row, col));
+            if (numFactors >= 4) outRow.push(getF4(row, col));
+            outRow.push(vcData[row][col]);
+            outputRows.push(outRow);
+          }
+        }
+      } else if (xIsVerticalCol || groupIsVertical) {
+        // "Replicates in rows": one vertical label column (Factor 1 or Factor 2),
+        // replicates spread right across columns. Use whichever factor is the vertical
+        // column for row labels — assigning Factor 1 and Factor 2 should behave the same.
+        const labelCells = xIsVerticalCol ? xCells : groupCells;
+        const labelForRow = {};
+        for (const lc of labelCells) {
+          if (lc.val !== null && lc.val !== undefined && lc.val !== "") labelForRow[lc.r] = lc.val;
+        }
+        const header = [xColName, groupColName];
+        if (numFactors >= 3) header.push(factor3ColName);
+        if (numFactors >= 4) header.push(factor4ColName);
+        header.push(valueColName);
+        outputRows = [header];
+        for (const row of valRows) {
+          if (autoSkipRows.has(row)) continue;
+          for (const col of valCols) {
+            const outRow = [labelForRow[row] ?? "", groupLabelForCol[col] ?? ""];
+            if (numFactors >= 3) outRow.push(getF3(row, col));
+            if (numFactors >= 4) outRow.push(getF4(row, col));
+            outRow.push(vcData[row][col]);
+            outputRows.push(outRow);
+          }
+        }
+      } else {
+        const groupLabelForRow = {};
+        for (const gc of groupCells) groupLabelForRow[gc.r] = String(gc.val ?? "");
+        if (Object.keys(groupLabelForRow).length === 0)
+          for (const xc of xCells) groupLabelForRow[xc.r] = String(xc.val ?? "");
+        if (Object.keys(groupLabelForRow).length === 0)
+          for (const row of valRows) groupLabelForRow[row] = String(vcData[row][valCols[0]] ?? "");
+        const labelColIndices = new Set([...groupCells.map(g => g.c), ...xCells.map(x => x.c)]);
+        const header = [xColName];
+        if (numFactors >= 3) header.push(factor3ColName);
+        if (numFactors >= 4) header.push(factor4ColName);
+        header.push(valueColName);
+        outputRows = [header];
+        for (const row of valRows) {
+          if (autoSkipRows.has(row)) continue;
+          const rowLabel = groupLabelForRow[row] !== undefined ? groupLabelForRow[row] : "";
+          for (const col of valCols) {
+            if (labelColIndices.has(col)) continue;
+            const outRow = [rowLabel];
+            if (numFactors >= 3) outRow.push(getF3(row, col));
+            if (numFactors >= 4) outRow.push(getF4(row, col));
+            outRow.push(vcData[row][col]);
+            outputRows.push(outRow);
+          }
+        }
+      }
+    } else {
+      const xRowSet = new Set(xCells.map(x => x.r));
+      const xColSet = new Set(xCells.map(x => x.c));
+      const xIsHeaderRow = xCells.length > 0 && xRowSet.size === 1 && xColSet.size > 1;
+      if (xIsHeaderRow) {
+        const xLabelForCol = {};
+        for (const xc of xCells) xLabelForCol[xc.c] = xc.val !== null && xc.val !== undefined ? String(xc.val) : "";
+        const groupLabelForColFromCells = {};
+        for (const gc of groupCells) groupLabelForColFromCells[gc.c] = String(gc.val ?? "");
+        const hasGroupRow = groupCells.length > 0;
+        if (hasGroupRow) {
+          const header = [groupColName, xColName];
+          if (numFactors >= 3) header.push(factor3ColName);
+          if (numFactors >= 4) header.push(factor4ColName);
+          header.push(valueColName);
+          outputRows = [header];
+          for (const col of valCols) {
+            const groupLabel = groupLabelForColFromCells[col] !== undefined ? groupLabelForColFromCells[col] : "";
+            const xLabel = xLabelForCol[col] !== undefined ? xLabelForCol[col] : "";
+            for (const row of valRows) {
+              if (autoSkipRows.has(row)) continue;
+              const outRow = [groupLabel, xLabel];
+              if (numFactors >= 3) outRow.push(getF3(row, col));
+              if (numFactors >= 4) outRow.push(getF4(row, col));
+              outRow.push(vcData[row][col]);
+              outputRows.push(outRow);
+            }
+          }
+        } else {
+          const header = [xColName];
+          if (numFactors >= 3) header.push(factor3ColName);
+          if (numFactors >= 4) header.push(factor4ColName);
+          header.push(valueColName);
+          outputRows = [header];
+          for (const col of valCols) {
+            const xLabel = xLabelForCol[col] !== undefined ? xLabelForCol[col] : (groupLabelForCol[col] || "");
+            for (const row of valRows) {
+              if (autoSkipRows.has(row)) continue;
+              const outRow = [xLabel];
+              if (numFactors >= 3) outRow.push(getF3(row, col));
+              if (numFactors >= 4) outRow.push(getF4(row, col));
+              outRow.push(vcData[row][col]);
+              outputRows.push(outRow);
+            }
+          }
+        }
+      } else {
+        const hasX = xCells.length > 0;
+        const xAllText = hasX && xCells.every(xc => xc.val === null || xc.val === "" || isNaN(Number(xc.val)));
+        const xLabelForRow = {};
+        const xSkipRows = new Set();
+        for (const xc of xCells) {
+          const v = xc.val;
+          if (v !== null && v !== "" && !isNaN(Number(v))) xLabelForRow[xc.r] = v;
+          else if (xAllText) xLabelForRow[xc.r] = String(v ?? "");
+          else xSkipRows.add(xc.r);
+        }
+        const header = [];
+        if (hasX) header.push(xColName);
+        if (!xAllText) header.push(groupColName);
+        if (numFactors >= 3) header.push(factor3ColName);
+        if (numFactors >= 4) header.push(factor4ColName);
+        header.push(valueColName);
+        outputRows = [header];
+        for (const row of valRows) {
+          if (autoSkipRows.has(row)) continue;
+          if (xSkipRows.has(row)) continue;
+          for (const col of valCols) {
+            const outRow = [];
+            if (hasX) outRow.push(xLabelForRow[row] !== undefined ? xLabelForRow[row] : "");
+            if (!xAllText) outRow.push(groupLabelForCol[col]);
+            if (numFactors >= 3) outRow.push(getF3(row, col));
+            if (numFactors >= 4) outRow.push(getF4(row, col));
+            outRow.push(vcData[row][col]);
+            outputRows.push(outRow);
+          }
+        }
+      }
+    }
+    return outputRows;
+  }
+
+  // Helper: show a message directly below the export buttons in the VC area
+  function setVcMsg(msg, isError = false) {
+    const el = document.getElementById("vcDoneMsg");
+    if (!el) { setStatus(msg); return; }
+    el.innerHTML = msg;
+    el.style.display = "block";
+    if (isError) {
+      el.style.background = "#fff3f3";
+      el.style.border = "1px solid #fca5a5";
+      el.style.color = "#b91c1c";
+    } else {
+      el.style.background = "#eaf4ea";
+      el.style.border = "1px solid #a8d5a8";
+      el.style.color = "#2d6e2d";
+    }
+  }
+
+  document.getElementById("vcConvertBtn")?.addEventListener("click", async () => {
+    try {
+      if (!vcData.length) { setVcMsg("❌ Load data first.", true); return; }
+      const outputRows = vcBuildOutputRows();
+      if (!outputRows) return;
+      const header = outputRows[0];
+
+      // Basic validation: must have at least some data rows
+      if (outputRows.length < 2) {
+        setVcMsg("❌ No data rows in output. Try switching the replicate direction (Rows ↔ Columns), or check your role assignments.", true);
+        return;
+      }
+
+      // Write to new sheet and auto-load
+      setVcMsg("Writing converted data...");
+      let newSheetInfo = null;
+      await Excel.run(async (context) => {
+        const sheets = context.workbook.worksheets;
+        const now = new Date();
+        const ts = now.getFullYear().toString()
+          + String(now.getMonth()+1).padStart(2,"0")
+          + String(now.getDate()).padStart(2,"0")
+          + "_" + String(now.getHours()).padStart(2,"0")
+          + String(now.getMinutes()).padStart(2,"0")
+          + String(now.getSeconds()).padStart(2,"0");
+        const sheetName = "VC_" + ts;
+        const newSheet = sheets.add(sheetName);
+        newSheet.activate();
+
+        const range = newSheet.getCell(0, 0).getResizedRange(outputRows.length - 1, header.length - 1);
+        range.values = outputRows;
+        range.getRow(0).format.font.bold = true;
+        range.select();
+        range.load(["address", "addressLocal"]);
+        newSheet.load("name");
+        await context.sync();
+
+        // Capture the actual sheet name and range address so we can pin it before loading
+        newSheetInfo = { sheetName: newSheet.name, address: range.address, addressLocal: range.addressLocal };
+      });
+
+      // Pin the new sheet range BEFORE loading so readRangeValuesWithFallback()
+      // always reads from the correct new data, not stale previous data
+      if (newSheetInfo) pinnedRange = newSheetInfo;
+
+      // Load directly (not via .click()) so it is awaited and uses the updated pinnedRange
+      await loadHeadersFromSelection();
+
+      setVcMsg(`✅ Converted to sheet. Go to <b>Data &amp; Chart</b> tab to create your chart.`);
+    } catch (e) {
+      setVcMsg("❌ Conversion error: " + (e?.message || e), true);
+      console.error(e);
+    }
+  });
+
+  // Copy to Clipboard button
+  document.getElementById("vcCopyBtn")?.addEventListener("click", async () => {
+    try {
+      if (!vcData.length) { setVcMsg("❌ Load data first.", true); return; }
+      const outputRows = vcBuildOutputRows();
+      if (!outputRows) return;
+      if (outputRows.length < 2) {
+        setVcMsg("❌ No data rows in output. Try switching the replicate direction (Rows ↔ Columns), or check your role assignments.", true);
+        return;
+      }
+      const tsv = outputRows.map(row => row.map(v => (v === null || v === undefined) ? "" : String(v)).join("\t")).join("\n");
+      await navigator.clipboard.writeText(tsv);
+      setVcMsg(`✅ ${outputRows.length - 1} rows copied to clipboard. Paste into Excel, then click <b>Load Data</b>.`);
+    } catch (e) {
+      setVcMsg("❌ Clipboard error: " + (e?.message || e), true);
+    }
+  });
+
+  // Load Data button inside converter — delegates to main load button
+  document.getElementById("conversionLoadBtn")?.addEventListener("click", () => {
+    document.getElementById("load")?.click();
+  });
+
+  // Toggle Data Table Converter panel
+  document.getElementById("conversionToggle")?.addEventListener("click", () => {
+    const panel = document.getElementById("conversionPanel");
+    const toggle = document.getElementById("conversionToggle");
+    if (!panel) return;
+    const open = panel.style.display === "none";
+    panel.style.display = open ? "block" : "none";
+    toggle.textContent = (open ? "▼" : "▶") + " Data Table Converter";
+    // Hide done message when collapsing
+    if (!open) {
+      const doneMsg = document.getElementById("conversionDoneMsg");
+      if (doneMsg) doneMsg.style.display = "none";
+    }
+  });
+
+  // Populate column checkboxes from loaded data
+  window.populateConversionColumns = function() {
+    const list = document.getElementById("conversionColumnList");
+    if (!list) return;
+    if (!window.lastProcessedData || window.lastProcessedData.length < 2) {
+      list.innerHTML = '<div style="color:#999; font-size:11px;">Load data first</div>';
+      return;
+    }
+    const headers = window.lastProcessedData[0];
+    list.innerHTML = headers.map((h, i) =>
+      `<label style="display:flex; align-items:center; gap:6px; margin-bottom:4px; cursor:pointer;">
+        <input type="checkbox" class="conv-id-col" data-index="${i}">
+        <span>${h}</span>
+      </label>`
+    ).join("");
+  };
+
+  // Preview conversion
+  document.getElementById("conversionPreviewBtn")?.addEventListener("click", () => {
+    const result = buildLongData();
+    if (!result) return;
+    const { headers, rows } = result;
+    const preview = document.getElementById("conversionPreview");
+    const previewRows = rows.slice(0, 8);
+    const more = rows.length > 8 ? `<div style="font-size:10px;color:#888;padding:3px 6px;">... ${rows.length} rows total</div>` : "";
+    const esc = s => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const headerHtml = headers.map(h => `<th style="background:#217346;color:white;padding:3px 8px;border:1px solid #1a5c38;font-size:11px;font-weight:bold;white-space:nowrap;">${esc(h)}</th>`).join("");
+    const rowsHtml = previewRows.map((r, i) =>
+      `<tr style="background:${i % 2 === 0 ? "#fff" : "#f2f8f2"};">` +
+      r.map(v => `<td style="padding:2px 8px;border:1px solid #d0d0d0;font-size:11px;white-space:nowrap;">${esc(v)}</td>`).join("") +
+      `</tr>`
+    ).join("");
+    preview.innerHTML = `<table style="border-collapse:collapse;width:100%;""><thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody></table>${more}`;
+    preview.style.display = "block";
+  });
+
+  // Convert & write to new sheet
+  document.getElementById("conversionWriteBtn")?.addEventListener("click", async () => {
+    const result = buildLongData();
+    if (!result) return;
+    const { headers, rows } = result;
+    try {
+      await Excel.run(async (context) => {
+        const now = new Date();
+        const ts = now.getFullYear().toString()
+          + String(now.getMonth() + 1).padStart(2, "0")
+          + String(now.getDate()).padStart(2, "0")
+          + "_" + String(now.getHours()).padStart(2, "0")
+          + String(now.getMinutes()).padStart(2, "0")
+          + String(now.getSeconds()).padStart(2, "0");
+        const sheetName = "Long_" + ts;
+        const sheets = context.workbook.worksheets;
+        const newSheet = sheets.add(sheetName);
+        newSheet.activate();
+        const allRows = [headers, ...rows];
+        const range = newSheet.getCell(0, 0).getResizedRange(allRows.length - 1, headers.length - 1);
+        range.values = allRows;
+        range.getRow(0).format.font.bold = true;
+        // Select the data range so Load Data picks it up automatically
+        range.select();
+        await context.sync();
+        setStatus(`✅ ${rows.length} rows written to sheet "${sheetName}" — loading data...`);
+      });
+      // Auto-trigger Load Data with the newly selected range
+      document.getElementById("load")?.click();
+      // Show next-step message
+      const doneMsg = document.getElementById("conversionDoneMsg");
+      if (doneMsg) doneMsg.style.display = "block";
+    } catch (e) {
+      setStatus("❌ Failed to write sheet: " + e.message);
+    }
+  });
+
+  function buildLongData() {
+    if (!window.lastProcessedData || window.lastProcessedData.length < 2) {
+      setStatus("❌ Load data first before converting.");
+      return null;
+    }
+    const headers = window.lastProcessedData[0];
+    const dataRows = window.lastProcessedData.slice(1);
+    const varName = document.getElementById("conversionVarName")?.value.trim() || "Category";
+    const valueName = document.getElementById("conversionValueName")?.value.trim() || "Value";
+
+    // Collect checked ID column indices
+    const idIndices = [];
+    document.querySelectorAll(".conv-id-col:checked").forEach(cb => {
+      idIndices.push(parseInt(cb.dataset.index));
+    });
+    const valueIndices = headers.map((_, i) => i).filter(i => !idIndices.includes(i));
+
+    if (valueIndices.length === 0) {
+      setStatus("❌ No value columns selected. Uncheck at least one column.");
+      return null;
+    }
+
+    const idHeaders = idIndices.map(i => headers[i]);
+    const outHeaders = [...idHeaders, varName, valueName];
+    const outRows = [];
+    // Loop column-first so all rows for each group are grouped together
+    for (const vi of valueIndices) {
+      for (const row of dataRows) {
+        outRows.push([
+          ...idIndices.map(i => row[i]),
+          headers[vi],
+          row[vi]
+        ]);
+      }
+    }
+    return { headers: outHeaders, rows: outRows };
+  }
+
+  // ── End Wide → Long Conversion ───────────────────────────────────────────
 
   // Set up IC50 checkbox listener
   document.getElementById("enableIC50Analysis")?.addEventListener("change", updateIC50OptionsVisibility);
@@ -6111,6 +7427,7 @@ Office.onReady(() => {
         console.log("🔥 Auto-updated numGroups to:", actualGroups.length, "when Group Column changed");
       }
     }
+    updateGroupColorLabels();
     // Update custom order lists when column changes
     if (typeof detectAndStoreGroups === 'function') {
       detectAndStoreGroups();
@@ -6123,6 +7440,7 @@ Office.onReady(() => {
     if (typeof detectAndStoreGroups === 'function') {
       detectAndStoreGroups();
     }
+    updateGroupColorLabels();
   });
 
   // カラーピッカーとテキストの同期
@@ -6394,6 +7712,17 @@ Office.onReady(() => {
   
   setupGroupColorSync();
   setupDotColorSync();
+
+  // Fill mode radio: toggle between single color and per-category colors
+  document.querySelectorAll('input[name="fillMode"]').forEach(radio => {
+    radio.addEventListener("change", function() {
+      const isPerCategory = this.value === "per_category";
+      const fillColorSubRow = document.getElementById("fillColorSubRow");
+      const groupColorRow = document.getElementById("groupColorRow");
+      if (fillColorSubRow) fillColorSubRow.style.display = isPerCategory ? "none" : "flex";
+      if (groupColorRow) groupColorRow.style.display = isPerCategory ? "flex" : "none";
+    });
+  });
   
 
   // Symbol size control
@@ -6429,22 +7758,14 @@ Office.onReady(() => {
     }
   });
 
-  document.getElementById("statVjust")?.addEventListener("input", function() {
-    const addStatistics = document.getElementById("addStatistics")?.checked;
-    if (addStatistics && window.lastRender) {
-      clearTimeout(window.statVjustUpdateTimeout);
-      window.statVjustUpdateTimeout = setTimeout(() => {
-        previewPlotWithDebug().catch(e => console.error("Auto-update failed:", e));
-      }, 300);
-    }
-  });
 
   // Reset statistical parameters to default values
   document.getElementById("resetStatParams")?.addEventListener("click", function() {
     document.getElementById("statSymbolSize").value = "7";
     document.getElementById("statLineSize").value = "1.0";
     document.getElementById("statTipLength").value = "0.04";
-    document.getElementById("statVjust").value = "-0.3";
+    document.getElementById("symbolGap").value = "0.6";
+    document.getElementById("bracketSpacing").value = "1.0";
 
     // Auto-update chart if statistics are enabled
     const addStatistics = document.getElementById("addStatistics")?.checked;
@@ -6490,11 +7811,6 @@ Office.onReady(() => {
       statSymbolSize.value = "4";
     }
 
-    // Change vertical position adjustment to -0.8 for p-value and custom symbols
-    const statVjust = document.getElementById("statVjust");
-    if (statVjust && (symbolType === "custom" || symbolType === "pvalue")) {
-      statVjust.value = "-0.8";
-    }
 
     const addStatistics = document.getElementById("addStatistics")?.checked;
     if (addStatistics && window.lastRender) {
@@ -6695,6 +8011,23 @@ function getActualGroupNames() {
     const chartType = document.getElementById("chartType")?.value || "";
     const isLinePlot = chartType === "line_grouped_error_raw" || chartType === "line_grouped_error";
     const isGroupedChart = chartType.includes("grouped");
+    // Non-grouped categorical charts: colors correspond to X-axis categories
+    const isNonGroupedCategorical = !isGroupedChart && !isLinePlot &&
+      ['box', 'box_dot', 'violin', 'violin_dot', 'dot', 'bar', 'bar_error', 'bar_error_dot'].includes(chartType);
+
+    // For non-grouped categorical charts, read from X column
+    if (isNonGroupedCategorical && window.lastProcessedData && window.lastProcessedData.length > 0) {
+      const xColumn = document.getElementById("xColumn")?.value;
+      if (xColumn) {
+        const headers = window.lastProcessedData[0];
+        const xIndex = headers.findIndex(h => h === xColumn);
+        if (xIndex >= 0) {
+          const xData = window.lastProcessedData.slice(1).map(row => row[xIndex]);
+          const uniqueCategories = [...new Set(xData)].filter(g => g && g.trim() !== '');
+          if (uniqueCategories.length >= 2) return uniqueCategories;
+        }
+      }
+    }
 
     // For line plots and explicit grouped charts, use the Group column selector
     if ((isLinePlot || isGroupedChart) && window.lastProcessedData && window.lastProcessedData.length > 0) {
@@ -6747,6 +8080,59 @@ function getActualGroupNames() {
   } catch (error) {
     console.log("🔥 Error getting actual group names:", error);
     return []; // Return empty on error
+  }
+}
+
+// Update group color labels to show actual group names from data
+function updateGroupColorLabels() {
+  const fallback = ['1st group', '2nd group', '3rd group', '4th group', '5th group', '6th group'];
+  const chartType = document.getElementById("chartType")?.value || "";
+  const isGrouped = GROUPED_CHART_TYPES.includes(chartType);
+  const isPerCategory = ['box', 'box_dot', 'violin', 'violin_dot', 'dot', 'bar', 'bar_error', 'bar_error_dot'].includes(chartType);
+
+  let uniqueGroups = [];
+
+  if (window.lastProcessedData && window.lastProcessedData.length >= 2) {
+    const headers = window.lastProcessedData[0];
+
+    if (isGrouped) {
+      // Grouped charts (including ic50_grouped_dose_response): read from Group column selector
+      const groupColValue = document.getElementById("groupColumn")?.value;
+      if (groupColValue) {
+        const groupIdx = headers.findIndex(h => h === groupColValue);
+        if (groupIdx >= 0) {
+          const groupData = window.lastProcessedData.slice(1).map(row => row[groupIdx]);
+          uniqueGroups = [...new Set(groupData)].filter(g => g != null && String(g).trim() !== '');
+        }
+      }
+      // Fallback: first column
+      if (uniqueGroups.length < 2) {
+        const firstColData = window.lastProcessedData.slice(1).map(row => row[0]);
+        uniqueGroups = [...new Set(firstColData)].filter(g => g != null && String(g).trim() !== '');
+      }
+    } else if (isPerCategory) {
+      // Non-grouped categorical charts: read from X column selector
+      const xColValue = document.getElementById("xColumn")?.value;
+      if (xColValue) {
+        const xIdx = headers.findIndex(h => h === xColValue);
+        if (xIdx >= 0) {
+          const xData = window.lastProcessedData.slice(1).map(row => row[xIdx]);
+          uniqueGroups = [...new Set(xData)].filter(g => g != null && String(g).trim() !== '');
+        }
+      }
+    }
+  }
+
+  for (let i = 1; i <= 6; i++) {
+    const label = document.getElementById(`groupColorLabel${i}`);
+    if (label) {
+      label.textContent = uniqueGroups[i - 1] != null ? uniqueGroups[i - 1] : fallback[i - 1];
+    }
+    // Also update per-group shape labels
+    const shapeLabel = document.getElementById(`ic50GroupShapeLabel${i}`);
+    if (shapeLabel) {
+      shapeLabel.textContent = uniqueGroups[i - 1] != null ? uniqueGroups[i - 1] : fallback[i - 1];
+    }
   }
 }
 
@@ -7204,6 +8590,7 @@ async function getStatisticalResultsText() {
     ? (document.getElementById("postHocTestNonparam")?.value || "dunn")
     : (document.getElementById("postHocTest")?.value || "tukey");
   const dunnettControl = document.getElementById("dunnettControl")?.value || "";
+  const errorBarType = document.getElementById("errorBarType")?.value || "sd";
 
   // Get selected columns from UI
   const selectedXColumn = document.getElementById("xColumn")?.value || "";
@@ -7322,10 +8709,23 @@ async function getStatisticalResultsText() {
         }
 
         # Add group statistics (FIRST - Summary of data)
-        group_stats <- "\\nGroup Statistics:"
+        .err_type <- "${errorBarType}"
+        .err_label <- if (.err_type == "se") "SE" else if (.err_type == "ci95") "CI95" else "SD"
+        group_stats <- sprintf("\\nSummary (mean +/- %s):", .err_label)
         for (group in groups) {
           group_data <- value_col[group_col == group]
-          group_stats <- paste0(group_stats, "\\n  ", group, ": n=", length(group_data), ", mean=", sprintf("%.2f", mean(group_data, na.rm=TRUE)), ", sd=", sprintf("%.2f", sd(group_data, na.rm=TRUE)))
+          group_data <- group_data[!is.na(group_data)]
+          n_g <- length(group_data)
+          if (n_g > 0) {
+            mean_g <- mean(group_data)
+            if (n_g > 1) {
+              sd_g <- sd(group_data)
+              err_g <- if (.err_type == "se") sd_g / sqrt(n_g) else if (.err_type == "ci95") qt(0.975, df=n_g-1) * sd_g / sqrt(n_g) else sd_g
+              group_stats <- paste0(group_stats, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", group, n_g, mean_g, .err_label, err_g))
+            } else {
+              group_stats <- paste0(group_stats, sprintf("\\n  %s: n=%d, mean=%.4g", group, n_g, mean_g))
+            }
+          }
         }
 
         # Add normality test results (SECOND - Check assumptions)
@@ -7384,14 +8784,9 @@ async function getStatisticalResultsText() {
               })
 
               if (!steel_available) {
-                # Fallback to Dunn test with message
-                cat("Steel test not available, falling back to Dunn test\\n")
-                actual_posthoc <- "dunn"
-                if ("${postHocTest}" == "dunnett") {
-                  posthoc_results <- "\\n\\n(Note: Data is non-normal. Dunnett test requires normal data. Using Dunn test instead.)"
-                } else {
-                  posthoc_results <- "\\n\\n(Note: Steel test not available in webR, using Dunn test instead)"
-                }
+                cat("ERROR: kSamples package not available for Steel test. Steel test cannot be performed.\\n")
+                posthoc_results <- "\\n\\n[ERROR] Steel test requires the kSamples package which could not be loaded in this environment.\\nPlease contact us for support: https://h20gg702.github.io/figra-pages/support"
+                actual_posthoc <- ""
               } else {
                 # Create data frame and set control group
                 steel_data <- data.frame(
@@ -7451,13 +8846,15 @@ async function getStatisticalResultsText() {
               }
               library(dunn.test)
 
-              dunn_result <- dunn.test(as.numeric(value_col), factor(group_col), method = "bonferroni")
+              dunn_method <- if ("${postHocTest}" == "dunn_holm") "holm" else "bonferroni"
+              dunn_method_label <- if (dunn_method == "holm") "Holm" else "Bonferroni"
+              dunn_result <- dunn.test(as.numeric(value_col), factor(group_col), method = dunn_method)
 
               comparison_names <- dunn_result$comparisons
               p_values <- dunn_result$P.adjusted
 
               # Append to existing note (if Steel fallback) or create new
-              posthoc_results <- paste0(posthoc_results, "\\n\\nDunn's Post-hoc Comparisons (Bonferroni-adjusted p-values):")
+              posthoc_results <- paste0(posthoc_results, sprintf("\\n\\nPost-hoc (Dunn test with %s):", dunn_method_label))
 
               for (i in 1:length(comparison_names)) {
                 p_adj <- p_values[i]
@@ -7556,7 +8953,7 @@ async function getStatisticalResultsText() {
               pairwise_result <- pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = method)
               p_matrix <- pairwise_result$p.value
 
-              posthoc_results <- paste0("\\n\\nPairwise t-test (", method, " correction):")
+              posthoc_results <- paste0("\\n\\nPost-hoc (Pairwise t-test with ", if (method == "holm") "Holm" else "Bonferroni", "):")
 
               groups <- rownames(p_matrix)
               for (i in 1:nrow(p_matrix)) {
@@ -8316,7 +9713,7 @@ async function exportStatisticalResults() {
                 } else if (selected_posthoc_test == "bonferroni") {
                   # Bonferroni correction using pairwise t-tests
                   posthoc_result <- pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = "bonferroni")
-                  posthoc_results <- "\\n\\nBonferroni Post-hoc Comparisons:"
+                  posthoc_results <- "\\n\\nPost-hoc (Pairwise t-test with Bonferroni):"
 
                   # Convert to format similar to TukeyHSD for plotting
                   groups <- levels(anova_data$group)
@@ -8383,7 +9780,7 @@ async function exportStatisticalResults() {
                 } else if (selected_posthoc_test == "holm") {
                   # Holm correction using pairwise t-tests
                   posthoc_result <- pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = "holm")
-                  posthoc_results <- "\\n\\nHolm Post-hoc Comparisons:"
+                  posthoc_results <- "\\n\\nPost-hoc (Pairwise t-test with Holm):"
 
                   # Convert to format similar to TukeyHSD for plotting (same logic as Bonferroni)
                   groups <- levels(anova_data$group)
@@ -8542,7 +9939,7 @@ async function exportStatisticalResults() {
                     posthoc_results <- "\\n\\n(Note: Steel test not available in webR)"
                   }
 
-                } else if (selected_posthoc_test == "dunn") {
+                } else if (selected_posthoc_test == "dunn" || selected_posthoc_test == "dunn_holm") {
                   # Dunn test for non-parametric post-hoc
                   if (!requireNamespace("dunn.test", quietly = TRUE)) {
                     cat("Installing dunn.test package...\\n")
@@ -8550,8 +9947,10 @@ async function exportStatisticalResults() {
                   }
                   library(dunn.test)
 
-                  posthoc_result <- dunn.test(anova_data$value, anova_data$group, method = "bonferroni")
-                  posthoc_results <- "\\n\\nDunn Post-hoc Comparisons (non-parametric):"
+                  dunn_method <- if (selected_posthoc_test == "dunn_holm") "holm" else "bonferroni"
+                  dunn_method_label <- if (dunn_method == "holm") "Holm" else "Bonferroni"
+                  posthoc_result <- dunn.test(anova_data$value, anova_data$group, method = dunn_method)
+                  posthoc_results <- sprintf("\\n\\nPost-hoc (Dunn test with %s):", dunn_method_label)
 
                   # Extract results from dunn.test
                   comparison_names <- posthoc_result$comparisons
@@ -8661,14 +10060,9 @@ async function exportStatisticalResults() {
                       posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
                     }
                   } else {
-                    # Fallback to Dunn
-                    cat("Steel test not available, falling back to Dunn test\\n")
-                    actual_posthoc <- "dunn"
-                    if (selected_posthoc_test == "dunnett") {
-                      posthoc_results <- "\\n\\n(Note: Data is non-normal. Dunnett test requires normal data. Using Dunn test instead.)"
-                    } else {
-                      posthoc_results <- "\\n\\n(Note: Steel test not available in webR, using Dunn test instead)"
-                    }
+                    cat("ERROR: kSamples package not available for Steel test. Steel test cannot be performed.\\n")
+                    posthoc_results <- "\\n\\n[ERROR] Steel test requires the kSamples package which could not be loaded in this environment.\\nPlease contact us for support: https://h20gg702.github.io/figra-pages/support"
+                    actual_posthoc <- ""
                   }
                 }
 
@@ -8680,9 +10074,11 @@ async function exportStatisticalResults() {
                   }
                   library(dunn.test)
 
-                  posthoc_result <- dunn.test(anova_data$value, anova_data$group, method = "bonferroni")
+                  dunn_method <- if (selected_posthoc_test == "dunn_holm") "holm" else "bonferroni"
+                  dunn_method_label <- if (dunn_method == "holm") "Holm" else "Bonferroni"
+                  posthoc_result <- dunn.test(anova_data$value, anova_data$group, method = dunn_method)
                   # Append to existing note (if Steel fallback) or create new
-                  posthoc_results <- paste0(posthoc_results, "\\n\\nDunn's Post-hoc Comparisons (Bonferroni-adjusted p-values):")
+                  posthoc_results <- paste0(posthoc_results, sprintf("\\n\\nPost-hoc (Dunn test with %s):", dunn_method_label))
 
                   comparison_names <- posthoc_result$comparisons
                   p_values <- posthoc_result$P.adjusted
@@ -8891,12 +10287,15 @@ async function exportStatisticalResultsToNewSheet() {
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
         const cellRange = newSheet.getRangeByIndexes(i, 0, 1, 1);
+        cellRange.numberFormat = [["@"]];  // Force text format to prevent '=' being treated as formula
         cellRange.values = [[line]];
 
         // Format headers FIRST (with priority over significance colors)
-        if (line.startsWith('===') || line.startsWith('Category') ||
+        if (line.startsWith('>>') || line.startsWith('Category') ||
             line.startsWith('Test:') || line.startsWith('Normality') ||
-            line.startsWith('Post-hoc')) {
+            line.startsWith('Post-hoc') || line.startsWith('Groups:') ||
+            line.startsWith('Overall test:') || line.startsWith('Time point') ||
+            line.startsWith('Summary')) {
           cellRange.format.font.bold = true;
           cellRange.format.fill.color = "#E7E6E6";
         }
@@ -8948,133 +10347,207 @@ async function exportIC50CurveDataToExcel() {
     setStatus("Exporting IC50 results...");
     await initWebR();
 
-    // Get IC50 results from R
-    const ic50ResultR = await webR.evalR(`
-      if (exists("ic50_result") && !is.na(ic50_result)) {
-        as.numeric(ic50_result)
-      } else {
-        NA_real_
-      }
-    `);
-    const ic50Value = await ic50ResultR.toNumber().catch(() => NaN);
-    console.log("IC50 value:", ic50Value);
+    const chartType = document.getElementById("chartType")?.value || "";
+    const isGrouped = chartType === "ic50_grouped_dose_response";
 
-    // Get curve data from R as separate vectors
-    const concR = await webR.evalR(`
-      if (exists("ic50_curve_data") && !is.null(ic50_curve_data)) {
-        as.numeric(ic50_curve_data$conc)
-      } else {
-        numeric(0)
-      }
-    `);
-    const conc = await concR.toArray().catch(() => []);
-    console.log("Concentration data length:", conc.length);
-
-    const responseR = await webR.evalR(`
-      if (exists("ic50_curve_data") && !is.null(ic50_curve_data)) {
-        as.numeric(ic50_curve_data$response)
-      } else {
-        numeric(0)
-      }
-    `);
-    const response = await responseR.toArray().catch(() => []);
-    console.log("Response data length:", response.length);
-
-    // Get model parameters from R - get names and values separately
-    const paramNamesR = await webR.evalR(`
-      if (exists("ic50_model_params") && length(ic50_model_params) > 0) {
-        names(ic50_model_params)
-      } else {
-        character(0)
-      }
-    `);
-    const paramNames = await paramNamesR.toArray().catch(() => []);
-
-    const paramValuesR = await webR.evalR(`
-      if (exists("ic50_model_params") && length(ic50_model_params) > 0) {
-        as.numeric(unlist(ic50_model_params))
-      } else {
-        numeric(0)
-      }
-    `);
-    const paramValues = await paramValuesR.toArray().catch(() => []);
-
-    // Build model params object
-    const modelParams = {};
-    for (let i = 0; i < paramNames.length; i++) {
-      modelParams[paramNames[i]] = paramValues[i];
-    }
-    console.log("Model params:", modelParams);
-
-    // Check if we have valid data
-    if (!conc || conc.length === 0) {
-      console.log("IC50 curve data not available for export - no concentration data");
-      return;
-    }
-
-    // Create new sheet and insert results
-    await Excel.run(async (context) => {
-      const sheets = context.workbook.worksheets;
-
-      // Create unique sheet name
-      const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
-      const sheetName = `IC50_Results_${timestamp}`;
-
-      // Add new sheet
-      const newSheet = sheets.add(sheetName);
-      newSheet.activate();
-
-      // Prepare data for Excel
-      const outputData = [];
-
-      // Header section - IC50 Result
-      outputData.push(["IC50 Analysis Results"]);
-      outputData.push([""]);
-      outputData.push(["IC50 Value:", ic50Value && !isNaN(ic50Value) ? ic50Value : "Could not fit"]);
-      outputData.push([""]);
-
-      // Model parameters if available
-      if (modelParams && Object.keys(modelParams).length > 0) {
-        outputData.push(["Model Parameters:"]);
-        for (const [key, value] of Object.entries(modelParams)) {
-          outputData.push([`  ${key}:`, value]);
+    if (isGrouped) {
+      // --- Grouped IC50 export: one IC50 value per group ---
+      const groupsR = await webR.evalR(`
+        if (exists("ic50_grouped_results") && !is.null(ic50_grouped_results)) {
+          as.character(ic50_grouped_results$Group)
+        } else {
+          character(0)
         }
-        outputData.push([""]);
+      `);
+      const groups = await groupsR.toArray().catch(() => []);
+
+      const ic50sR = await webR.evalR(`
+        if (exists("ic50_grouped_results") && !is.null(ic50_grouped_results)) {
+          as.numeric(ic50_grouped_results$IC50)
+        } else {
+          numeric(0)
+        }
+      `);
+      const ic50s = await ic50sR.toArray().catch(() => []);
+
+      if (!groups || groups.length === 0) {
+        if (!window.lastPlotSettings) {
+          setStatus("❌ Please click Preview first before exporting.");
+        } else {
+          setStatus("❌ IC50 fitting failed — the data may not follow a dose-response curve. Check that concentrations span the response range.");
+        }
+        return;
       }
 
-      // Curve data header
-      outputData.push(["Fitted Curve Data:"]);
-      outputData.push(["Concentration", "Fitted Response"]);
+      // Get curve data per group
+      const curveGroupsR = await webR.evalR(`
+        if (exists("ic50_grouped_curve_data") && !is.null(ic50_grouped_curve_data)) {
+          as.character(ic50_grouped_curve_data$group)
+        } else { character(0) }
+      `);
+      const curveGroups = await curveGroupsR.toArray().catch(() => []);
 
-      // Add all curve data points
-      for (let i = 0; i < conc.length; i++) {
-        outputData.push([conc[i], response[i]]);
-      }
+      const curveConcR = await webR.evalR(`
+        if (exists("ic50_grouped_curve_data") && !is.null(ic50_grouped_curve_data)) {
+          as.numeric(ic50_grouped_curve_data$conc)
+        } else { numeric(0) }
+      `);
+      const curveConc = await curveConcR.toArray().catch(() => []);
 
-      // Write to Excel
-      const range = newSheet.getRange(`A1:B${outputData.length}`);
-      range.values = outputData.map(row => {
-        // Ensure each row has exactly 2 columns
-        if (row.length === 1) return [row[0], ""];
-        return row.slice(0, 2);
+      const curveRespR = await webR.evalR(`
+        if (exists("ic50_grouped_curve_data") && !is.null(ic50_grouped_curve_data)) {
+          as.numeric(ic50_grouped_curve_data$resp)
+        } else { numeric(0) }
+      `);
+      const curveResp = await curveRespR.toArray().catch(() => []);
+
+      await Excel.run(async (context) => {
+        const sheets = context.workbook.worksheets;
+        const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+        const sheetName = `IC50_Results_${timestamp}`;
+        const newSheet = sheets.add(sheetName);
+        newSheet.activate();
+
+        // Section 1: IC50 summary table
+        const outputData = [
+          ["Grouped IC50 Analysis Results"],
+          [""],
+          ["Group", "IC50 Value"]
+        ];
+        for (let i = 0; i < groups.length; i++) {
+          outputData.push([groups[i], ic50s[i] !== undefined && !isNaN(ic50s[i]) ? ic50s[i] : "Could not fit"]);
+        }
+
+        // Section 2: Fitted curve data per group
+        if (curveConc.length > 0) {
+          outputData.push([""]);
+          outputData.push(["Fitted Curve Data:"]);
+          outputData.push(["Group", "Concentration", "Fitted Response"]);
+          for (let i = 0; i < curveConc.length; i++) {
+            outputData.push([curveGroups[i] || "", curveConc[i], curveResp[i]]);
+          }
+        }
+
+        // Write summary section (cols A-B) and curve section (cols A-C)
+        const maxCols = curveConc.length > 0 ? 3 : 2;
+        const range = newSheet.getRange(`A1:${maxCols === 3 ? 'C' : 'B'}${outputData.length}`);
+        range.values = outputData.map(row => {
+          const padded = [...row];
+          while (padded.length < maxCols) padded.push("");
+          return padded.slice(0, maxCols);
+        });
+
+        newSheet.getRange("A1").format.font.bold = true;
+        newSheet.getRange("A1").format.font.size = 14;
+        newSheet.getRange("A3:B3").format.font.bold = true;
+        newSheet.getUsedRange().format.autofitColumns();
+
+        await context.sync();
+        setStatus(`✅ IC50 results exported to sheet: "${sheetName}"`);
       });
 
-      // Format header
-      const headerRange = newSheet.getRange("A1");
-      headerRange.format.font.bold = true;
-      headerRange.format.font.size = 14;
+    } else {
+      // --- Single IC50 export ---
+      const ic50ResultR = await webR.evalR(`
+        if (exists("ic50_result") && !is.na(ic50_result)) {
+          as.numeric(ic50_result)
+        } else {
+          NA_real_
+        }
+      `);
+      const ic50Value = await ic50ResultR.toNumber().catch(() => NaN);
+      console.log("IC50 value:", ic50Value);
 
-      const ic50LabelRange = newSheet.getRange("A3");
-      ic50LabelRange.format.font.bold = true;
+      const concR = await webR.evalR(`
+        if (exists("ic50_curve_data") && !is.null(ic50_curve_data)) {
+          as.numeric(ic50_curve_data$conc)
+        } else {
+          numeric(0)
+        }
+      `);
+      const conc = await concR.toArray().catch(() => []);
 
-      // Auto-fit columns
-      newSheet.getUsedRange().format.autofitColumns();
+      const responseR = await webR.evalR(`
+        if (exists("ic50_curve_data") && !is.null(ic50_curve_data)) {
+          as.numeric(ic50_curve_data$response)
+        } else {
+          numeric(0)
+        }
+      `);
+      const response = await responseR.toArray().catch(() => []);
 
-      await context.sync();
+      const paramNamesR = await webR.evalR(`
+        if (exists("ic50_model_params") && length(ic50_model_params) > 0) {
+          names(ic50_model_params)
+        } else {
+          character(0)
+        }
+      `);
+      const paramNames = await paramNamesR.toArray().catch(() => []);
 
-      setStatus(`✅ IC50 results exported to sheet: "${sheetName}"`);
-      console.log(`IC50 curve data exported to sheet: ${sheetName}`);
-    });
+      const paramValuesR = await webR.evalR(`
+        if (exists("ic50_model_params") && length(ic50_model_params) > 0) {
+          as.numeric(unlist(ic50_model_params))
+        } else {
+          numeric(0)
+        }
+      `);
+      const paramValues = await paramValuesR.toArray().catch(() => []);
+
+      const modelParams = {};
+      for (let i = 0; i < paramNames.length; i++) {
+        modelParams[paramNames[i]] = paramValues[i];
+      }
+
+      if (!conc || conc.length === 0) {
+        if (!window.lastPlotSettings) {
+          setStatus("❌ Please click Preview first before exporting.");
+        } else {
+          setStatus("❌ IC50 fitting failed — the data may not follow a dose-response curve. Check that concentrations span the response range.");
+        }
+        return;
+      }
+
+      await Excel.run(async (context) => {
+        const sheets = context.workbook.worksheets;
+        const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+        const sheetName = `IC50_Results_${timestamp}`;
+        const newSheet = sheets.add(sheetName);
+        newSheet.activate();
+
+        const outputData = [];
+        outputData.push(["IC50 Analysis Results"]);
+        outputData.push([""]);
+        outputData.push(["IC50 Value:", ic50Value && !isNaN(ic50Value) ? ic50Value : "Could not fit"]);
+        outputData.push([""]);
+
+        if (modelParams && Object.keys(modelParams).length > 0) {
+          outputData.push(["Model Parameters:"]);
+          for (const [key, value] of Object.entries(modelParams)) {
+            outputData.push([`  ${key}:`, value]);
+          }
+          outputData.push([""]);
+        }
+
+        outputData.push(["Fitted Curve Data:"]);
+        outputData.push(["Concentration", "Fitted Response"]);
+        for (let i = 0; i < conc.length; i++) {
+          outputData.push([conc[i], response[i]]);
+        }
+
+        const range = newSheet.getRange(`A1:B${outputData.length}`);
+        range.values = outputData.map(row => row.length === 1 ? [row[0], ""] : row.slice(0, 2));
+
+        newSheet.getRange("A1").format.font.bold = true;
+        newSheet.getRange("A1").format.font.size = 14;
+        newSheet.getRange("A3").format.font.bold = true;
+        newSheet.getUsedRange().format.autofitColumns();
+
+        await context.sync();
+        setStatus(`✅ IC50 results exported to sheet: "${sheetName}"`);
+        console.log(`IC50 curve data exported to sheet: ${sheetName}`);
+      });
+    }
 
   } catch (error) {
     console.error("IC50 export error:", error);
@@ -9153,26 +10626,57 @@ function ensureLocalFontFace(primary) {
   const id = `localface-${family.replace(/\s+/g,'-')}`;
   if (document.getElementById(id)) return;
 
-  const localSrcMap = {
-    "Arial": "local('Arial'), local('ArialMT')",
-    "Georgia": "local('Georgia')",
-    "Verdana": "local('Verdana')",
-    "Courier New": "local('Courier New'), local('CourierNewPSMT')",
-    "Noto Sans JP": "local('Noto Sans JP')",
-    "Noto Serif JP": "local('Noto Serif JP')",
+  // Separate plain and bold sources so the browser uses the real bold variant
+  // instead of relying on font-synthesis (which is unreliable in Excel Online)
+  const localSrcPlain = {
+    "Arial":           "local('Arial'), local('ArialMT')",
+    "Georgia":         "local('Georgia')",
+    "Verdana":         "local('Verdana')",
+    "Courier New":     "local('Courier New'), local('CourierNewPSMT')",
+    "Noto Sans JP":    "local('Noto Sans JP')",
+    "Noto Serif JP":   "local('Noto Serif JP')",
     "Times New Roman": "local('Times New Roman'), local('TimesNewRomanPSMT'), local('Times-Roman')"
   };
-  const src = localSrcMap[family];
-  if (!src) return;
+  const localSrcBold = {
+    "Arial":           "local('Arial Bold'), local('Arial-BoldMT'), local('ArialMT-Bold'), local('Arial')",
+    "Georgia":         "local('Georgia Bold'), local('Georgia-Bold'), local('Georgia')",
+    "Verdana":         "local('Verdana Bold'), local('Verdana-Bold'), local('Verdana')",
+    "Courier New":     "local('Courier New Bold'), local('CourierNewPS-BoldMT'), local('Courier New')",
+    "Noto Sans JP":    "local('Noto Sans JP Bold'), local('Noto Sans JP')",
+    "Noto Serif JP":   "local('Noto Serif JP Bold'), local('Noto Serif JP')",
+    "Times New Roman": "local('Times New Roman Bold'), local('TimesNewRomanPS-BoldMT'), local('Times New Roman')"
+  };
+
+  const srcPlain = localSrcPlain[family];
+  const srcBold  = localSrcBold[family];
+  if (!srcPlain) return;
 
   const style = document.createElement('style');
   style.id = id;
   style.textContent = `
     @font-face {
       font-family: '${family}';
-      src: ${src};
-      font-weight: 400 700;
-      font-style: normal italic;
+      src: ${srcPlain};
+      font-weight: 400;
+      font-style: normal;
+    }
+    @font-face {
+      font-family: '${family}';
+      src: ${srcPlain};
+      font-weight: 400;
+      font-style: italic;
+    }
+    @font-face {
+      font-family: '${family}';
+      src: ${srcBold};
+      font-weight: 700;
+      font-style: normal;
+    }
+    @font-face {
+      font-family: '${family}';
+      src: ${srcBold};
+      font-weight: 700;
+      font-style: italic;
     }`;
   document.head.appendChild(style);
 }
@@ -9366,7 +10870,7 @@ async function debugWebRFonts() {
 // ---- WebR を実行時に読み込む（Webpack にバンドルさせない）----
 async function initWebR() {
   if (webrReady) return;
-  setStatus("Loading data...");
+  setStatus("⏳ Initializing R engine (webR)... This may take a moment on first use.");
 
   const WebR = window.WebR;
   if (!WebR) { setStatus("❌ Load failed. Please refresh and try again."); return; }
@@ -9397,27 +10901,20 @@ async function initWebR() {
   title_size=24, x_axis_title_size=20, y_axis_title_size=20, x_axis_text_size=18, y_axis_text_size=18, legend_text_size=16) {
 
   th <- switch(tolower(theme),
-    "minimal"  = theme_minimal(base_size=base_size, base_family=family),
-    "light"    = theme_light  (base_size=base_size, base_family=family),
-    "bw"       = theme_bw     (base_size=base_size, base_family=family),
-    "void"     = theme_void   (base_size=base_size, base_family=family),
-    "grey"     = theme_grey   (base_size=base_size, base_family=family),
-    "gray"     = theme_grey   (base_size=base_size, base_family=family),
+    "minimal"  = theme_minimal (base_size=base_size, base_family=family),
+    "light"    = theme_light   (base_size=base_size, base_family=family),
+    "bw"       = theme_bw      (base_size=base_size, base_family=family),
+    "void"     = theme_void    (base_size=base_size, base_family=family),
+    "grey"     = theme_grey    (base_size=base_size, base_family=family),
+    "gray"     = theme_grey    (base_size=base_size, base_family=family),
     "linedraw" = theme_linedraw(base_size=base_size, base_family=family),
-    "dark"     = theme_dark   (base_size=base_size, base_family=family),
-    "test"     = theme_test   (base_size=base_size, base_family=family),
-                 theme_classic(base_size=base_size, base_family=family))
+    "dark"     = theme_dark    (base_size=base_size, base_family=family),
+    "classic"  = theme_classic (base_size=base_size, base_family=family),
+                 theme_minimal (base_size=base_size, base_family=family))
 
+  # Only override font, size, and text color — let each theme render natively
   th + theme(
-    text               = element_text(family = family),
-
-    plot.background    = element_rect(fill="white", color=NA),
-    panel.background   = element_rect(fill="white", color=NA),
-    panel.grid.major.y = element_line(color="#e5e7eb", linewidth=0.6),
-    panel.grid.minor   = element_blank(),
-    axis.line          = element_line(linewidth=0.6),
-    axis.ticks         = element_line(linewidth=0.5),
-
+    text         = element_text(family = family),
     plot.title   = element_text(family=family, face=title_face, hjust=0.5, size=title_size, margin=margin(b=6)),
     axis.title.x = element_text(family=family, face=axis_title_face, size=x_axis_title_size, margin=margin(t=6)),
     axis.title.y = element_text(family=family, face=axis_title_face, size=y_axis_title_size, margin=margin(r=6)),
@@ -9802,7 +11299,7 @@ async function initWebR() {
                   if (posthoc_test == "dunnett") {
                     actual_posthoc_test <- "steel"
                     cat("🔥 Kruskal-Wallis detected - automatically using Steel test (non-parametric equivalent of Dunnett) 🔥\\n")
-                  } else if (posthoc_test != "dunn" && posthoc_test != "steel") {
+                  } else if (posthoc_test != "dunn" && posthoc_test != "dunn_holm" && posthoc_test != "steel") {
                     actual_posthoc_test <- "dunn"
                     cat("🔥 Kruskal-Wallis detected - automatically using Dunn test for post-hoc 🔥\\n")
                   }
@@ -9990,13 +11487,12 @@ async function initWebR() {
                     )
                     cat("🔥 Steel posthoc_summary created with", nrow(posthoc_summary), "rows 🔥\\n")
                   } else {
-                    # Fallback to Dunn
-                    cat("🔥 Steel not available, falling back to Dunn 🔥\\n")
-                    actual_posthoc_test <- "dunn"
+                    cat("ERROR: kSamples package not available for Steel test. Steel test cannot be performed.\\n")
+                    stop("[ERROR] Steel test requires the kSamples package which could not be loaded in this environment. Please contact us for support: https://h20gg702.github.io/figra-pages/support")
                   }
                 }
 
-                if (actual_posthoc_test == "dunn") {
+                if (actual_posthoc_test == "dunn" || actual_posthoc_test == "dunn_holm") {
                   # Dunn test for non-parametric post-hoc
                   if (!requireNamespace("dunn.test", quietly = TRUE)) {
                     cat("Installing dunn.test package...\\n")
@@ -10004,7 +11500,8 @@ async function initWebR() {
                   }
                   library(dunn.test)
 
-                  posthoc_result <- dunn.test(stat_data$value, stat_data$group, method = "bonferroni")
+                  dunn_method <- if (actual_posthoc_test == "dunn_holm") "holm" else "bonferroni"
+                  posthoc_result <- dunn.test(stat_data$value, stat_data$group, method = dunn_method)
                   comparison_names <- posthoc_result$comparisons
                   p_values <- posthoc_result$P.adjusted
                   z_values <- posthoc_result$Z
@@ -10137,7 +11634,7 @@ async function initWebR() {
               y_min <- min(data[[value_col]], na.rm = TRUE)
               y_range <- y_max - y_min
               num_comparisons <- length(combinations)
-              unit_step <- calculate_unit_step(real_p_symbols, ggpubr_symbol_size, y_range, num_comparisons, y_scale, y_min, y_max)
+              unit_step <- calculate_unit_step(real_p_symbols, ggpubr_symbol_size, y_range, num_comparisons, y_scale, y_min, y_max) * bracket_step_scale
               cat("🔥 CALCULATED unit_step =", unit_step, "for y_range =", y_range, ", num_comparisons =", num_comparisons, ", y_scale =", y_scale, "🔥\\n")
 
               # Parse custom positions ONLY if user is in "custom" comparison mode
@@ -10425,7 +11922,7 @@ async function initWebR() {
                     num_filtered <- nrow(pairwise_data)
 
                     # Recalculate unit_step based on ACTUAL number of brackets to be shown
-                    unit_step_filtered <- calculate_unit_step(pairwise_data$p.signif, ggpubr_symbol_size, y_range, num_filtered, y_scale, y_min, y_max)
+                    unit_step_filtered <- calculate_unit_step(pairwise_data$p.signif, ggpubr_symbol_size, y_range, num_filtered, y_scale, y_min, y_max) * bracket_step_scale
                     cat("🔥 Recalculated unit_step for", num_filtered, "filtered brackets: ", unit_step_filtered, "(was", unit_step, ") 🔥\\n")
 
                     new_y_positions <- numeric(num_filtered)
@@ -10631,7 +12128,7 @@ async function initWebR() {
           bracket_size <- ggpubr_symbol_size
           line_size <- ggpubr_line_size
           tip_length <- ggpubr_tip_length
-          v_just <- ggpubr_vjust + 0.6  # Move symbols much closer to brackets (less negative = closer)
+          v_just <- ggpubr_vjust - symbol_gap + 1.2  # symbol_gap: 0=closest, 0.6=default, larger=more space
 
           cat("🔥 Adding ggpubr brackets with custom parameters 🔥\\n")
           cat("🔥 Parameters: size=", bracket_size, ", line=", line_size, ", tip=", tip_length, ", vjust=", v_just, "🔥\\n")
@@ -10644,38 +12141,57 @@ async function initWebR() {
           asterisk_data <- pairwise_data[pairwise_data$p.signif != "n.s.", ]
           ns_data <- pairwise_data[pairwise_data$p.signif == "n.s.", ]
 
-          # Add asterisk symbols with full size
-          if (nrow(asterisk_data) > 0) {
-            p <- p + stat_pvalue_manual(asterisk_data,
-                                       label = "p.signif",
-                                       size = bracket_size,
-                                       size.line = line_size,
-                                       tip.length = tip_length,
-                                       vjust = v_just,
-                                       hjust = 0.5,
-                                       step.increase = step_increase_value,
-                                       bracket.nudge.y = 0,
-                                       bracket.shorten = 0,
-                                       remove.bracket = FALSE)
-            cat("🔥 Added", nrow(asterisk_data), "asterisk symbols at full size 🔥\\n")
-          }
+          if (show_brackets) {
+            # Add asterisk symbols with full size
+            if (nrow(asterisk_data) > 0) {
+              p <- p + stat_pvalue_manual(asterisk_data,
+                                         label = "p.signif",
+                                         size = bracket_size,
+                                         size.line = line_size,
+                                         tip.length = tip_length,
+                                         vjust = v_just,
+                                         hjust = 0.5,
+                                         step.increase = step_increase_value,
+                                         bracket.nudge.y = 0,
+                                         bracket.shorten = 0,
+                                         remove.bracket = FALSE)
+              cat("🔥 Added", nrow(asterisk_data), "asterisk symbols at full size 🔥\\n")
+            }
 
-          # Add n.s. symbols with smaller size and higher position
-          if (nrow(ns_data) > 0) {
-            smaller_size <- bracket_size * 0.7  # 30% smaller for n.s.
-            ns_vjust <- v_just - 0.5  # Position n.s. higher on the bracket (more negative = higher)
-            p <- p + stat_pvalue_manual(ns_data,
-                                       label = "p.signif",
-                                       size = smaller_size,
-                                       size.line = line_size,
-                                       tip.length = tip_length,
-                                       vjust = ns_vjust,
-                                       hjust = 0.5,
-                                       step.increase = step_increase_value,
-                                       bracket.nudge.y = 0,
-                                       bracket.shorten = 0,
-                                       remove.bracket = FALSE)
-            cat("🔥 Added", nrow(ns_data), "n.s. symbols at smaller size (", smaller_size, ") 🔥\\n")
+            # Add n.s. symbols with smaller size and higher position
+            if (nrow(ns_data) > 0) {
+              smaller_size <- bracket_size * 0.7  # 30% smaller for n.s.
+              ns_vjust <- v_just - 0.5
+              p <- p + stat_pvalue_manual(ns_data,
+                                         label = "p.signif",
+                                         size = smaller_size,
+                                         size.line = line_size,
+                                         tip.length = tip_length,
+                                         vjust = ns_vjust,
+                                         hjust = 0.5,
+                                         step.increase = step_increase_value,
+                                         bracket.nudge.y = 0,
+                                         bracket.shorten = 0,
+                                         remove.bracket = FALSE)
+              cat("🔥 Added", nrow(ns_data), "n.s. symbols at smaller size (", smaller_size, ") 🔥\\n")
+            }
+          } else {
+            # No brackets: use annotate("text") at exact midpoint x between the two groups
+            group_order <- if (is.factor(data[[group_col]])) levels(data[[group_col]]) else sort(unique(as.character(data[[group_col]])))
+            for (i in seq_len(nrow(pairwise_data))) {
+              g1 <- as.character(pairwise_data$group1[i])
+              g2 <- as.character(pairwise_data$group2[i])
+              x_pos1 <- match(g1, group_order)
+              x_pos2 <- match(g2, group_order)
+              x_mid <- (x_pos1 + x_pos2) / 2
+              y_pos <- pairwise_data$y.position[i]
+              sym <- pairwise_data$p.signif[i]
+              is_ns <- sym == "n.s."
+              sz <- if (is_ns) bracket_size * 0.7 else bracket_size
+              vj <- if (is_ns) v_just - 0.5 else v_just
+              p <- p + annotate("text", x = x_mid, y = y_pos, label = sym, size = sz, vjust = vj, hjust = 0.5)
+            }
+            cat("🔥 Added", nrow(pairwise_data), "symbols without brackets 🔥\\n")
           }
 
           # ggpubr statistical brackets added successfully
@@ -10897,11 +12413,13 @@ async function initWebR() {
               cat("  y_max:", y_max, "y_pos:", y_pos, "x_pos:", x_pos, "\\n")
 
               # Add bracket lines
-              p <- p +
-                annotate("segment", x = 1, xend = 2, y = y_pos - bracket_offset, yend = y_pos - bracket_offset, color = "black") +
-                annotate("segment", x = 1, xend = 1, y = y_pos - bracket_offset, yend = y_pos - bracket_offset - tick_offset, color = "black") +
-                annotate("segment", x = 2, xend = 2, y = y_pos - bracket_offset, yend = y_pos - bracket_offset - tick_offset, color = "black") +
-                annotate("text", x = x_pos, y = y_pos, label = our_significance,
+              if (show_brackets) {
+                p <- p +
+                  annotate("segment", x = 1, xend = 2, y = y_pos - bracket_offset, yend = y_pos - bracket_offset, color = "black") +
+                  annotate("segment", x = 1, xend = 1, y = y_pos - bracket_offset, yend = y_pos - bracket_offset - tick_offset, color = "black") +
+                  annotate("segment", x = 2, xend = 2, y = y_pos - bracket_offset, yend = y_pos - bracket_offset - tick_offset, color = "black")
+              }
+              p <- p + annotate("text", x = x_pos, y = y_pos, label = our_significance,
                         size = 8, hjust = 0.5, vjust = 0.5, color = "black")
 
               cat("  SUCCESSFULLY ADDED DIRECT SIGNIFICANCE ANNOTATION:", our_significance, "at position y =", y_pos, "\\n")
@@ -11070,11 +12588,13 @@ async function initWebR() {
                       cat("    Adding comparison line from", x1, "to", x2, "at y =", line_y, "\\n")
 
                       # Add comparison line
-                      p <- p +
-                        annotate("segment", x = x1, xend = x2, y = line_y, yend = line_y, color = "black", linewidth = 0.5) +
-                        annotate("segment", x = x1, xend = x1, y = line_y - tick_offset, yend = line_y + tick_offset, color = "black", linewidth = 0.5) +
-                        annotate("segment", x = x2, xend = x2, y = line_y - tick_offset, yend = line_y + tick_offset, color = "black", linewidth = 0.5) +
-                        annotate("text", x = (x1 + x2) / 2, y = line_y + text_offset, label = pairwise_sig, size = 6, hjust = 0.5)
+                      if (show_brackets) {
+                        p <- p +
+                          annotate("segment", x = x1, xend = x2, y = line_y, yend = line_y, color = "black", linewidth = 0.5) +
+                          annotate("segment", x = x1, xend = x1, y = line_y - tick_offset, yend = line_y + tick_offset, color = "black", linewidth = 0.5) +
+                          annotate("segment", x = x2, xend = x2, y = line_y - tick_offset, yend = line_y + tick_offset, color = "black", linewidth = 0.5)
+                      }
+                      p <- p + annotate("text", x = (x1 + x2) / 2, y = line_y + text_offset, label = pairwise_sig, size = 6, hjust = 0.5)
                     }
                   }, error = function(e) {
                     cat("    Error in pairwise test for", group1, "vs", group2, ":", e$message, "\\n")
@@ -11149,11 +12669,13 @@ async function initWebR() {
                       cat("    Adding comparison line from", x1, "to", x2, "at y =", line_y, "\\n")
 
                       # Add comparison line
-                      p <- p +
-                        annotate("segment", x = x1, xend = x2, y = line_y, yend = line_y, color = "black", linewidth = 0.5) +
-                        annotate("segment", x = x1, xend = x1, y = line_y - tick_offset, yend = line_y + tick_offset, color = "black", linewidth = 0.5) +
-                        annotate("segment", x = x2, xend = x2, y = line_y - tick_offset, yend = line_y + tick_offset, color = "black", linewidth = 0.5) +
-                        annotate("text", x = (x1 + x2) / 2, y = line_y + text_offset, label = pairwise_sig, size = 6, hjust = 0.5)
+                      if (show_brackets) {
+                        p <- p +
+                          annotate("segment", x = x1, xend = x2, y = line_y, yend = line_y, color = "black", linewidth = 0.5) +
+                          annotate("segment", x = x1, xend = x1, y = line_y - tick_offset, yend = line_y + tick_offset, color = "black", linewidth = 0.5) +
+                          annotate("segment", x = x2, xend = x2, y = line_y - tick_offset, yend = line_y + tick_offset, color = "black", linewidth = 0.5)
+                      }
+                      p <- p + annotate("text", x = (x1 + x2) / 2, y = line_y + text_offset, label = pairwise_sig, size = 6, hjust = 0.5)
                     }
                   }, error = function(e) {
                     cat("    Error in pairwise test for", group1, "vs", group2, ":", e$message, "\\n")
@@ -11205,7 +12727,7 @@ async function initWebR() {
                                 title_text, x_text, y_text,
                                 show_title, show_x_label, show_y_label,
                                 x_scale, y_scale,
-                                theme_name="minimal",
+                                theme_name="bw",
                                 x_axis_rotation=0, y_axis_rotation=0,
                                 x_axis_hjust=0.5, x_axis_vjust=0.5,
                                 y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -11272,9 +12794,7 @@ async function initWebR() {
           strip.text.x = element_text(family = target_font),
           strip.text.y = element_text(family = target_font),
           
-          # Background settings
-          plot.background = element_rect(fill = "white", color = NA),
-          panel.background = element_rect(fill = "white", color = NA)
+          # Background — let theme define its own background
         )
       
       # Apply labels (conditional show/hide)
@@ -11327,7 +12847,7 @@ async function initWebR() {
                          title_text="Histogram", x_text="Value", y_text="Frequency",
                          show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                          x_scale="linear", y_scale="linear",
-                         theme_name="minimal",
+                         theme_name="bw",
                          x_axis_rotation=0, y_axis_rotation=0,
                          x_axis_hjust=0.5, x_axis_vjust=0.5,
                          y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -11351,13 +12871,13 @@ async function initWebR() {
                       add_statistics, statistical_test)
     }
 
-    sato_box <- function(dat, x_col=1, y_col=NULL, fill="#4C78A8", color="#1F2937", linewidth=0.7, alpha=0.9, width=0.7,
+    sato_box <- function(dat, x_col=1, y_col=NULL, fill_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"), color="#1F2937", linewidth=0.7, alpha=0.9, width=0.7,
                         target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
                         title_size=14, x_axis_title_size=12, y_axis_title_size=12, x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
                         title_text="Box plot", x_text="", y_text="Value",
                         show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                         x_scale="linear", y_scale="linear",
-                        theme_name="minimal",
+                        theme_name="bw",
                         x_axis_rotation=0, y_axis_rotation=0,
                         x_axis_hjust=0.5, x_axis_vjust=0.5,
                         y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -11367,21 +12887,26 @@ async function initWebR() {
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
 
       if (is.null(y_col) || ncol(dat) == 1) {
-        # Single column: box plot of x_col values
+        # Single column: box plot of x_col values (single color)
         p <- ggplot(dat, aes(x="", y=dat[[x_col]])) +
-             geom_boxplot(fill=fill, color=color, linewidth=linewidth, alpha=alpha, width=width,
+             geom_boxplot(fill=fill_colors[1], color=color, linewidth=linewidth, alpha=alpha, width=width,
                          outlier.shape=16, outlier.alpha=0.5)
       } else {
-        # Two columns: grouped box plot
+        # Two columns: grouped box plot with per-category colors
         plot_data <- data.frame(
           group = factor(dat[[x_col]]),
           value = as.numeric(dat[[y_col]])
         )
         plot_data <- plot_data[complete.cases(plot_data), ]
-        
-        p <- ggplot(plot_data, aes(x=group, y=value)) +
-             geom_boxplot(fill=fill, color=color, linewidth=linewidth, alpha=alpha, width=width,
-                         outlier.shape=16, outlier.alpha=0.5)
+        cat_levels <- levels(plot_data$group)
+        cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
+        names(cat_colors) <- cat_levels
+
+        p <- ggplot(plot_data, aes(x=group, y=value, fill=group)) +
+             geom_boxplot(color=color, linewidth=linewidth, alpha=alpha, width=width,
+                         outlier.shape=16, outlier.alpha=0.5) +
+             scale_fill_manual(values=cat_colors) +
+             guides(fill="none")
 
         # Add statistical analysis if requested and we have multiple groups
         if (add_statistics && length(unique(plot_data$group)) > 1) {
@@ -11401,14 +12926,14 @@ async function initWebR() {
                       add_statistics, statistical_test)
     }
 
-    sato_bar <- function(dat, x_col=1, y_col=NULL, fill="#4C78A8", color="#1F2937", linewidth=0.7, alpha=0.9,
+    sato_bar <- function(dat, x_col=1, y_col=NULL, fill_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"), color="#1F2937", linewidth=0.7, alpha=0.9,
                         width=0.4,
                         target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
                         title_size=14, x_axis_title_size=12, y_axis_title_size=12, x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
                         title_text="Bar plot", x_text="Category", y_text="Count",
                         show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                         x_scale="linear", y_scale="linear",
-                        theme_name="minimal",
+                        theme_name="bw",
                         x_axis_rotation=0, y_axis_rotation=0,
                         x_axis_hjust=0.5, x_axis_vjust=0.5,
                         y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -11417,14 +12942,24 @@ async function initWebR() {
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
 
+      # Build per-category color mapping
+      cat_vals <- if (is.null(y_col) || ncol(dat) == 1) factor(dat[[x_col]]) else factor(dat[[x_col]])
+      cat_levels <- levels(cat_vals)
+      cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
+      names(cat_colors) <- cat_levels
+
       if (is.null(y_col) || ncol(dat) == 1) {
-        # Single column: frequency bar chart
-        p <- ggplot(dat, aes(x=factor(dat[[x_col]]))) +
-             geom_bar(fill=fill, color=color, linewidth=linewidth, alpha=alpha, width=width)
+        # Single column: frequency bar chart with per-category colors
+        p <- ggplot(dat, aes(x=factor(dat[[x_col]]), fill=factor(dat[[x_col]]))) +
+             geom_bar(color=color, linewidth=linewidth, alpha=alpha, width=width) +
+             scale_fill_manual(values=cat_colors) +
+             guides(fill="none")
       } else {
-        # Two columns: height bar chart
-        p <- ggplot(dat, aes(x=factor(dat[[x_col]]), y=dat[[y_col]])) +
-             geom_col(fill=fill, color=color, linewidth=linewidth, alpha=alpha, width=width)
+        # Two columns: height bar chart with per-category colors
+        p <- ggplot(dat, aes(x=factor(dat[[x_col]]), y=dat[[y_col]], fill=factor(dat[[x_col]]))) +
+             geom_col(color=color, linewidth=linewidth, alpha=alpha, width=width) +
+             scale_fill_manual(values=cat_colors) +
+             guides(fill="none")
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -11439,13 +12974,13 @@ async function initWebR() {
                       add_statistics, statistical_test)
     }
 
-    sato_dot <- function(dat, x_col=1, y_col=NULL, fill="#4C78A8", color="#1F2937", size=2, alpha=0.9, shape=16,
+    sato_dot <- function(dat, x_col=1, y_col=NULL, fill_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"), color="#1F2937", size=2, alpha=0.9, shape=16,
                         target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
                         title_size=14, x_axis_title_size=12, y_axis_title_size=12, x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
                         title_text="Dot plot", x_text="X", y_text="Y",
                         show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                         x_scale="linear", y_scale="linear",
-                        theme_name="minimal",
+                        theme_name="bw",
                         x_axis_rotation=0, y_axis_rotation=0,
                         x_axis_hjust=0.5, x_axis_vjust=0.5,
                         y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -11455,13 +12990,18 @@ async function initWebR() {
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
 
       if (is.null(y_col) || ncol(dat) == 1) {
-        # Single column: dot plot with row indices
+        # Single column: dot plot with row indices (single color)
         p <- ggplot(dat, aes(x=1:nrow(dat), y=dat[[x_col]])) +
-             geom_point(fill=fill, color=color, size=size, alpha=alpha, shape=shape)
+             geom_point(color=fill_colors[1], size=size, alpha=alpha, shape=shape)
       } else {
-        # Two columns: x-y scatter plot
-        p <- ggplot(dat, aes(x=dat[[x_col]], y=dat[[y_col]])) +
-             geom_point(fill=fill, color=color, size=size, alpha=alpha, shape=shape)
+        # Two columns: per-category color dots
+        cat_levels <- levels(factor(dat[[x_col]]))
+        cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
+        names(cat_colors) <- cat_levels
+        p <- ggplot(dat, aes(x=factor(dat[[x_col]]), y=dat[[y_col]], color=factor(dat[[x_col]]))) +
+             geom_point(size=size, alpha=alpha, shape=shape) +
+             scale_color_manual(values=cat_colors) +
+             guides(color="none")
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -11482,7 +13022,7 @@ async function initWebR() {
                          title_text="Line plot", x_text="X", y_text="Y",
                          show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                          x_scale="linear", y_scale="linear",
-                         theme_name="minimal",
+                         theme_name="bw",
                          x_axis_rotation=0, y_axis_rotation=0,
                          x_axis_hjust=0.5, x_axis_vjust=0.5,
                          y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -11526,11 +13066,12 @@ async function initWebR() {
                                   title_text="Grouped Line Plot", x_text="X", y_text="Value",
                                   show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                   x_scale="linear", y_scale="linear",
-                                  theme_name="minimal",
+                                  theme_name="bw",
                                   x_axis_rotation=0, y_axis_rotation=0,
                                   x_axis_hjust=0.5, x_axis_vjust=0.5,
                                   y_axis_hjust=0.5, y_axis_vjust=0.5,
-                                  add_statistics=FALSE, statistical_test="auto") {
+                                  add_statistics=FALSE, statistical_test="auto",
+                                  x_breaks_mode="auto") {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -11604,6 +13145,12 @@ async function initWebR() {
            scale_color_manual(values = setNames(line_colors[1:n_groups], group_levels)) +
            labs(color = actual_group_name)  # Legend title
 
+      # Optionally force x-axis breaks at actual data x values
+      if (x_breaks_mode == "data") {
+        unique_x_vals <- sort(unique(plot_data$x))
+        p <- p + scale_x_continuous(breaks = unique_x_vals)
+      }
+
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
                       title_text, x_text, y_text,
@@ -11628,11 +13175,12 @@ async function initWebR() {
                                         title_text="Grouped Line Plot with Error", x_text="X", y_text="Value",
                                         show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                         x_scale="linear", y_scale="linear",
-                                        theme_name="minimal",
+                                        theme_name="bw",
                                         x_axis_rotation=0, y_axis_rotation=0,
                                         x_axis_hjust=0.5, x_axis_vjust=0.5,
                                         y_axis_hjust=0.5, y_axis_vjust=0.5,
-                                        add_statistics=FALSE, statistical_test="auto") {
+                                        add_statistics=FALSE, statistical_test="auto",
+                                        x_breaks_mode="auto") {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -11716,6 +13264,12 @@ async function initWebR() {
            scale_fill_manual(values = setNames(line_colors[1:n_groups], group_levels)) +
            labs(color = actual_group_name, fill = actual_group_name)
 
+      # Optionally force x-axis breaks at actual data x values
+      if (x_breaks_mode == "data") {
+        unique_x_vals <- sort(unique(plot_data$x))
+        p <- p + scale_x_continuous(breaks = unique_x_vals)
+      }
+
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
                       title_text, x_text, y_text,
@@ -11740,18 +13294,19 @@ async function initWebR() {
                                             title_text="Grouped Line Plot with Error", x_text="X", y_text="Value",
                                             show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                             x_scale="linear", y_scale="linear",
-                                            theme_name="minimal",
+                                            theme_name="bw",
                                             x_axis_rotation=0, y_axis_rotation=0,
                                             x_axis_hjust=0.5, x_axis_vjust=0.5,
                                             y_axis_hjust=0.5, y_axis_vjust=0.5,
-                                            add_statistics=FALSE, statistical_test="auto", variance_test="levene", stat_symbol_size=7,
+                                            add_statistics=FALSE, statistical_test="auto", variance_test="levene", post_hoc_test="tukey", dunnett_control="", stat_symbol_size=7,
                                             comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
                                             stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
                                             vbracket_timepoint="", vbracket_position="topleft", vbracket_x=0.08, vbracket_y=0.92,
                                             vbracket_text_size=14, vbracket_sig_size=14, vbracket_margin=0.03, vbracket_line_width=0.5,
                                             vbracket_legend_line_length=NULL, vbracket_legend_line_width=NULL, vbracket_item_spacing=NULL,
                                             vbracket_bracket_layer_spacing=NULL,
-                                            output_width=6, output_height=4) {
+                                            output_width=6, output_height=4,
+                                            x_breaks_mode="auto") {
 
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
@@ -11924,6 +13479,12 @@ async function initWebR() {
            scale_fill_manual(values = setNames(line_colors[1:n_groups], group_levels)) +
            labs(color = actual_group_name, fill = actual_group_name)
 
+      # Optionally force x-axis breaks at actual data x values
+      if (x_breaks_mode == "data") {
+        unique_x_vals <- sort(unique(plot_data$x))
+        p <- p + scale_x_continuous(breaks = unique_x_vals)
+      }
+
       # Initialize global variable for statistical results
       line_plot_stat_results <<- ""
 
@@ -11990,6 +13551,25 @@ async function initWebR() {
             n_groups_at_x <- length(groups_with_data)
 
             cat(sprintf("\\nTime point X=%.1f: %d groups with data\\n", x_val, n_groups_at_x))
+
+            # Calculate descriptive statistics for all groups at this time point
+            error_label <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+            desc_lines <- c()
+            for (grp in groups_with_data) {
+              grp_vals <- as.numeric(data_at_x$value[data_at_x$group == grp])
+              grp_vals <- grp_vals[!is.na(grp_vals)]
+              n_g <- length(grp_vals)
+              if (n_g > 0) {
+                mean_g <- mean(grp_vals)
+                if (n_g > 1) {
+                  sd_g <- sd(grp_vals)
+                  err_g <- if (error_type == "se") sd_g / sqrt(n_g) else if (error_type == "ci95") qt(0.975, df = n_g - 1) * sd_g / sqrt(n_g) else sd_g
+                  desc_lines <- c(desc_lines, sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", grp, n_g, mean_g, error_label, err_g))
+                } else {
+                  desc_lines <- c(desc_lines, sprintf("  %s: n=%d, mean=%.4g", grp, n_g, mean_g))
+                }
+              }
+            }
 
             if (n_groups_at_x == 2) {
               # TWO GROUPS: Use t-test or Wilcoxon
@@ -12121,15 +13701,23 @@ async function initWebR() {
 
                   # Store result text for UI with normality and variance info
 
-                  result_text <- sprintf("Time point %.1f: %s vs %s, %s p=%.4f (%s)",
-                                        x_val, groups_with_data[1], groups_with_data[2],
-                                        test_name, p_val, sig_label)
+                  result_text <- sprintf(">> X-axis value: %g\\nGroups: %s vs %s",
+                                        x_val, groups_with_data[1], groups_with_data[2])
+                  if (length(desc_lines) > 0) {
+                    result_text <- paste0(result_text,
+                      sprintf("\\nSummary (mean +/- %s):\\n", error_label),
+                      paste(desc_lines, collapse="\\n"))
+                  }
                   if (length(normality_text) > 0) {
                     result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
+                  } else {
+                    result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
                   }
                   if (nchar(variance_text) > 0) {
                     result_text <- paste0(result_text, "\\n", variance_text)
                   }
+                  result_text <- paste0(result_text,
+                    sprintf("\\nTest: %s, p=%.4f (%s)", test_name, p_val, sig_label))
                   stat_text_results <- c(stat_text_results, result_text)
 
                   # Add to results for visual annotation (only if significant)
@@ -12144,27 +13732,26 @@ async function initWebR() {
               }
 
             } else if (n_groups_at_x >= 3) {
-              # THREE OR MORE GROUPS: Use ANOVA + post-hoc
-              cat("  Performing ANOVA at this time point...\\n")
+              # THREE OR MORE GROUPS: ANOVA or Kruskal-Wallis based on user selection
+              cat("  Performing statistical test for 3+ groups at this time point...\\n")
 
-              # Prepare data for ANOVA
+              # Prepare data
               anova_data <- data.frame(
                 group = factor(data_at_x$group),
                 value = as.numeric(data_at_x$value)
               )
               anova_data <- anova_data[complete.cases(anova_data), ]
 
-              # Perform normality test for each group
+              # Normality testing for each group
               normality_text <- c()
-              for (grp in unique(anova_data$group)) {
+              all_normal <- TRUE
+              for (grp in levels(anova_data$group)) {
                 grp_data <- anova_data$value[anova_data$group == grp]
                 if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
-                  shapiro_result <- tryCatch(
-                    shapiro.test(grp_data),
-                    error = function(e) NULL
-                  )
+                  shapiro_result <- tryCatch(shapiro.test(grp_data), error = function(e) NULL)
                   if (!is.null(shapiro_result)) {
                     norm_status <- if (shapiro_result$p.value >= 0.05) "normal" else "non-normal"
+                    if (shapiro_result$p.value < 0.05) all_normal <- FALSE
                     normality_text <- c(normality_text,
                       sprintf("  %s: p=%.4f (%s)", grp, shapiro_result$p.value, norm_status))
                     cat(sprintf("    %s: Shapiro-Wilk p=%.4f\\n", grp, shapiro_result$p.value))
@@ -12172,88 +13759,185 @@ async function initWebR() {
                 }
               }
 
-              # Perform ANOVA
-              anova_result <- tryCatch(
-                aov(value ~ group, data = anova_data),
-                error = function(e) {
-                  cat("  ANOVA error:", e$message, "\\n")
-                  NULL
-                }
-              )
+              # Decide parametric vs non-parametric
+              # auto: normality test decides; parametric: always ANOVA; nonparametric: always Kruskal-Wallis
+              use_nonparametric <- (statistical_test == "nonparametric") ||
+                                   (statistical_test == "auto" && !all_normal)
 
-              if (!is.null(anova_result)) {
-                anova_summary <- summary(anova_result)
-                anova_p <- anova_summary[[1]][["Pr(>F)"]][1]
-                cat(sprintf("  ANOVA p-value: %.4f\\n", anova_p))
+              result_text <- sprintf(">> X-axis value: %g\\nTime point %.1f:", x_val, x_val)
+              if (length(desc_lines) > 0) {
+                result_text <- paste0(result_text,
+                  sprintf("\\nSummary (mean +/- %s):\\n", error_label),
+                  paste(desc_lines, collapse="\\n"))
+              }
+              if (length(normality_text) > 0) {
+                result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n",
+                                      paste(normality_text, collapse="\\n"))
+              } else {
+                result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
+              }
 
-                # Determine ANOVA significance using helper function
-                anova_sig <- ""
-                if (!is.na(anova_p)) {
-                  anova_sig <- get_sig_symbol(anova_p)
-                }
+              if (use_nonparametric) {
+                # Non-parametric: Kruskal-Wallis + Dunn post-hoc
+                kw_result <- tryCatch(
+                  kruskal.test(value ~ group, data = anova_data),
+                  error = function(e) { cat("  Kruskal-Wallis error:", e$message, "\\n"); NULL }
+                )
+                if (!is.null(kw_result)) {
+                  kw_p <- kw_result$p.value
+                  kw_sig <- get_sig_symbol(kw_p)
+                  cat(sprintf("  Kruskal-Wallis p=%.4f\\n", kw_p))
+                  result_text <- paste0(result_text, sprintf("\\nOverall test: Kruskal-Wallis, p=%.4f (%s)", kw_p, kw_sig))
 
-                # Build organized output similar to other chart types
-                # Header
-                anova_text <- sprintf("Time point %.1f:", x_val)
+                  if (!is.na(kw_p) && kw_p < 0.05) {
+                    if (post_hoc_test == "steel") {
+                      # Steel test - non-parametric vs control (kSamples package)
+                      cat("  Kruskal-Wallis significant - performing Steel test...\\n")
+                      control_group <- if (nchar(dunnett_control) > 0) dunnett_control else levels(anova_data$group)[1]
+                      cat(sprintf("  Steel test control group: %s\\n", control_group))
 
-                # Normality tests
-                if (length(normality_text) > 0) {
-                  anova_text <- paste0(anova_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-                }
+                      steel_available <- tryCatch({
+                        if (!requireNamespace("kSamples", quietly = TRUE)) {
+                          cat("  Installing kSamples for Steel test...\\n")
+                          webr::install("kSamples")
+                        }
+                        library(kSamples)
+                        TRUE
+                      }, error = function(e) {
+                        cat("  kSamples could not be loaded:", e$message, "\\n")
+                        FALSE
+                      })
 
-                # ANOVA result
-                anova_text <- paste0(anova_text, sprintf("\\nANOVA p=%.4f (%s)", anova_p, anova_sig))
-
-                # If ANOVA is significant, perform post-hoc test
-                if (!is.na(anova_p) && anova_p < 0.05) {
-                  cat("  ANOVA significant - performing Tukey post-hoc test...\\n")
-
-                  # Perform Tukey HSD post-hoc test
-                  tukey_result <- tryCatch(
-                    TukeyHSD(anova_result),
-                    error = function(e) {
-                      cat("  Tukey error:", e$message, "\\n")
-                      NULL
-                    }
-                  )
-
-                  if (!is.null(tukey_result)) {
-                    tukey_summary <- tukey_result$group
-                    cat(sprintf("  Tukey found %d pairwise comparisons\\n", nrow(tukey_summary)))
-
-                    # Add post-hoc section header
-                    anova_text <- paste0(anova_text, "\\nPost-hoc pairwise comparisons (Tukey HSD):")
-
-                    # Store all pairwise comparisons
-                    tukey_text <- c()
-                    for (i in 1:nrow(tukey_summary)) {
-                      comparison <- rownames(tukey_summary)[i]
-                      p_adj <- tukey_summary[i, "p adj"]
-                      diff <- tukey_summary[i, "diff"]
-
-                      sig_label <- ""
-                      if (!is.na(p_adj)) {
-                        sig_label <- get_sig_symbol(p_adj)
+                      if (steel_available) {
+                        treatment_groups <- levels(anova_data$group)[levels(anova_data$group) != control_group]
+                        control_values <- anova_data$value[anova_data$group == control_group]
+                        result_text <- paste0(result_text,
+                          sprintf("\\nPost-hoc (Steel test, vs %s):", control_group))
+                        for (trt in treatment_groups) {
+                          trt_values <- anova_data$value[anova_data$group == trt]
+                          steel_result <- tryCatch(
+                            Steel.test(list(control_values, trt_values)),
+                            error = function(e) { cat("  Steel.test error:", e$message, "\\n"); NULL }
+                          )
+                          if (!is.null(steel_result)) {
+                            p_val <- steel_result$st[2]
+                            sig_label <- get_sig_symbol(p_val)
+                            result_text <- paste0(result_text,
+                              sprintf("\\n  %s-%s: p=%.4f (%s)", control_group, trt, p_val, sig_label))
+                          }
+                        }
                       } else {
-                        sig_label <- "ns"
+                        result_text <- paste0(result_text,
+                          "\\n[ERROR] Steel test requires the kSamples package which could not be loaded in this environment.",
+                          "\\nPlease contact us for support: https://h20gg702.github.io/figra-pages/support")
+                        cat("ERROR: kSamples package not available for Steel test. Steel test cannot be performed.\\n")
                       }
 
-                      cat(sprintf("    %s: diff=%.2f, p=%.4f (%s)\\n",
-                                  comparison, diff, p_adj, sig_label))
-
-                      # Format for UI
-                      tukey_text <- c(tukey_text, sprintf("  %s: diff=%.2f, p=%.4f (%s)",
-                                                          comparison, diff, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
+                    } else {
+                      # Default: Dunn test (proper post-hoc for Kruskal-Wallis)
+                      # Use p-adjustment method from user selection: dunn_holm -> holm, others -> bonferroni (default)
+                      dunn_method <- if (post_hoc_test == "dunn_holm") "holm" else "bonferroni"
+                      dunn_method_label <- if (dunn_method == "holm") "Holm" else "Bonferroni"
+                      cat(sprintf("  Kruskal-Wallis significant - performing Dunn post-hoc test (%s adj.)...\\n", dunn_method_label))
+                      dunn_available <- tryCatch({
+                        if (!requireNamespace("dunn.test", quietly = TRUE)) {
+                          cat("  Installing dunn.test package...\\n")
+                          webr::install("dunn.test")
+                        }
+                        library(dunn.test)
+                        TRUE
+                      }, error = function(e) {
+                        cat("  dunn.test could not be loaded:", e$message, "\\n")
+                        FALSE
+                      })
+                      if (dunn_available) {
+                        dunn_result <- tryCatch(
+                          dunn.test(anova_data$value, anova_data$group, method = dunn_method),
+                          error = function(e) { cat("  Dunn test error:", e$message, "\\n"); NULL }
+                        )
+                        if (!is.null(dunn_result)) {
+                          result_text <- paste0(result_text, sprintf("\\nPost-hoc (Dunn test with %s):", dunn_method_label))
+                          for (i in seq_along(dunn_result$comparisons)) {
+                            comp_clean <- gsub(" - ", "-", dunn_result$comparisons[i])
+                            p_adj <- dunn_result$P.adjusted[i]
+                            sig_label <- get_sig_symbol(p_adj)
+                            result_text <- paste0(result_text,
+                              sprintf("\\n  %s: p=%.4f (%s)", comp_clean, p_adj, sig_label))
+                          }
+                        }
+                      } else {
+                        result_text <- paste0(result_text,
+                          "\\n[ERROR] Dunn test requires the dunn.test package which could not be loaded.",
+                          "\\nPlease contact us for support: https://h20gg702.github.io/figra-pages/support")
+                        cat("ERROR: dunn.test package not available. Dunn test cannot be performed.\\n")
+                      }
                     }
-
-                    # Add pairwise comparisons
-                    anova_text <- paste0(anova_text, "\\n", paste(tukey_text, collapse="\\n"))
                   }
                 }
 
-                # Add to results
-                stat_text_results <- c(stat_text_results, anova_text)
+              } else {
+                # Parametric: ANOVA + user-selected post-hoc
+                anova_result <- tryCatch(
+                  aov(value ~ group, data = anova_data),
+                  error = function(e) { cat("  ANOVA error:", e$message, "\\n"); NULL }
+                )
+                if (!is.null(anova_result)) {
+                  anova_summary <- summary(anova_result)
+                  anova_p <- anova_summary[[1]][["Pr(>F)"]][1]
+                  anova_sig <- if (!is.na(anova_p)) get_sig_symbol(anova_p) else ""
+                  cat(sprintf("  ANOVA p=%.4f\\n", anova_p))
+                  result_text <- paste0(result_text, sprintf("\\nOverall test: ANOVA, p=%.4f (%s)", anova_p, anova_sig))
+
+                  if (!is.na(anova_p) && anova_p < 0.05) {
+                    if (post_hoc_test == "bonferroni" || post_hoc_test == "holm") {
+                      cat(sprintf("  ANOVA significant - %s post-hoc...\\n", post_hoc_test))
+                      ph_result <- tryCatch(
+                        pairwise.t.test(anova_data$value, anova_data$group,
+                                        p.adjust.method = post_hoc_test),
+                        error = function(e) { cat("  Post-hoc error:", e$message, "\\n"); NULL }
+                      )
+                      if (!is.null(ph_result)) {
+                        ph_label <- if (post_hoc_test == "bonferroni") "Bonferroni" else "Holm"
+                        result_text <- paste0(result_text,
+                          sprintf("\\nPost-hoc (Pairwise t-test with %s):", ph_label))
+                        p_mat <- ph_result$p.value
+                        for (r in rownames(p_mat)) {
+                          for (c in colnames(p_mat)) {
+                            p_adj <- p_mat[r, c]
+                            if (!is.na(p_adj)) {
+                              sig_label <- get_sig_symbol(p_adj)
+                              result_text <- paste0(result_text,
+                                sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, sig_label))
+                            }
+                          }
+                        }
+                      }
+                    } else {
+                      # Default: Tukey HSD
+                      cat("  ANOVA significant - performing Tukey HSD...\\n")
+                      tukey_result <- tryCatch(
+                        TukeyHSD(anova_result),
+                        error = function(e) { cat("  Tukey error:", e$message, "\\n"); NULL }
+                      )
+                      if (!is.null(tukey_result)) {
+                        tukey_summary <- tukey_result$group
+                        result_text <- paste0(result_text, "\\nPost-hoc (Tukey HSD):")
+                        for (i in 1:nrow(tukey_summary)) {
+                          comparison <- rownames(tukey_summary)[i]
+                          p_adj <- tukey_summary[i, "p adj"]
+                          diff <- tukey_summary[i, "diff"]
+                          sig_label <- if (!is.na(p_adj)) get_sig_symbol(p_adj) else "ns"
+                          result_text <- paste0(result_text,
+                            sprintf("\\n  %s: diff=%.2f, p=%.4f (%s)",
+                                    comparison, diff, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
+                        }
+                      }
+                    }
+                  }
+                }
               }
+
+              stat_text_results <- c(stat_text_results, result_text)
             }
           }
         }
@@ -12522,14 +14206,14 @@ async function initWebR() {
       p
     }
 
-    sato_bar_error <- function(dat, x_col=1, y_col=2, error_col=3, fill="#4C78A8", color="#1F2937", linewidth=0.7, alpha=0.9,
+    sato_bar_error <- function(dat, x_col=1, y_col=2, error_col=3, fill_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"), color="#1F2937", linewidth=0.7, alpha=0.9,
                               width=0.4, errorbar_width=0.2,
                               target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
                               title_size=14, x_axis_title_size=12, y_axis_title_size=12, x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
                               title_text="Bar plot with error bars", x_text="Category", y_text="Mean",
                               show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                               x_scale="linear", y_scale="linear",
-                              theme_name="minimal",
+                              theme_name="bw",
                               x_axis_rotation=0, y_axis_rotation=0,
                               x_axis_hjust=0.5, x_axis_vjust=0.5,
                               y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -12545,11 +14229,18 @@ async function initWebR() {
         error = as.numeric(dat[[error_col]])
       )
       
+      # Build per-category color mapping
+      cat_levels <- levels(df$category)
+      cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
+      names(cat_colors) <- cat_levels
+
       # Create bar plot with error bars
-      p <- ggplot(df, aes(x=category, y=mean_val)) +
-           geom_col(fill=fill, color=color, linewidth=linewidth, alpha=alpha, width=width) +
-           geom_errorbar(aes(ymin=mean_val-error, ymax=mean_val+error), 
-                        width=errorbar_width, color=color, linewidth=linewidth*0.8)
+      p <- ggplot(df, aes(x=category, y=mean_val, fill=category)) +
+           geom_col(color=color, linewidth=linewidth, alpha=alpha, width=width) +
+           geom_errorbar(aes(ymin=mean_val-error, ymax=mean_val+error),
+                        width=errorbar_width, color=color, linewidth=linewidth*0.8) +
+           scale_fill_manual(values=cat_colors) +
+           guides(fill="none")
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
@@ -12563,7 +14254,7 @@ async function initWebR() {
                       add_statistics, statistical_test)
     }
 
-    sato_bar_error_dot <- function(dat, x_col=1, y_col=2, fill="#4C78A8", color="#1F2937", linewidth=0.7, alpha=0.9,
+    sato_bar_error_dot <- function(dat, x_col=1, y_col=2, fill_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"), color="#1F2937", linewidth=0.7, alpha=0.9,
                                   width=0.4, errorbar_width=0.2, dot_size=4, dot_alpha=1.0, dot_color="#333333", dot_shape=16, jitter_width=0.2,
                                   error_type="sd",
                                   target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
@@ -12571,7 +14262,7 @@ async function initWebR() {
                                   title_text="Bar plot with error bars and data points", x_text="Category", y_text="Value",
                                   show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                   x_scale="linear", y_scale="linear",
-                                  theme_name="minimal",
+                                  theme_name="bw",
                                   x_axis_rotation=0, y_axis_rotation=0,
                                   x_axis_hjust=0.5, x_axis_vjust=0.5,
                                   y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -12644,18 +14335,26 @@ async function initWebR() {
       }
       
       
+      # Assign colors to categories (recycle if more categories than colors)
+      cat_levels <- levels(df$category)
+      n_cats <- length(cat_levels)
+      cat_colors <- fill_colors[((seq_len(n_cats) - 1) %% length(fill_colors)) + 1]
+      names(cat_colors) <- cat_levels
+
       # Create combined plot: bars + error bars + individual points
       p <- ggplot() +
-           # Bar layer (means)
-           geom_col(data = summary_df, aes(x = category, y = mean_val), 
-                   fill = fill, color = color, linewidth = linewidth, alpha = alpha, width = width) +
+           # Bar layer (means) - per-category fill colors
+           geom_col(data = summary_df, aes(x = category, y = mean_val, fill = category),
+                   color = color, linewidth = linewidth, alpha = alpha, width = width) +
+           scale_fill_manual(values = cat_colors) +
            # Error bar layer
-           geom_errorbar(data = summary_df, aes(x = category, ymin = mean_val - error_val, ymax = mean_val + error_val), 
+           geom_errorbar(data = summary_df, aes(x = category, ymin = mean_val - error_val, ymax = mean_val + error_val),
                         width = errorbar_width, color = color, linewidth = linewidth * 0.8) +
            # Individual data points (jittered horizontally only)
            geom_point(data = df, aes(x = category, y = value),
                      position = position_jitter(width = jitter_width, height = 0),
-                     size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape)
+                     size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape) +
+           guides(fill = "none")
 
       # Add statistical analysis if requested and we have multiple groups
       cat("\\n=== BAR ERROR DOT STATISTICAL CHECK ===\\n")
@@ -12691,14 +14390,14 @@ async function initWebR() {
                       add_statistics, statistical_test)
     }
 
-    sato_box_dot <- function(dat, x_col=1, y_col=2, fill="#4C78A8", color="#1F2937", linewidth=0.7, alpha=0.9, width=0.7,
+    sato_box_dot <- function(dat, x_col=1, y_col=2, fill_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"), color="#1F2937", linewidth=0.7, alpha=0.9, width=0.7,
                             dot_size=4, dot_alpha=1.0, dot_color="#333333", dot_shape=16, jitter_width=0.2,
                             target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
                             title_size=14, x_axis_title_size=12, y_axis_title_size=12, x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
                             title_text="Box plot with data points", x_text="Category", y_text="Value",
                             show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                             x_scale="linear", y_scale="linear",
-                            theme_name="minimal",
+                            theme_name="bw",
                             x_axis_rotation=0, y_axis_rotation=0,
                             x_axis_hjust=0.5, x_axis_vjust=0.5,
                             y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -12731,14 +14430,21 @@ async function initWebR() {
         y_text <- y_clean  # Use the cleaned custom text
       }
       
+      # Build per-category color mapping
+      cat_levels <- levels(df$category)
+      cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
+      names(cat_colors) <- cat_levels
+
       # Create combined plot: box plot + individual points
-      p <- ggplot(df, aes(x = category, y = value)) +
+      p <- ggplot(df, aes(x = category, y = value, fill = category)) +
            # Box plot layer
-           geom_boxplot(fill = fill, color = color, linewidth = linewidth, alpha = alpha, width = width,
+           geom_boxplot(color = color, linewidth = linewidth, alpha = alpha, width = width,
                        outlier.shape = NA) +  # Hide default outliers to avoid duplication
            # Individual data points (jittered horizontally only)
            geom_point(position = position_jitter(width = jitter_width, height = 0),
-                     size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape)
+                     size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape) +
+           scale_fill_manual(values = cat_colors) +
+           guides(fill = "none")
 
       # Add statistical analysis if requested and we have multiple groups
       if (add_statistics && length(unique(df$category)) > 1) {
@@ -12767,7 +14473,7 @@ async function initWebR() {
                                 title_text="Grouped Bar Plot", x_text="Category", y_text="Value",
                                 show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                 x_scale="linear", y_scale="linear",
-                                theme_name="minimal",
+                                theme_name="bw",
                                 x_axis_rotation=0, y_axis_rotation=0,
                                 x_axis_hjust=0.5, x_axis_vjust=0.5,
                                 y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -12889,7 +14595,7 @@ async function initWebR() {
                                       title_text="Grouped Bar Plot with Error", x_text="Category", y_text="Mean",
                                       show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                       x_scale="linear", y_scale="linear",
-                                      theme_name="minimal",
+                                      theme_name="bw",
                                       x_axis_rotation=0, y_axis_rotation=0,
                                       x_axis_hjust=0.5, x_axis_vjust=0.5,
                                       y_axis_hjust=0.5, y_axis_vjust=0.5) {
@@ -12967,7 +14673,7 @@ async function initWebR() {
                                           title_text="Grouped Bar + Dot Plot with Error", x_text="Category", y_text="Value",
                                           show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                           x_scale="linear", y_scale="linear",
-                                          theme_name="minimal",
+                                          theme_name="bw",
                                           x_axis_rotation=0, y_axis_rotation=0,
                                           x_axis_hjust=0.5, x_axis_vjust=0.5,
                                           y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -13271,15 +14977,26 @@ async function initWebR() {
                   # Determine significance symbol using helper function
                   sig_label <- get_sig_symbol(p_val)
 
-                  # Store result text for UI with proper order: Category -> Group Stats -> Normality -> Variance -> Test result
+                  # Store result text for UI with proper order: Category -> Summary -> Normality -> Variance -> Test result
                   result_text <- sprintf("Category %s:", cat_val)
 
-                  # Add group statistics (n, mean, sd) for each group
-                  result_text <- paste0(result_text, "\\nGroup Statistics:")
+                  # Add group statistics (n, mean, SD/SE/CI95) for each group
+                  .err_label_2g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_2g))
                   for (g in groups_with_data) {
-                    g_data <- plot_data[plot_data$category == cat_val & plot_data$group == g, "value"]
-                    result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.2f, sd=%.2f",
-                                          g, length(g_data), mean(g_data, na.rm=TRUE), sd(g_data, na.rm=TRUE)))
+                    g_data <- as.numeric(plot_data[plot_data$category == cat_val & plot_data$group == g, "value"])
+                    g_data <- g_data[!is.na(g_data)]
+                    n_g2 <- length(g_data)
+                    if (n_g2 > 0) {
+                      mean_g2 <- mean(g_data)
+                      if (n_g2 > 1) {
+                        sd_g2 <- sd(g_data)
+                        err_g2 <- if (error_type == "se") sd_g2 / sqrt(n_g2) else if (error_type == "ci95") qt(0.975, df=n_g2-1) * sd_g2 / sqrt(n_g2) else sd_g2
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g2, mean_g2, .err_label_2g, err_g2))
+                      } else {
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g2, mean_g2))
+                      }
+                    }
                   }
 
                   # Add normality testing results
@@ -13418,8 +15135,26 @@ async function initWebR() {
 
                 cat("  ", test_name, "p-value:", omnibus_p, "\\n")
 
-                # Build result text - ORDER: Normality, ANOVA, Post-hoc
+                # Build result text - ORDER: Summary, Normality, ANOVA, Post-hoc
                 result_text <- sprintf("Category %s:", cat_val)
+                # Add descriptive statistics
+                .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
+                for (g in groups_with_data) {
+                  g_data <- anova_data$value[anova_data$group == g]
+                  g_data <- g_data[!is.na(g_data)]
+                  n_g3 <- length(g_data)
+                  if (n_g3 > 0) {
+                    mean_g3 <- mean(g_data)
+                    if (n_g3 > 1) {
+                      sd_g3 <- sd(g_data)
+                      err_g3 <- if (error_type == "se") sd_g3 / sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1) * sd_g3 / sqrt(n_g3) else sd_g3
+                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
+                    } else {
+                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
+                    }
+                  }
+                }
                 if (length(normality_text) > 0) {
                   result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
                 }
@@ -13447,7 +15182,8 @@ async function initWebR() {
                       }
                       library(dunn.test)
 
-                      dunn_result <- dunn.test(anova_data$value, anova_data$group, method = "bonferroni")
+                      dunn_adj <- if (selected_posthoc_test == "dunn_holm") "holm" else "bonferroni"
+                      dunn_result <- dunn.test(anova_data$value, anova_data$group, method = dunn_adj)
 
                       # Format results into a data frame
                       data.frame(
@@ -13699,20 +15435,20 @@ async function initWebR() {
                   if (length(posthoc_text) > 0) {
                     # Add post-hoc test type header with correct test name
                     posthoc_header <- if (test_to_use == "kruskal") {
-                      "Post-hoc pairwise comparisons (Dunn test):"
+                      dunn_adj_label <- if (selected_posthoc_test == "dunn_holm") "Holm" else "Bonferroni"
+                      sprintf("Post-hoc (Dunn test with %s):", dunn_adj_label)
                     } else {
                       # For ANOVA, show the actual selected post-hoc test
-                      # Note: Bonferroni and Holm are p-value adjustments, not post-hoc tests
                       if (selected_posthoc_test == "tukey") {
-                        "Post-hoc pairwise comparisons (Tukey HSD):"
+                        "Post-hoc (Tukey HSD):"
                       } else if (selected_posthoc_test == "bonferroni") {
-                        "Pairwise t-test with Bonferroni correction:"
+                        "Post-hoc (Pairwise t-test with Bonferroni):"
                       } else if (selected_posthoc_test == "holm") {
-                        "Pairwise t-test with Holm correction:"
+                        "Post-hoc (Pairwise t-test with Holm):"
                       } else if (selected_posthoc_test == "dunnett") {
-                        "Post-hoc pairwise comparisons (Dunnett):"
+                        "Post-hoc (Dunnett):"
                       } else {
-                        "Post-hoc pairwise comparisons (Tukey HSD):"
+                        "Post-hoc (Tukey HSD):"
                       }
                     }
                     result_text <- paste0(result_text, "\\n", posthoc_header, "\\n", paste(posthoc_text, collapse="\\n"))
@@ -13736,7 +15472,7 @@ async function initWebR() {
 
           # Calculate unit_step (spacing between brackets) based on symbol size and Y range
           # This matches the logic from regular bar chart
-          unit_step <- y_range * 0.08  # 8% of Y range as default spacing
+          unit_step <- y_range * 0.08 * bracket_step_scale  # 8% of Y range as default spacing
 
           # Group brackets by category for proper stacking
           for (cat_idx in unique(bracket_data$x.position)) {
@@ -13858,48 +15594,58 @@ async function initWebR() {
           bracket_size <- symbol_size
           line_size <- ggpubr_line_size
           tip_length <- ggpubr_tip_length
-          v_just <- ggpubr_vjust + 0.6
+          v_just <- ggpubr_vjust - symbol_gap + 1.2
 
           # Split data by symbol type to apply different sizes (same as regular bar)
           asterisk_data <- bracket_data[bracket_data$p.signif != "ns", ]
           ns_data <- bracket_data[bracket_data$p.signif == "ns", ]
 
-          # Add asterisk symbols with full size
-          if (nrow(asterisk_data) > 0) {
-            p <- p + stat_pvalue_manual(asterisk_data,
-                                       label = "p.signif",
-                                       xmin = "xmin",
-                                       xmax = "xmax",
-                                       y.position = "y.position",
-                                       size = bracket_size,
-                                       size.line = line_size,
-                                       tip.length = tip_length,
-                                       vjust = v_just,
-                                       hjust = 0.5,
-                                       step.increase = 0,
-                                       bracket.nudge.y = 0,
-                                       bracket.shorten = 0,
-                                       remove.bracket = FALSE)
-          }
-
-          # Add n.s. symbols with smaller size and higher position
-          if (nrow(ns_data) > 0) {
-            smaller_size <- bracket_size * 0.7
-            ns_vjust <- v_just - 0.5
-            p <- p + stat_pvalue_manual(ns_data,
-                                       label = "p.signif",
-                                       xmin = "xmin",
-                                       xmax = "xmax",
-                                       y.position = "y.position",
-                                       size = smaller_size,
-                                       size.line = line_size,
-                                       tip.length = tip_length,
-                                       vjust = ns_vjust,
-                                       hjust = 0.5,
-                                       step.increase = 0,
-                                       bracket.nudge.y = 0,
-                                       bracket.shorten = 0,
-                                       remove.bracket = FALSE)
+          # Add asterisk/ns symbols (with or without brackets)
+          if (show_brackets) {
+            if (nrow(asterisk_data) > 0) {
+              p <- p + stat_pvalue_manual(asterisk_data,
+                                         label = "p.signif",
+                                         xmin = "xmin",
+                                         xmax = "xmax",
+                                         y.position = "y.position",
+                                         size = bracket_size,
+                                         size.line = line_size,
+                                         tip.length = tip_length,
+                                         vjust = v_just,
+                                         hjust = 0.5,
+                                         step.increase = 0,
+                                         bracket.nudge.y = 0,
+                                         bracket.shorten = 0,
+                                         remove.bracket = FALSE)
+            }
+            if (nrow(ns_data) > 0) {
+              smaller_size <- bracket_size * 0.7
+              ns_vjust <- v_just - 0.5
+              p <- p + stat_pvalue_manual(ns_data,
+                                         label = "p.signif",
+                                         xmin = "xmin",
+                                         xmax = "xmax",
+                                         y.position = "y.position",
+                                         size = smaller_size,
+                                         size.line = line_size,
+                                         tip.length = tip_length,
+                                         vjust = ns_vjust,
+                                         hjust = 0.5,
+                                         step.increase = 0,
+                                         bracket.nudge.y = 0,
+                                         bracket.shorten = 0,
+                                         remove.bracket = FALSE)
+            }
+          } else {
+            for (i in seq_len(nrow(bracket_data))) {
+              if (!is.na(bracket_data$xmin[i]) && !is.na(bracket_data$xmax[i])) {
+                x_mid <- (bracket_data$xmin[i] + bracket_data$xmax[i]) / 2
+                sym <- bracket_data$p.signif[i]; is_ns <- sym == "ns"
+                sz <- if (is_ns) bracket_size * 0.7 else bracket_size
+                vj <- if (is_ns) v_just - 0.5 else v_just
+                p <- p + annotate("text", x = x_mid, y = bracket_data$y.position[i], label = sym, size = sz, vjust = vj, hjust = 0.5)
+              }
+            }
           }
         }
 
@@ -13941,14 +15687,16 @@ async function initWebR() {
                                 title_text="Grouped Box Plot", x_text="Category", y_text="Value",
                                 show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                 x_scale="linear", y_scale="linear",
-                                theme_name="minimal",
+                                theme_name="bw",
                                 x_axis_rotation=0, y_axis_rotation=0,
                                 x_axis_hjust=0.5, x_axis_vjust=0.5,
                                 y_axis_hjust=0.5, y_axis_vjust=0.5,
                                 add_statistics=FALSE, statistical_test="auto", variance_test="levene", symbol_size=8,
                                 ggpubr_line_size=1.0, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
                                 comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
-                                selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7) {
+                                selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7,
+                                stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
+                                error_type="sd") {
       
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -13994,10 +15742,260 @@ async function initWebR() {
                        outlier.shape = 16) +
            scale_fill_manual(values = setNames(fill_colors[1:n_groups], group_levels)) +
            labs(fill = actual_group_name)
-      
-      # Add statistical analysis if requested
-      if (add_statistics && ncol(dat) >= 3) {
-        p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+
+      # Helper function to generate significance symbol
+      get_sig_symbol <- function(p_val) {
+        if (stat_symbol_type == "pvalue") {
+          return(sprintf("p=%.3f", p_val))
+        } else if (stat_symbol_type == "custom") {
+          if (p_val < 0.001) return(custom_symbol_001)
+          else if (p_val < 0.01) return(custom_symbol_01)
+          else if (p_val < 0.05) return(custom_symbol_05)
+          else return(custom_symbol_ns)
+        } else {
+          if (p_val < 0.001) return("***")
+          else if (p_val < 0.01) return("**")
+          else if (p_val < 0.05) return("*")
+          else return("ns")
+        }
+      }
+
+      # Initialize global variable for statistical results
+      grouped_bar_stat_results <<- ""
+
+      # Add statistical analysis - compare groups within each category (same logic as box_grouped_dot)
+      if (add_statistics && n_groups >= 2) {
+        tryCatch({
+          if (!require("ggpubr", quietly = TRUE)) webr::install("ggpubr")
+          library(ggpubr)
+
+          all_categories <- levels(plot_data$category)
+          unique_categories <- all_categories[all_categories %in% unique(plot_data$category)]
+          selected_categories <- NULL; custom_y_positions <- list(); custom_comps <- c()
+
+          if (comparison_mode == "custom") {
+            custom_comps <- tryCatch(jsonlite::fromJSON(custom_comparisons), error=function(e) c())
+            if (length(custom_comps) > 0) {
+              selected_categories <- c()
+              for (comp_str in custom_comps) {
+                parts <- strsplit(comp_str, "@", fixed=TRUE)[[1]]
+                if (length(parts) == 2) selected_categories <- c(selected_categories, parts[2])
+              }
+              custom_pos_list <- tryCatch(jsonlite::fromJSON(custom_positions), error=function(e) list())
+              for (comp_str in names(custom_pos_list)) custom_y_positions[[comp_str]] <- as.numeric(custom_pos_list[[comp_str]])
+            }
+          }
+
+          categories_to_test <- if (is.null(selected_categories) || length(selected_categories) == 0) unique_categories else unique(selected_categories)
+          stat_text_results <- c()
+          bracket_data <- data.frame(group1=character(), group2=character(), p.signif=character(), x.position=numeric(), y.position=numeric(), stringsAsFactors=FALSE)
+
+          for (cat_idx in seq_along(categories_to_test)) {
+            cat_val <- categories_to_test[cat_idx]
+            data_at_cat <- plot_data[plot_data$category == cat_val, ]
+            if (nrow(data_at_cat) == 0) next
+
+            groups_with_data <- unique(data_at_cat$group[!is.na(data_at_cat$value)])
+            n_groups_at_cat <- length(groups_with_data)
+
+            if (n_groups_at_cat == 2) {
+              g1d <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
+              g2d <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              if (length(g1d) == 0 || length(g2d) == 0) next
+
+              normality_text <- c(); is_g1_normal <- TRUE; is_g2_normal <- TRUE
+              if (length(g1d) >= 3 && length(g1d) <= 5000) {
+                sr <- tryCatch(shapiro.test(g1d), error=function(e) NULL)
+                if (!is.null(sr)) { is_g1_normal <- sr$p.value >= 0.05; normality_text <- c(normality_text, sprintf("  %s: p=%.4f (%s)", groups_with_data[1], sr$p.value, if(is_g1_normal) "normal" else "non-normal")) }
+              }
+              if (length(g2d) >= 3 && length(g2d) <= 5000) {
+                sr <- tryCatch(shapiro.test(g2d), error=function(e) NULL)
+                if (!is.null(sr)) { is_g2_normal <- sr$p.value >= 0.05; normality_text <- c(normality_text, sprintf("  %s: p=%.4f (%s)", groups_with_data[2], sr$p.value, if(is_g2_normal) "normal" else "non-normal")) }
+              }
+
+              test_to_use <- statistical_test
+              if (statistical_test == "auto") test_to_use <- if (is_g1_normal && is_g2_normal) "t-test" else "wilcoxon"
+              else if (statistical_test == "parametric") test_to_use <- "t-test"
+              else if (statistical_test == "nonparametric") test_to_use <- "wilcoxon"
+
+              equal_variances <- TRUE; variance_text <- ""
+              if (test_to_use != "wilcoxon") {
+                if (variance_test == "levene") {
+                  comb <- data.frame(values=c(g1d, g2d), group=factor(c(rep(as.character(groups_with_data[1]),length(g1d)), rep(as.character(groups_with_data[2]),length(g2d)))))
+                  lev <- tryCatch(anova(lm(abs(values - tapply(values,group,mean)[group]) ~ group, data=comb)), error=function(e) NULL)
+                  if (!is.null(lev)) { equal_variances <- lev$\`Pr(>F)\`[1] > 0.05; variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", lev$\`Pr(>F)\`[1], if(equal_variances) "equal" else "unequal") }
+                } else {
+                  vt <- tryCatch(var.test(g1d, g2d), error=function(e) NULL)
+                  if (!is.null(vt)) { equal_variances <- vt$p.value > 0.05; variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", vt$p.value, if(equal_variances) "equal" else "unequal") }
+                }
+              }
+
+              if (test_to_use == "wilcoxon") { tr <- tryCatch(wilcox.test(g1d, g2d), error=function(e) NULL); tn <- "Wilcoxon" }
+              else { tr <- tryCatch(t.test(g1d, g2d, var.equal=equal_variances), error=function(e) NULL); tn <- if(equal_variances) "Student's t-test" else "Welch's t-test" }
+
+              if (!is.null(tr)) {
+                p_val <- tr$p.value; sl <- get_sig_symbol(p_val)
+                cat_index <- which(unique_categories == cat_val)
+                .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                rtxt <- sprintf("Category %s:\nSummary (mean +/- %s):", cat_val, .err_lbl)
+                for (g in groups_with_data) {
+                  gd <- as.numeric(plot_data[plot_data$category==cat_val & plot_data$group==g, "value"]); gd <- gd[!is.na(gd)]; ng <- length(gd)
+                  if (ng > 0) {
+                    mg <- mean(gd)
+                    if (ng > 1) { sg <- sd(gd); eg <- if(error_type=="se") sg/sqrt(ng) else if(error_type=="ci95") qt(0.975,df=ng-1)*sg/sqrt(ng) else sg; rtxt <- paste0(rtxt, sprintf("\n  %s: n=%d, mean=%.4g, %s=%.4g", g, ng, mg, .err_lbl, eg)) }
+                    else rtxt <- paste0(rtxt, sprintf("\n  %s: n=%d, mean=%.4g", g, ng, mg))
+                  }
+                }
+                if (length(normality_text) > 0) rtxt <- paste0(rtxt, "\n\nNormality (Shapiro-Wilk):\n", paste(normality_text, collapse="\n"))
+                if (nchar(variance_text) > 0) rtxt <- paste0(rtxt, "\n", variance_text)
+                rtxt <- paste0(rtxt, "\n\n", sprintf("%s: p=%.4f (%s)", tn, p_val, sl))
+                stat_text_results <- c(stat_text_results, rtxt)
+
+                ck1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
+                ck2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
+                cy <- if (!is.null(custom_y_positions[[ck1]])) custom_y_positions[[ck1]] else if (!is.null(custom_y_positions[[ck2]])) custom_y_positions[[ck2]] else NULL
+                yp <- if (!is.null(cy)) cy else max(data_at_cat$value, na.rm=TRUE) * 1.20
+                should_add <- (comparison_mode=="significant" && sl!="ns") || (comparison_mode=="all") || (comparison_mode=="custom" && (ck1 %in% custom_comps || ck2 %in% custom_comps))
+                if (should_add) bracket_data <- rbind(bracket_data, data.frame(group1=as.character(groups_with_data[1]), group2=as.character(groups_with_data[2]), p.signif=sl, x.position=cat_index, y.position=yp, stringsAsFactors=FALSE))
+              }
+
+            } else if (n_groups_at_cat >= 3) {
+              cat_index <- which(unique_categories == cat_val)
+              ad <- data.frame(group=factor(data_at_cat$group), value=as.numeric(data_at_cat$value))
+              ad <- ad[complete.cases(ad), ]
+              if (nrow(ad) < 3) next
+
+              normality_text <- c(); all_normal <- TRUE
+              for (grp in groups_with_data) {
+                gd <- data_at_cat[data_at_cat$group==grp, "value"]
+                if (length(gd) >= 3 && length(gd) <= 5000) {
+                  sr <- tryCatch(shapiro.test(gd), error=function(e) NULL)
+                  if (!is.null(sr)) { is_n <- sr$p.value >= 0.05; normality_text <- c(normality_text, sprintf("  %s: p=%.4f (%s)", grp, sr$p.value, if(is_n) "normal" else "non-normal")); if (!is_n) all_normal <- FALSE }
+                }
+              }
+
+              test_to_use <- statistical_test
+              if (statistical_test == "auto") test_to_use <- if (all_normal) "anova" else "kruskal"
+
+              omnibus_p <- NA; test_name <- ""
+              if (test_to_use == "kruskal") { kr <- kruskal.test(value ~ group, data=ad); omnibus_p <- kr$p.value; test_name <- "Kruskal-Wallis" }
+              else { ar <- aov(value ~ group, data=ad); omnibus_p <- summary(ar)[[1]][["Pr(>F)"]][1]; test_name <- "ANOVA" }
+
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              rtxt <- sprintf("Category %s:\nSummary (mean +/- %s):", cat_val, .err_lbl)
+              for (g in groups_with_data) {
+                gd <- ad$value[ad$group==g]; gd <- gd[!is.na(gd)]; ng <- length(gd)
+                if (ng > 0) {
+                  mg <- mean(gd)
+                  if (ng > 1) { sg <- sd(gd); eg <- if(error_type=="se") sg/sqrt(ng) else if(error_type=="ci95") qt(0.975,df=ng-1)*sg/sqrt(ng) else sg; rtxt <- paste0(rtxt, sprintf("\n  %s: n=%d, mean=%.4g, %s=%.4g", g, ng, mg, .err_lbl, eg)) }
+                  else rtxt <- paste0(rtxt, sprintf("\n  %s: n=%d, mean=%.4g", g, ng, mg))
+                }
+              }
+              if (length(normality_text) > 0) rtxt <- paste0(rtxt, "\nNormality (Shapiro-Wilk):\n", paste(normality_text, collapse="\n"))
+              asig <- if (!is.na(omnibus_p)) { if(omnibus_p<0.001) "***" else if(omnibus_p<0.01) "**" else if(omnibus_p<0.05) "*" else "ns" } else "ns"
+              rtxt <- paste0(rtxt, "\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", asig, ")")
+
+              if (!is.na(omnibus_p) && omnibus_p < 0.05) {
+                posthoc_summary <- NULL
+                if (test_to_use == "kruskal") {
+                  ph <- tryCatch({
+                    if (!requireNamespace("dunn.test", quietly=TRUE)) webr::install("dunn.test")
+                    library(dunn.test)
+                    dr <- dunn.test(ad$value, ad$group, method=if(selected_posthoc_test=="dunn_holm") "holm" else "bonferroni")
+                    data.frame(Comparison=dr$comparisons, P.adj=dr$P.adjusted, stringsAsFactors=FALSE)
+                  }, error=function(e) NULL)
+                  if (!is.null(ph)) {
+                    pt <- c()
+                    for (i in 1:nrow(ph)) {
+                      pa <- ph$P.adj[i]; sl <- if (!is.na(pa)) get_sig_symbol(pa) else "ns"
+                      pt <- c(pt, sprintf("  %s: p=%.4f (%s)", ph$Comparison[i], ifelse(is.na(pa),1,pa), sl))
+                      should_add_ph <- (comparison_mode=="significant" && sl!="ns") || comparison_mode=="all"
+                      if (should_add_ph) { cp <- strsplit(ph$Comparison[i], " - ")[[1]]; if (length(cp)==2) bracket_data <- rbind(bracket_data, data.frame(group1=cp[1], group2=cp[2], p.signif=sl, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE)) }
+                    }
+                    rtxt <- paste0(rtxt, "\nPost-hoc (Dunn):\n", paste(pt, collapse="\n"))
+                  }
+                } else {
+                  pw_method <- if (selected_posthoc_test == "bonferroni") "bonferroni" else if (selected_posthoc_test == "holm") "holm" else NULL
+                  if (selected_posthoc_test == "tukey") {
+                    tuk <- tryCatch(TukeyHSD(ar), error=function(e) NULL)
+                    if (!is.null(tuk)) posthoc_summary <- tuk$group
+                  } else if (!is.null(pw_method)) {
+                    pw <- tryCatch(pairwise.t.test(ad$value, ad$group, p.adjust.method=pw_method), error=function(e) NULL)
+                    if (!is.null(pw)) {
+                      gs <- levels(ad$group); comps <- combn(gs, 2, simplify=FALSE)
+                      pn <- c(); dv <- c(); pv <- c()
+                      for (comp in comps) {
+                        g1 <- comp[1]; g2 <- comp[2]
+                        ri <- which(rownames(pw$p.value)==g1); ci <- which(colnames(pw$p.value)==g2)
+                        pval <- if(length(ri)>0&&length(ci)>0) pw$p.value[ri,ci] else { ri2<-which(rownames(pw$p.value)==g2); ci2<-which(colnames(pw$p.value)==g1); if(length(ri2)>0&&length(ci2)>0) pw$p.value[ri2,ci2] else NA }
+                        pn <- c(pn, paste0(g2,"-",g1)); dv <- c(dv, mean(ad$value[ad$group==g2],na.rm=TRUE)-mean(ad$value[ad$group==g1],na.rm=TRUE)); pv <- c(pv, pval)
+                      }
+                      posthoc_summary <- data.frame(diff=dv, lwr=rep(NA,length(dv)), upr=rep(NA,length(dv)), "p adj"=pv, row.names=pn, check.names=FALSE)
+                    }
+                  }
+                  if (!is.null(posthoc_summary)) {
+                    pt <- c()
+                    for (i in 1:nrow(posthoc_summary)) {
+                      pa <- posthoc_summary[i,"p adj"]; sl <- if (!is.na(pa)) get_sig_symbol(pa) else "ns"
+                      cn <- rownames(posthoc_summary)[i]
+                      pt <- c(pt, sprintf("  %s: p=%.4f (%s)", cn, ifelse(is.na(pa),1,pa), sl))
+                      should_add_ph <- (comparison_mode=="significant" && sl!="ns") || comparison_mode=="all"
+                      if (should_add_ph) { cp <- strsplit(cn, "-")[[1]]; if(length(cp)==2) bracket_data <- rbind(bracket_data, data.frame(group1=cp[2], group2=cp[1], p.signif=sl, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE)) }
+                    }
+                    rtxt <- paste0(rtxt, sprintf("\nPost-hoc (%s):\n", selected_posthoc_test), paste(pt, collapse="\n"))
+                  }
+                }
+              }
+              stat_text_results <- c(stat_text_results, rtxt)
+
+              # Fill in NA y positions for 3+ group brackets
+              max_val <- max(data_at_cat$value, na.rm=TRUE)
+              na_rows <- which(is.na(bracket_data$y.position) & bracket_data$x.position == cat_index)
+              for (bi in seq_along(na_rows)) bracket_data$y.position[na_rows[bi]] <- max_val * 1.20 + (bi-1) * max_val * 0.12
+            }
+          }
+
+          # Add ggpubr brackets
+          if (nrow(bracket_data) > 0) {
+            unique_grps <- levels(droplevels(plot_data$group)); n_grps <- length(unique_grps)
+            bracket_data$xmin <- NA_real_; bracket_data$xmax <- NA_real_
+            for (i in 1:nrow(bracket_data)) {
+              if (!is.na(bracket_data$group1[i]) && !is.na(bracket_data$group2[i])) {
+                ci <- bracket_data$x.position[i]
+                g1i <- which(unique_grps == bracket_data$group1[i]); g2i <- which(unique_grps == bracket_data$group2[i])
+                if (length(g1i) > 0 && length(g2i) > 0) {
+                  g1x <- ci + (g1i-1-(n_grps-1)/2) * (dodge_width/n_grps)
+                  g2x <- ci + (g2i-1-(n_grps-1)/2) * (dodge_width/n_grps)
+                  bracket_data$xmin[i] <- min(g1x, g2x); bracket_data$xmax[i] <- max(g1x, g2x)
+                }
+              }
+            }
+            bracket_export_data <<- bracket_data
+            v_just <- ggpubr_vjust - symbol_gap + 1.2
+            asterisk_data <- bracket_data[bracket_data$p.signif != "ns", ]
+            ns_data <- bracket_data[bracket_data$p.signif == "ns", ]
+            if (show_brackets) {
+              if (nrow(asterisk_data) > 0)
+                p <- p + stat_pvalue_manual(asterisk_data, label="p.signif", xmin="xmin", xmax="xmax", y.position="y.position", size=sato_symbol_size, size.line=ggpubr_line_size, tip.length=ggpubr_tip_length, vjust=v_just, hjust=0.5, step.increase=0, bracket.nudge.y=0, bracket.shorten=0, remove.bracket=FALSE)
+              if (nrow(ns_data) > 0)
+                p <- p + stat_pvalue_manual(ns_data, label="p.signif", xmin="xmin", xmax="xmax", y.position="y.position", size=sato_symbol_size*0.7, size.line=ggpubr_line_size, tip.length=ggpubr_tip_length, vjust=v_just-0.5, hjust=0.5, step.increase=0, bracket.nudge.y=0, bracket.shorten=0, remove.bracket=FALSE)
+            } else {
+              for (i in seq_len(nrow(bracket_data))) {
+                if (!is.na(bracket_data$xmin[i]) && !is.na(bracket_data$xmax[i])) {
+                  x_mid <- (bracket_data$xmin[i] + bracket_data$xmax[i]) / 2
+                  sym <- bracket_data$p.signif[i]; is_ns <- sym == "ns"
+                  sz <- if (is_ns) sato_symbol_size * 0.7 else sato_symbol_size
+                  vj <- if (is_ns) v_just - 0.5 else v_just
+                  p <- p + annotate("text", x = x_mid, y = bracket_data$y.position[i], label = sym, size = sz, vjust = vj, hjust = 0.5)
+                }
+              }
+            }
+          }
+
+          grouped_bar_stat_results <<- if (length(stat_text_results) > 0) paste(stat_text_results, collapse="\n\n") else ""
+        }, error = function(e) {
+          grouped_bar_stat_results <<- paste(grouped_bar_stat_results, "\nERROR in statistical analysis:", e$message)
+        })
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -14023,7 +16021,7 @@ async function initWebR() {
                                     title_text="Grouped Box Plot with Dots", x_text="Category", y_text="Value",
                                     show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                     x_scale="linear", y_scale="linear",
-                                    theme_name="minimal",
+                                    theme_name="bw",
                                     x_axis_rotation=0, y_axis_rotation=0,
                                     x_axis_hjust=0.5, x_axis_vjust=0.5,
                                     y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -14031,7 +16029,8 @@ async function initWebR() {
                                     ggpubr_line_size=1.0, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
                                     comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
                                     selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7,
-                                    stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns") {
+                                    stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
+                                    error_type="sd") {
 
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
@@ -14053,7 +16052,7 @@ async function initWebR() {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
-      
+
       if (ncol(dat) < 3) {
         stop("Grouped box chart requires at least 3 columns: Group, Category, Value")
       }
@@ -14312,15 +16311,26 @@ async function initWebR() {
                   # Determine significance symbol using helper function
                   sig_label <- get_sig_symbol(p_val)
 
-                  # Store result text for UI with proper order: Category -> Group Stats -> Normality -> Variance -> Test result
+                  # Store result text for UI with proper order: Category -> Summary -> Normality -> Variance -> Test result
                   result_text <- sprintf("Category %s:", cat_val)
 
-                  # Add group statistics (n, mean, sd) for each group
-                  result_text <- paste0(result_text, "\\nGroup Statistics:")
+                  # Add group statistics (n, mean, SD/SE/CI95) for each group
+                  .err_label_2g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_2g))
                   for (g in groups_with_data) {
-                    g_data <- plot_data[plot_data$category == cat_val & plot_data$group == g, "value"]
-                    result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.2f, sd=%.2f",
-                                          g, length(g_data), mean(g_data, na.rm=TRUE), sd(g_data, na.rm=TRUE)))
+                    g_data <- as.numeric(plot_data[plot_data$category == cat_val & plot_data$group == g, "value"])
+                    g_data <- g_data[!is.na(g_data)]
+                    n_g2 <- length(g_data)
+                    if (n_g2 > 0) {
+                      mean_g2 <- mean(g_data)
+                      if (n_g2 > 1) {
+                        sd_g2 <- sd(g_data)
+                        err_g2 <- if (error_type == "se") sd_g2 / sqrt(n_g2) else if (error_type == "ci95") qt(0.975, df=n_g2-1) * sd_g2 / sqrt(n_g2) else sd_g2
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g2, mean_g2, .err_label_2g, err_g2))
+                      } else {
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g2, mean_g2))
+                      }
+                    }
                   }
 
                   # Add normality testing results
@@ -14458,8 +16468,26 @@ async function initWebR() {
 
                 cat("  ", test_name, "p-value:", omnibus_p, "\\n")
 
-                # Build result text - ORDER: Normality, ANOVA, Post-hoc
+                # Build result text - ORDER: Summary, Normality, ANOVA, Post-hoc
                 result_text <- sprintf("Category %s:", cat_val)
+                # Add descriptive statistics
+                .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
+                for (g in groups_with_data) {
+                  g_data <- anova_data$value[anova_data$group == g]
+                  g_data <- g_data[!is.na(g_data)]
+                  n_g3 <- length(g_data)
+                  if (n_g3 > 0) {
+                    mean_g3 <- mean(g_data)
+                    if (n_g3 > 1) {
+                      sd_g3 <- sd(g_data)
+                      err_g3 <- if (error_type == "se") sd_g3 / sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1) * sd_g3 / sqrt(n_g3) else sd_g3
+                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
+                    } else {
+                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
+                    }
+                  }
+                }
                 if (length(normality_text) > 0) {
                   result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
                 }
@@ -14487,7 +16515,8 @@ async function initWebR() {
                       }
                       library(dunn.test)
 
-                      dunn_result <- dunn.test(anova_data$value, anova_data$group, method = "bonferroni")
+                      dunn_adj <- if (selected_posthoc_test == "dunn_holm") "holm" else "bonferroni"
+                      dunn_result <- dunn.test(anova_data$value, anova_data$group, method = dunn_adj)
 
                       # Format results into a data frame
                       data.frame(
@@ -14739,20 +16768,20 @@ async function initWebR() {
                   if (length(posthoc_text) > 0) {
                     # Add post-hoc test type header with correct test name
                     posthoc_header <- if (test_to_use == "kruskal") {
-                      "Post-hoc pairwise comparisons (Dunn test):"
+                      dunn_adj_label <- if (selected_posthoc_test == "dunn_holm") "Holm" else "Bonferroni"
+                      sprintf("Post-hoc (Dunn test with %s):", dunn_adj_label)
                     } else {
                       # For ANOVA, show the actual selected post-hoc test
-                      # Note: Bonferroni and Holm are p-value adjustments, not post-hoc tests
                       if (selected_posthoc_test == "tukey") {
-                        "Post-hoc pairwise comparisons (Tukey HSD):"
+                        "Post-hoc (Tukey HSD):"
                       } else if (selected_posthoc_test == "bonferroni") {
-                        "Pairwise t-test with Bonferroni correction:"
+                        "Post-hoc (Pairwise t-test with Bonferroni):"
                       } else if (selected_posthoc_test == "holm") {
-                        "Pairwise t-test with Holm correction:"
+                        "Post-hoc (Pairwise t-test with Holm):"
                       } else if (selected_posthoc_test == "dunnett") {
-                        "Post-hoc pairwise comparisons (Dunnett):"
+                        "Post-hoc (Dunnett):"
                       } else {
-                        "Post-hoc pairwise comparisons (Tukey HSD):"
+                        "Post-hoc (Tukey HSD):"
                       }
                     }
                     result_text <- paste0(result_text, "\\n", posthoc_header, "\\n", paste(posthoc_text, collapse="\\n"))
@@ -14777,7 +16806,7 @@ async function initWebR() {
 
           # Calculate unit_step (spacing between brackets) based on symbol size and Y range
           # This matches the logic from regular bar chart
-          unit_step <- y_range * 0.08  # 8% of Y range as default spacing
+          unit_step <- y_range * 0.08 * bracket_step_scale  # 8% of Y range as default spacing
 
           # Group brackets by category for proper stacking
           for (cat_idx in unique(bracket_data$x.position)) {
@@ -14898,48 +16927,58 @@ async function initWebR() {
           bracket_size <- symbol_size
           line_size <- ggpubr_line_size
           tip_length <- ggpubr_tip_length
-          v_just <- ggpubr_vjust + 0.6
+          v_just <- ggpubr_vjust - symbol_gap + 1.2
 
           # Split data by symbol type to apply different sizes (same as regular bar)
           asterisk_data <- bracket_data[bracket_data$p.signif != "ns", ]
           ns_data <- bracket_data[bracket_data$p.signif == "ns", ]
 
-          # Add asterisk symbols with full size
-          if (nrow(asterisk_data) > 0) {
-            p <- p + stat_pvalue_manual(asterisk_data,
-                                       label = "p.signif",
-                                       xmin = "xmin",
-                                       xmax = "xmax",
-                                       y.position = "y.position",
-                                       size = bracket_size,
-                                       size.line = line_size,
-                                       tip.length = tip_length,
-                                       vjust = v_just,
-                                       hjust = 0.5,
-                                       step.increase = 0,
-                                       bracket.nudge.y = 0,
-                                       bracket.shorten = 0,
-                                       remove.bracket = FALSE)
-          }
-
-          # Add n.s. symbols with smaller size and higher position
-          if (nrow(ns_data) > 0) {
-            smaller_size <- bracket_size * 0.7
-            ns_vjust <- v_just - 0.5
-            p <- p + stat_pvalue_manual(ns_data,
-                                       label = "p.signif",
-                                       xmin = "xmin",
-                                       xmax = "xmax",
-                                       y.position = "y.position",
-                                       size = smaller_size,
-                                       size.line = line_size,
-                                       tip.length = tip_length,
-                                       vjust = ns_vjust,
-                                       hjust = 0.5,
-                                       step.increase = 0,
-                                       bracket.nudge.y = 0,
-                                       bracket.shorten = 0,
-                                       remove.bracket = FALSE)
+          # Add asterisk/ns symbols (with or without brackets)
+          if (show_brackets) {
+            if (nrow(asterisk_data) > 0) {
+              p <- p + stat_pvalue_manual(asterisk_data,
+                                         label = "p.signif",
+                                         xmin = "xmin",
+                                         xmax = "xmax",
+                                         y.position = "y.position",
+                                         size = bracket_size,
+                                         size.line = line_size,
+                                         tip.length = tip_length,
+                                         vjust = v_just,
+                                         hjust = 0.5,
+                                         step.increase = 0,
+                                         bracket.nudge.y = 0,
+                                         bracket.shorten = 0,
+                                         remove.bracket = FALSE)
+            }
+            if (nrow(ns_data) > 0) {
+              smaller_size <- bracket_size * 0.7
+              ns_vjust <- v_just - 0.5
+              p <- p + stat_pvalue_manual(ns_data,
+                                         label = "p.signif",
+                                         xmin = "xmin",
+                                         xmax = "xmax",
+                                         y.position = "y.position",
+                                         size = smaller_size,
+                                         size.line = line_size,
+                                         tip.length = tip_length,
+                                         vjust = ns_vjust,
+                                         hjust = 0.5,
+                                         step.increase = 0,
+                                         bracket.nudge.y = 0,
+                                         bracket.shorten = 0,
+                                         remove.bracket = FALSE)
+            }
+          } else {
+            for (i in seq_len(nrow(bracket_data))) {
+              if (!is.na(bracket_data$xmin[i]) && !is.na(bracket_data$xmax[i])) {
+                x_mid <- (bracket_data$xmin[i] + bracket_data$xmax[i]) / 2
+                sym <- bracket_data$p.signif[i]; is_ns <- sym == "ns"
+                sz <- if (is_ns) bracket_size * 0.7 else bracket_size
+                vj <- if (is_ns) v_just - 0.5 else v_just
+                p <- p + annotate("text", x = x_mid, y = bracket_data$y.position[i], label = sym, size = sz, vjust = vj, hjust = 0.5)
+              }
+            }
           }
         }
 
@@ -14972,13 +17011,13 @@ async function initWebR() {
     }
 
     # Basic violin plot function
-    sato_violin <- function(dat, x_col=1, y_col=2, fill="#4C78A8", color="#1F2937", linewidth=0.7, alpha=0.9, width=0.7,
+    sato_violin <- function(dat, x_col=1, y_col=2, fill_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"), color="#1F2937", linewidth=0.7, alpha=0.9, width=0.7,
                            target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
                            title_size=14, x_axis_title_size=12, y_axis_title_size=12, x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
                            title_text="Violin plot", x_text="Category", y_text="Value",
                            show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                            x_scale="linear", y_scale="linear",
-                           theme_name="minimal",
+                           theme_name="bw",
                            x_axis_rotation=0, y_axis_rotation=0,
                            x_axis_hjust=0.5, x_axis_vjust=0.5,
                            y_axis_hjust=0.5, y_axis_vjust=0.5) {
@@ -14992,8 +17031,15 @@ async function initWebR() {
         value = as.numeric(dat[[y_col]])
       )
       
-      p <- ggplot(df, aes(x = category, y = value)) +
-           geom_violin(fill = fill, color = color, linewidth = linewidth, alpha = alpha, width = width)
+      # Build per-category color mapping
+      cat_levels <- levels(df$category)
+      cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
+      names(cat_colors) <- cat_levels
+
+      p <- ggplot(df, aes(x = category, y = value, fill = category)) +
+           geom_violin(color = color, linewidth = linewidth, alpha = alpha, width = width) +
+           scale_fill_manual(values = cat_colors) +
+           guides(fill = "none")
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
@@ -15008,14 +17054,14 @@ async function initWebR() {
     }
 
     # Violin plot with individual data points
-    sato_violin_dot <- function(dat, x_col=1, y_col=2, fill="#4C78A8", color="#1F2937", linewidth=0.7, alpha=0.9, width=0.7,
+    sato_violin_dot <- function(dat, x_col=1, y_col=2, fill_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"), color="#1F2937", linewidth=0.7, alpha=0.9, width=0.7,
                                dot_size=4, dot_alpha=1.0, dot_color="#333333", dot_shape=16, jitter_width=0.2,
                                target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
                                title_size=14, x_axis_title_size=12, y_axis_title_size=12, x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
                                title_text="Violin plot with data points", x_text="Category", y_text="Value",
                                show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                x_scale="linear", y_scale="linear",
-                               theme_name="minimal",
+                               theme_name="bw",
                                x_axis_rotation=0, y_axis_rotation=0,
                                x_axis_hjust=0.5, x_axis_vjust=0.5,
                                y_axis_hjust=0.5, y_axis_vjust=0.5) {
@@ -15029,12 +17075,19 @@ async function initWebR() {
         value = as.numeric(dat[[y_col]])
       )
       
-      p <- ggplot(df, aes(x = category, y = value)) +
+      # Build per-category color mapping
+      cat_levels <- levels(df$category)
+      cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
+      names(cat_colors) <- cat_levels
+
+      p <- ggplot(df, aes(x = category, y = value, fill = category)) +
            # Violin layer
-           geom_violin(fill = fill, color = color, linewidth = linewidth, alpha = alpha, width = width) +
+           geom_violin(color = color, linewidth = linewidth, alpha = alpha, width = width) +
            # Individual data points (jittered horizontally only)
            geom_point(position = position_jitter(width = jitter_width, height = 0),
-                     size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape)
+                     size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape) +
+           scale_fill_manual(values = cat_colors) +
+           guides(fill = "none")
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
@@ -15058,18 +17111,20 @@ async function initWebR() {
                                    title_text="Grouped Violin Plot", x_text="Category", y_text="Value",
                                    show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                    x_scale="linear", y_scale="linear",
-                                   theme_name="minimal",
+                                   theme_name="bw",
                                    x_axis_rotation=0, y_axis_rotation=0,
                                    x_axis_hjust=0.5, x_axis_vjust=0.5,
                                    y_axis_hjust=0.5, y_axis_vjust=0.5,
                                    add_statistics=FALSE, statistical_test="auto", variance_test="levene", symbol_size=8,
                                    ggpubr_line_size=1.0, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
                                    comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
-                                   selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7) {
-      
+                                   selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7,
+                                   stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
+                                   error_type="sd") {
+
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
-      
+
       if (ncol(dat) < 3) {
         stop("Grouped violin chart requires at least 3 columns: Group, Category, Value")
       }
@@ -15110,10 +17165,143 @@ async function initWebR() {
                       color = stroke_color) +
            scale_fill_manual(values = setNames(fill_colors[1:n_groups], group_levels)) +
            labs(fill = actual_group_name)
-      
-      # Add statistical analysis if requested
-      if (add_statistics && ncol(dat) >= 3) {
-        p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+
+      # Helper function to generate significance symbol
+      get_sig_symbol <- function(p_val) {
+        if (stat_symbol_type == "pvalue") return(sprintf("p=%.3f", p_val))
+        else if (stat_symbol_type == "custom") {
+          if (p_val < 0.001) return(custom_symbol_001) else if (p_val < 0.01) return(custom_symbol_01) else if (p_val < 0.05) return(custom_symbol_05) else return(custom_symbol_ns)
+        } else {
+          if (p_val < 0.001) return("***") else if (p_val < 0.01) return("**") else if (p_val < 0.05) return("*") else return("ns")
+        }
+      }
+
+      # Initialize global variable for statistical results
+      grouped_bar_stat_results <<- ""
+
+      # Add statistical analysis - compare groups within each category
+      if (add_statistics && n_groups >= 2) {
+        tryCatch({
+          if (!require("ggpubr", quietly = TRUE)) webr::install("ggpubr")
+          library(ggpubr)
+
+          all_categories <- levels(plot_data$category)
+          unique_categories <- all_categories[all_categories %in% unique(plot_data$category)]
+          selected_categories <- NULL; custom_y_positions <- list(); custom_comps <- c()
+
+          if (comparison_mode == "custom") {
+            custom_comps <- tryCatch(jsonlite::fromJSON(custom_comparisons), error=function(e) c())
+            if (length(custom_comps) > 0) {
+              selected_categories <- c()
+              for (comp_str in custom_comps) { parts <- strsplit(comp_str, "@", fixed=TRUE)[[1]]; if (length(parts)==2) selected_categories <- c(selected_categories, parts[2]) }
+              custom_pos_list <- tryCatch(jsonlite::fromJSON(custom_positions), error=function(e) list())
+              for (comp_str in names(custom_pos_list)) custom_y_positions[[comp_str]] <- as.numeric(custom_pos_list[[comp_str]])
+            }
+          }
+
+          categories_to_test <- if (is.null(selected_categories) || length(selected_categories)==0) unique_categories else unique(selected_categories)
+          stat_text_results <- c()
+          bracket_data <- data.frame(group1=character(), group2=character(), p.signif=character(), x.position=numeric(), y.position=numeric(), stringsAsFactors=FALSE)
+
+          for (cat_idx in seq_along(categories_to_test)) {
+            cat_val <- categories_to_test[cat_idx]
+            data_at_cat <- plot_data[plot_data$category == cat_val, ]
+            if (nrow(data_at_cat) == 0) next
+            groups_with_data <- unique(data_at_cat$group[!is.na(data_at_cat$value)])
+            n_groups_at_cat <- length(groups_with_data)
+
+            if (n_groups_at_cat == 2) {
+              g1d <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
+              g2d <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              if (length(g1d)==0 || length(g2d)==0) next
+
+              is_g1_normal <- TRUE; is_g2_normal <- TRUE; normality_text <- c()
+              if (length(g1d)>=3&&length(g1d)<=5000) { sr<-tryCatch(shapiro.test(g1d),error=function(e)NULL); if(!is.null(sr)){is_g1_normal<-sr$p.value>=0.05; normality_text<-c(normality_text,sprintf("  %s: p=%.4f (%s)",groups_with_data[1],sr$p.value,if(is_g1_normal)"normal"else"non-normal"))}}
+              if (length(g2d)>=3&&length(g2d)<=5000) { sr<-tryCatch(shapiro.test(g2d),error=function(e)NULL); if(!is.null(sr)){is_g2_normal<-sr$p.value>=0.05; normality_text<-c(normality_text,sprintf("  %s: p=%.4f (%s)",groups_with_data[2],sr$p.value,if(is_g2_normal)"normal"else"non-normal"))}}
+
+              test_to_use <- statistical_test
+              if (statistical_test=="auto") test_to_use <- if(is_g1_normal&&is_g2_normal)"t-test" else "wilcoxon"
+              else if (statistical_test=="parametric") test_to_use <- "t-test"
+              else if (statistical_test=="nonparametric") test_to_use <- "wilcoxon"
+
+              equal_variances <- TRUE; variance_text <- ""
+              if (test_to_use != "wilcoxon") {
+                if (variance_test=="levene") {
+                  comb <- data.frame(values=c(g1d,g2d), group=factor(c(rep(as.character(groups_with_data[1]),length(g1d)),rep(as.character(groups_with_data[2]),length(g2d)))))
+                  lev <- tryCatch(anova(lm(abs(values-tapply(values,group,mean)[group])~group,data=comb)),error=function(e)NULL)
+                  if (!is.null(lev)){equal_variances<-lev$\`Pr(>F)\`[1]>0.05; variance_text<-sprintf("Variance test: p=%.4f (%s, Levene)",lev$\`Pr(>F)\`[1],if(equal_variances)"equal"else"unequal")}
+                } else {
+                  vt<-tryCatch(var.test(g1d,g2d),error=function(e)NULL); if(!is.null(vt)){equal_variances<-vt$p.value>0.05; variance_text<-sprintf("Variance test: p=%.4f (%s, F-test)",vt$p.value,if(equal_variances)"equal"else"unequal")}
+                }
+              }
+
+              if (test_to_use=="wilcoxon"){tr<-tryCatch(wilcox.test(g1d,g2d),error=function(e)NULL);tn<-"Wilcoxon"}
+              else{tr<-tryCatch(t.test(g1d,g2d,var.equal=equal_variances),error=function(e)NULL);tn<-if(equal_variances)"Student's t-test"else"Welch's t-test"}
+
+              if (!is.null(tr)) {
+                p_val<-tr$p.value; sl<-get_sig_symbol(p_val); cat_index<-which(unique_categories==cat_val)
+                .el<-if(error_type=="se")"SE"else if(error_type=="ci95")"CI95"else"SD"
+                rtxt<-sprintf("Category %s:\nSummary (mean +/- %s):",cat_val,.el)
+                for (g in groups_with_data) { gd<-as.numeric(plot_data[plot_data$category==cat_val&plot_data$group==g,"value"]); gd<-gd[!is.na(gd)]; ng<-length(gd); if(ng>0){mg<-mean(gd); if(ng>1){sg<-sd(gd);eg<-if(error_type=="se")sg/sqrt(ng)else if(error_type=="ci95")qt(0.975,df=ng-1)*sg/sqrt(ng)else sg; rtxt<-paste0(rtxt,sprintf("\n  %s: n=%d, mean=%.4g, %s=%.4g",g,ng,mg,.el,eg))}else rtxt<-paste0(rtxt,sprintf("\n  %s: n=%d, mean=%.4g",g,ng,mg))}}
+                if(length(normality_text)>0) rtxt<-paste0(rtxt,"\n\nNormality (Shapiro-Wilk):\n",paste(normality_text,collapse="\n"))
+                if(nchar(variance_text)>0) rtxt<-paste0(rtxt,"\n",variance_text)
+                rtxt<-paste0(rtxt,"\n\n",sprintf("%s: p=%.4f (%s)",tn,p_val,sl))
+                stat_text_results<-c(stat_text_results,rtxt)
+                ck1<-paste0(groups_with_data[1],"-",groups_with_data[2],"@",cat_val); ck2<-paste0(groups_with_data[2],"-",groups_with_data[1],"@",cat_val)
+                cy<-if(!is.null(custom_y_positions[[ck1]]))custom_y_positions[[ck1]]else if(!is.null(custom_y_positions[[ck2]]))custom_y_positions[[ck2]]else NULL
+                yp<-if(!is.null(cy))cy else max(data_at_cat$value,na.rm=TRUE)*1.20
+                should_add<-(comparison_mode=="significant"&&sl!="ns")||(comparison_mode=="all")||(comparison_mode=="custom"&&(ck1%in%custom_comps||ck2%in%custom_comps))
+                if(should_add) bracket_data<-rbind(bracket_data,data.frame(group1=as.character(groups_with_data[1]),group2=as.character(groups_with_data[2]),p.signif=sl,x.position=cat_index,y.position=yp,stringsAsFactors=FALSE))
+              }
+
+            } else if (n_groups_at_cat >= 3) {
+              cat_index<-which(unique_categories==cat_val)
+              ad<-data.frame(group=factor(data_at_cat$group),value=as.numeric(data_at_cat$value)); ad<-ad[complete.cases(ad),]
+              if(nrow(ad)<3) next
+              all_normal<-TRUE; normality_text<-c()
+              for(grp in groups_with_data){gd<-data_at_cat[data_at_cat$group==grp,"value"];if(length(gd)>=3&&length(gd)<=5000){sr<-tryCatch(shapiro.test(gd),error=function(e)NULL);if(!is.null(sr)){is_n<-sr$p.value>=0.05;normality_text<-c(normality_text,sprintf("  %s: p=%.4f (%s)",grp,sr$p.value,if(is_n)"normal"else"non-normal"));if(!is_n)all_normal<-FALSE}}}
+              test_to_use<-statistical_test; if(statistical_test=="auto")test_to_use<-if(all_normal)"anova"else"kruskal"
+              if(test_to_use=="kruskal"){kr<-kruskal.test(value~group,data=ad);omnibus_p<-kr$p.value;test_name<-"Kruskal-Wallis"}
+              else{ar<-aov(value~group,data=ad);omnibus_p<-summary(ar)[[1]][["Pr(>F)"]][1];test_name<-"ANOVA"}
+              .el<-if(error_type=="se")"SE"else if(error_type=="ci95")"CI95"else"SD"
+              rtxt<-sprintf("Category %s:\nSummary (mean +/- %s):",cat_val,.el)
+              for(g in groups_with_data){gd<-ad$value[ad$group==g];gd<-gd[!is.na(gd)];ng<-length(gd);if(ng>0){mg<-mean(gd);if(ng>1){sg<-sd(gd);eg<-if(error_type=="se")sg/sqrt(ng)else if(error_type=="ci95")qt(0.975,df=ng-1)*sg/sqrt(ng)else sg;rtxt<-paste0(rtxt,sprintf("\n  %s: n=%d, mean=%.4g, %s=%.4g",g,ng,mg,.el,eg))}else rtxt<-paste0(rtxt,sprintf("\n  %s: n=%d, mean=%.4g",g,ng,mg))}}
+              if(length(normality_text)>0)rtxt<-paste0(rtxt,"\nNormality (Shapiro-Wilk):\n",paste(normality_text,collapse="\n"))
+              asig<-if(!is.na(omnibus_p)){if(omnibus_p<0.001)"***"else if(omnibus_p<0.01)"**"else if(omnibus_p<0.05)"*"else"ns"}else"ns"
+              rtxt<-paste0(rtxt,"\n",test_name," p=",sprintf("%.4f",omnibus_p)," (",asig,")")
+              if(!is.na(omnibus_p)&&omnibus_p<0.05){
+                posthoc_summary<-NULL
+                if(test_to_use=="kruskal"){
+                  ph<-tryCatch({if(!requireNamespace("dunn.test",quietly=TRUE))webr::install("dunn.test");library(dunn.test);dr<-dunn.test(ad$value,ad$group,method=if(selected_posthoc_test=="dunn_holm")"holm"else"bonferroni");data.frame(Comparison=dr$comparisons,P.adj=dr$P.adjusted,stringsAsFactors=FALSE)},error=function(e)NULL)
+                  if(!is.null(ph)){pt<-c();for(i in 1:nrow(ph)){pa<-ph$P.adj[i];sl<-if(!is.na(pa))get_sig_symbol(pa)else"ns";pt<-c(pt,sprintf("  %s: p=%.4f (%s)",ph$Comparison[i],ifelse(is.na(pa),1,pa),sl));if((comparison_mode=="significant"&&sl!="ns")||comparison_mode=="all"){cp<-strsplit(ph$Comparison[i]," - ")[[1]];if(length(cp)==2)bracket_data<-rbind(bracket_data,data.frame(group1=cp[1],group2=cp[2],p.signif=sl,x.position=cat_index,y.position=NA,stringsAsFactors=FALSE))}};rtxt<-paste0(rtxt,"\nPost-hoc (Dunn):\n",paste(pt,collapse="\n"))}
+                } else {
+                  pw_method<-if(selected_posthoc_test=="bonferroni")"bonferroni"else if(selected_posthoc_test=="holm")"holm"else NULL
+                  if(selected_posthoc_test=="tukey"){tuk<-tryCatch(TukeyHSD(ar),error=function(e)NULL);if(!is.null(tuk))posthoc_summary<-tuk$group}
+                  else if(!is.null(pw_method)){pw<-tryCatch(pairwise.t.test(ad$value,ad$group,p.adjust.method=pw_method),error=function(e)NULL);if(!is.null(pw)){gs<-levels(ad$group);comps<-combn(gs,2,simplify=FALSE);pn<-c();dv<-c();pv<-c();for(comp in comps){g1<-comp[1];g2<-comp[2];ri<-which(rownames(pw$p.value)==g1);ci<-which(colnames(pw$p.value)==g2);pval<-if(length(ri)>0&&length(ci)>0)pw$p.value[ri,ci]else{ri2<-which(rownames(pw$p.value)==g2);ci2<-which(colnames(pw$p.value)==g1);if(length(ri2)>0&&length(ci2)>0)pw$p.value[ri2,ci2]else NA};pn<-c(pn,paste0(g2,"-",g1));dv<-c(dv,mean(ad$value[ad$group==g2],na.rm=TRUE)-mean(ad$value[ad$group==g1],na.rm=TRUE));pv<-c(pv,pval)};posthoc_summary<-data.frame(diff=dv,lwr=rep(NA,length(dv)),upr=rep(NA,length(dv)),"p adj"=pv,row.names=pn,check.names=FALSE)}}
+                  if(!is.null(posthoc_summary)){pt<-c();for(i in 1:nrow(posthoc_summary)){pa<-posthoc_summary[i,"p adj"];sl<-if(!is.na(pa))get_sig_symbol(pa)else"ns";cn<-rownames(posthoc_summary)[i];pt<-c(pt,sprintf("  %s: p=%.4f (%s)",cn,ifelse(is.na(pa),1,pa),sl));if((comparison_mode=="significant"&&sl!="ns")||comparison_mode=="all"){cp<-strsplit(cn,"-")[[1]];if(length(cp)==2)bracket_data<-rbind(bracket_data,data.frame(group1=cp[2],group2=cp[1],p.signif=sl,x.position=cat_index,y.position=NA,stringsAsFactors=FALSE))}};rtxt<-paste0(rtxt,sprintf("\nPost-hoc (%s):\n",selected_posthoc_test),paste(pt,collapse="\n"))}
+                }
+              }
+              stat_text_results<-c(stat_text_results,rtxt)
+              max_val<-max(data_at_cat$value,na.rm=TRUE); na_rows<-which(is.na(bracket_data$y.position)&bracket_data$x.position==cat_index)
+              for(bi in seq_along(na_rows))bracket_data$y.position[na_rows[bi]]<-max_val*1.20+(bi-1)*max_val*0.12
+            }
+          }
+
+          if (nrow(bracket_data) > 0) {
+            unique_grps<-levels(droplevels(plot_data$group)); n_grps<-length(unique_grps)
+            bracket_data$xmin<-NA_real_; bracket_data$xmax<-NA_real_
+            for(i in 1:nrow(bracket_data)){if(!is.na(bracket_data$group1[i])&&!is.na(bracket_data$group2[i])){ci<-bracket_data$x.position[i];g1i<-which(unique_grps==bracket_data$group1[i]);g2i<-which(unique_grps==bracket_data$group2[i]);if(length(g1i)>0&&length(g2i)>0){g1x<-ci+(g1i-1-(n_grps-1)/2)*(dodge_width/n_grps);g2x<-ci+(g2i-1-(n_grps-1)/2)*(dodge_width/n_grps);bracket_data$xmin[i]<-min(g1x,g2x);bracket_data$xmax[i]<-max(g1x,g2x)}}}
+            bracket_export_data<<-bracket_data; v_just<-ggpubr_vjust-symbol_gap+1.2
+            asterisk_data<-bracket_data[bracket_data$p.signif!="ns",]; ns_data<-bracket_data[bracket_data$p.signif=="ns",]
+            if (show_brackets) {
+              if(nrow(asterisk_data)>0) p<-p+stat_pvalue_manual(asterisk_data,label="p.signif",xmin="xmin",xmax="xmax",y.position="y.position",size=sato_symbol_size,size.line=ggpubr_line_size,tip.length=ggpubr_tip_length,vjust=v_just,hjust=0.5,step.increase=0,bracket.nudge.y=0,bracket.shorten=0,remove.bracket=FALSE)
+              if(nrow(ns_data)>0) p<-p+stat_pvalue_manual(ns_data,label="p.signif",xmin="xmin",xmax="xmax",y.position="y.position",size=sato_symbol_size*0.7,size.line=ggpubr_line_size,tip.length=ggpubr_tip_length,vjust=v_just-0.5,hjust=0.5,step.increase=0,bracket.nudge.y=0,bracket.shorten=0,remove.bracket=FALSE)
+            } else {
+              for(i in seq_len(nrow(bracket_data))){if(!is.na(bracket_data$xmin[i])&&!is.na(bracket_data$xmax[i])){x_mid<-(bracket_data$xmin[i]+bracket_data$xmax[i])/2;sym<-bracket_data$p.signif[i];is_ns<-sym=="ns";sz<-if(is_ns)sato_symbol_size*0.7 else sato_symbol_size;vj<-if(is_ns)v_just-0.5 else v_just;p<-p+annotate("text",x=x_mid,y=bracket_data$y.position[i],label=sym,size=sz,vjust=vj,hjust=0.5)}}
+            }
+          }
+          grouped_bar_stat_results<<-if(length(stat_text_results)>0)paste(stat_text_results,collapse="\n\n")else""
+        }, error=function(e){grouped_bar_stat_results<<-paste(grouped_bar_stat_results,"\nERROR in statistical analysis:",e$message)})
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -15139,7 +17327,7 @@ async function initWebR() {
                                        title_text="Grouped Violin Plot with Dots", x_text="Category", y_text="Value",
                                        show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
                                        x_scale="linear", y_scale="linear",
-                                       theme_name="minimal",
+                                       theme_name="bw",
                                        x_axis_rotation=0, y_axis_rotation=0,
                                        x_axis_hjust=0.5, x_axis_vjust=0.5,
                                        y_axis_hjust=0.5, y_axis_vjust=0.5,
@@ -15147,7 +17335,8 @@ async function initWebR() {
                                        ggpubr_line_size=1.0, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
                                        comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
                                        selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7,
-                                       stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns") {
+                                       stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
+                                       error_type="sd") {
 
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
@@ -15427,15 +17616,26 @@ async function initWebR() {
                   # Determine significance symbol using helper function
                   sig_label <- get_sig_symbol(p_val)
 
-                  # Store result text for UI with proper order: Category -> Group Stats -> Normality -> Variance -> Test result
+                  # Store result text for UI with proper order: Category -> Summary -> Normality -> Variance -> Test result
                   result_text <- sprintf("Category %s:", cat_val)
 
-                  # Add group statistics (n, mean, sd) for each group
-                  result_text <- paste0(result_text, "\\nGroup Statistics:")
+                  # Add group statistics (n, mean, SD/SE/CI95) for each group
+                  .err_label_2g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_2g))
                   for (g in groups_with_data) {
-                    g_data <- plot_data[plot_data$category == cat_val & plot_data$group == g, "value"]
-                    result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.2f, sd=%.2f",
-                                          g, length(g_data), mean(g_data, na.rm=TRUE), sd(g_data, na.rm=TRUE)))
+                    g_data <- as.numeric(plot_data[plot_data$category == cat_val & plot_data$group == g, "value"])
+                    g_data <- g_data[!is.na(g_data)]
+                    n_g2 <- length(g_data)
+                    if (n_g2 > 0) {
+                      mean_g2 <- mean(g_data)
+                      if (n_g2 > 1) {
+                        sd_g2 <- sd(g_data)
+                        err_g2 <- if (error_type == "se") sd_g2 / sqrt(n_g2) else if (error_type == "ci95") qt(0.975, df=n_g2-1) * sd_g2 / sqrt(n_g2) else sd_g2
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g2, mean_g2, .err_label_2g, err_g2))
+                      } else {
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g2, mean_g2))
+                      }
+                    }
                   }
 
                   # Add normality testing results
@@ -15573,8 +17773,26 @@ async function initWebR() {
 
                 cat("  ", test_name, "p-value:", omnibus_p, "\\n")
 
-                # Build result text - ORDER: Normality, ANOVA, Post-hoc
+                # Build result text - ORDER: Summary, Normality, ANOVA, Post-hoc
                 result_text <- sprintf("Category %s:", cat_val)
+                # Add descriptive statistics
+                .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
+                for (g in groups_with_data) {
+                  g_data <- anova_data$value[anova_data$group == g]
+                  g_data <- g_data[!is.na(g_data)]
+                  n_g3 <- length(g_data)
+                  if (n_g3 > 0) {
+                    mean_g3 <- mean(g_data)
+                    if (n_g3 > 1) {
+                      sd_g3 <- sd(g_data)
+                      err_g3 <- if (error_type == "se") sd_g3 / sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1) * sd_g3 / sqrt(n_g3) else sd_g3
+                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
+                    } else {
+                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
+                    }
+                  }
+                }
                 if (length(normality_text) > 0) {
                   result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
                 }
@@ -15602,7 +17820,8 @@ async function initWebR() {
                       }
                       library(dunn.test)
 
-                      dunn_result <- dunn.test(anova_data$value, anova_data$group, method = "bonferroni")
+                      dunn_adj <- if (selected_posthoc_test == "dunn_holm") "holm" else "bonferroni"
+                      dunn_result <- dunn.test(anova_data$value, anova_data$group, method = dunn_adj)
 
                       # Format results into a data frame
                       data.frame(
@@ -15854,20 +18073,20 @@ async function initWebR() {
                   if (length(posthoc_text) > 0) {
                     # Add post-hoc test type header with correct test name
                     posthoc_header <- if (test_to_use == "kruskal") {
-                      "Post-hoc pairwise comparisons (Dunn test):"
+                      dunn_adj_label <- if (selected_posthoc_test == "dunn_holm") "Holm" else "Bonferroni"
+                      sprintf("Post-hoc (Dunn test with %s):", dunn_adj_label)
                     } else {
                       # For ANOVA, show the actual selected post-hoc test
-                      # Note: Bonferroni and Holm are p-value adjustments, not post-hoc tests
                       if (selected_posthoc_test == "tukey") {
-                        "Post-hoc pairwise comparisons (Tukey HSD):"
+                        "Post-hoc (Tukey HSD):"
                       } else if (selected_posthoc_test == "bonferroni") {
-                        "Pairwise t-test with Bonferroni correction:"
+                        "Post-hoc (Pairwise t-test with Bonferroni):"
                       } else if (selected_posthoc_test == "holm") {
-                        "Pairwise t-test with Holm correction:"
+                        "Post-hoc (Pairwise t-test with Holm):"
                       } else if (selected_posthoc_test == "dunnett") {
-                        "Post-hoc pairwise comparisons (Dunnett):"
+                        "Post-hoc (Dunnett):"
                       } else {
-                        "Post-hoc pairwise comparisons (Tukey HSD):"
+                        "Post-hoc (Tukey HSD):"
                       }
                     }
                     result_text <- paste0(result_text, "\\n", posthoc_header, "\\n", paste(posthoc_text, collapse="\\n"))
@@ -15892,7 +18111,7 @@ async function initWebR() {
 
           # Calculate unit_step (spacing between brackets) based on symbol size and Y range
           # This matches the logic from regular bar chart
-          unit_step <- y_range * 0.08  # 8% of Y range as default spacing
+          unit_step <- y_range * 0.08 * bracket_step_scale  # 8% of Y range as default spacing
 
           # Group brackets by category for proper stacking
           for (cat_idx in unique(bracket_data$x.position)) {
@@ -16013,48 +18232,58 @@ async function initWebR() {
           bracket_size <- symbol_size
           line_size <- ggpubr_line_size
           tip_length <- ggpubr_tip_length
-          v_just <- ggpubr_vjust + 0.6
+          v_just <- ggpubr_vjust - symbol_gap + 1.2
 
           # Split data by symbol type to apply different sizes (same as regular bar)
           asterisk_data <- bracket_data[bracket_data$p.signif != "ns", ]
           ns_data <- bracket_data[bracket_data$p.signif == "ns", ]
 
-          # Add asterisk symbols with full size
-          if (nrow(asterisk_data) > 0) {
-            p <- p + stat_pvalue_manual(asterisk_data,
-                                       label = "p.signif",
-                                       xmin = "xmin",
-                                       xmax = "xmax",
-                                       y.position = "y.position",
-                                       size = bracket_size,
-                                       size.line = line_size,
-                                       tip.length = tip_length,
-                                       vjust = v_just,
-                                       hjust = 0.5,
-                                       step.increase = 0,
-                                       bracket.nudge.y = 0,
-                                       bracket.shorten = 0,
-                                       remove.bracket = FALSE)
-          }
-
-          # Add n.s. symbols with smaller size and higher position
-          if (nrow(ns_data) > 0) {
-            smaller_size <- bracket_size * 0.7
-            ns_vjust <- v_just - 0.5
-            p <- p + stat_pvalue_manual(ns_data,
-                                       label = "p.signif",
-                                       xmin = "xmin",
-                                       xmax = "xmax",
-                                       y.position = "y.position",
-                                       size = smaller_size,
-                                       size.line = line_size,
-                                       tip.length = tip_length,
-                                       vjust = ns_vjust,
-                                       hjust = 0.5,
-                                       step.increase = 0,
-                                       bracket.nudge.y = 0,
-                                       bracket.shorten = 0,
-                                       remove.bracket = FALSE)
+          # Add asterisk/ns symbols (with or without brackets)
+          if (show_brackets) {
+            if (nrow(asterisk_data) > 0) {
+              p <- p + stat_pvalue_manual(asterisk_data,
+                                         label = "p.signif",
+                                         xmin = "xmin",
+                                         xmax = "xmax",
+                                         y.position = "y.position",
+                                         size = bracket_size,
+                                         size.line = line_size,
+                                         tip.length = tip_length,
+                                         vjust = v_just,
+                                         hjust = 0.5,
+                                         step.increase = 0,
+                                         bracket.nudge.y = 0,
+                                         bracket.shorten = 0,
+                                         remove.bracket = FALSE)
+            }
+            if (nrow(ns_data) > 0) {
+              smaller_size <- bracket_size * 0.7
+              ns_vjust <- v_just - 0.5
+              p <- p + stat_pvalue_manual(ns_data,
+                                         label = "p.signif",
+                                         xmin = "xmin",
+                                         xmax = "xmax",
+                                         y.position = "y.position",
+                                         size = smaller_size,
+                                         size.line = line_size,
+                                         tip.length = tip_length,
+                                         vjust = ns_vjust,
+                                         hjust = 0.5,
+                                         step.increase = 0,
+                                         bracket.nudge.y = 0,
+                                         bracket.shorten = 0,
+                                         remove.bracket = FALSE)
+            }
+          } else {
+            for (i in seq_len(nrow(bracket_data))) {
+              if (!is.na(bracket_data$xmin[i]) && !is.na(bracket_data$xmax[i])) {
+                x_mid <- (bracket_data$xmin[i] + bracket_data$xmax[i]) / 2
+                sym <- bracket_data$p.signif[i]; is_ns <- sym == "ns"
+                sz <- if (is_ns) bracket_size * 0.7 else bracket_size
+                vj <- if (is_ns) v_just - 0.5 else v_just
+                p <- p + annotate("text", x = x_mid, y = bracket_data$y.position[i], label = sym, size = sz, vjust = vj, hjust = 0.5)
+              }
+            }
           }
         }
 
@@ -16089,19 +18318,21 @@ async function initWebR() {
     # IC50 Dose-Response curve fitting function
     sato_ic50 <- function(dat, x_col=1, y_col=2,
                           curve_color="#2563eb", curve_width=1.5,
-                          point_size=3, point_color="#1f2937", point_alpha=1,
-                          ic50_line_color="#dc2626",
-                          show_ic50_value=TRUE, show_ic50_line=TRUE, show_confidence_band=FALSE,
-                          data_display="all_points",
+                          point_size=3, point_shape=16, point_color="#1f2937", point_alpha=1,
+                          ic50_line_color="#dc2626", ic50_line_width=0.8, ic50_line_alpha=1,
+                          ic50_half_line_color="#808080", ic50_half_line_width=0.5, ic50_half_line_alpha=1,
+                          show_ic50_value=TRUE, show_ic50_line=TRUE, show_half_max_line=FALSE, show_confidence_band=FALSE,
+                          data_display="all_points", fitting_method="drc",
                           target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
                           title_size=14, x_axis_title_size=12, y_axis_title_size=12,
                           x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
                           title_text="IC50 Dose-Response", x_text="Concentration", y_text="Response (%)",
                           show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
-                          theme_name="minimal",
+                          theme_name="bw",
                           x_axis_rotation=0, y_axis_rotation=0,
                           x_axis_hjust=0.5, x_axis_vjust=0.5,
-                          y_axis_hjust=0.5, y_axis_vjust=0.5) {
+                          y_axis_hjust=0.5, y_axis_vjust=0.5,
+                          x_scale="log10", x_is_log10=FALSE, show_log10_labels=FALSE, use_decimal_labels=TRUE) {
 
       # Prepare data
       plot_data <- data.frame(
@@ -16109,70 +18340,124 @@ async function initWebR() {
         response = as.numeric(dat[[y_col]])
       )
       plot_data <- plot_data[complete.cases(plot_data), ]
+
+      # If X values are log10-transformed, back-transform to linear for drc fitting
+      if (x_is_log10) {
+        cat("X values are log10-transformed — back-transforming to linear scale for fitting\\n")
+        plot_data$conc_original <- plot_data$conc  # keep original for axis display
+        plot_data$conc <- 10^plot_data$conc
+      }
       plot_data <- plot_data[plot_data$conc > 0, ]  # Remove zero/negative concentrations for log scale
+
+      if (nrow(plot_data) == 0) {
+        stop("No valid data points after filtering. Check that: (1) X column contains concentration values (not text), (2) Y column contains response values, and (3) if X values are log10-transformed, the 'X values are log10-transformed' checkbox is checked.")
+      }
 
       cat("IC50 Analysis: ", nrow(plot_data), " data points\\n")
       cat("Data display mode: ", data_display, "\\n")
       cat("Concentration range: ", min(plot_data$conc), " - ", max(plot_data$conc), "\\n")
       cat("Response range: ", min(plot_data$response), " - ", max(plot_data$response), "\\n")
 
-      # 4-parameter logistic model (4PL)
-      # y = Bottom + (Top - Bottom) / (1 + (x/IC50)^Hill)
+      # Dose-response model fitting
       ic50_value <- NA
       fit <- NULL
       fit_success <- FALSE
 
-      tryCatch({
-        # Initial parameter estimates
-        bottom_init <- min(plot_data$response)
-        top_init <- max(plot_data$response)
-        ic50_init <- median(plot_data$conc)
-        hill_init <- 1
-
-        # Try fitting with nls
-        fit <- nls(
-          response ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
-          data = plot_data,
-          start = list(Bottom = bottom_init, Top = top_init, IC50 = ic50_init, Hill = hill_init),
-          algorithm = "port",
-          lower = c(0, 0, min(plot_data$conc)/10, 0.1),
-          upper = c(max(plot_data$response), max(plot_data$response)*1.5, max(plot_data$conc)*10, 10),
-          control = list(maxiter = 500, warnOnly = TRUE)
-        )
-
-        ic50_value <- coef(fit)["IC50"]
-        fit_success <- TRUE
-        cat("IC50 fitted successfully: ", ic50_value, "\\n")
-
-      }, error = function(e) {
-        cat("4PL fitting failed:", e$message, "\\n")
-        cat("Trying simpler model...\\n")
-      })
-
-      # If 4PL fails, try 3-parameter model (fixed Bottom=0)
-      if (!fit_success) {
+      if (fitting_method == "drc") {
+        # drc: 4-parameter log-logistic (LL.4) — most robust, no manual start values needed
+        cat("Fitting method: drc LL.4 (4-parameter log-logistic)\\n")
+        if (!requireNamespace("drc", quietly = TRUE)) webr::install("drc")
+        library(drc)
         tryCatch({
+          fit <- drm(response ~ conc, data = plot_data, fct = LL.4())
+          ic50_value <- ED(fit, 50, display = FALSE)[1, "Estimate"]
+          fit_success <- TRUE
+          if (x_is_log10) {
+            cat("IC50 (drc LL.4) =", ic50_value, "(linear) = log10:", log10(ic50_value), "\\n")
+          } else {
+            cat("IC50 (drc LL.4) =", ic50_value, "\\n")
+          }
+        }, error = function(e) {
+          cat("drc fitting failed:", e$message, "\\n")
+        })
+
+      } else {
+        # Manual 4PL: Levenberg-Marquardt (nlsLM) or Gauss-Newton (nls)
+        use_nlsLM <- fitting_method == "nlsLM" && requireNamespace("minpack.lm", quietly = TRUE)
+        if (use_nlsLM) {
+          cat("Fitting method: Levenberg-Marquardt (minpack.lm::nlsLM)\\n")
+        } else {
+          if (fitting_method == "nlsLM") cat("minpack.lm not available, falling back to Gauss-Newton\\n")
+          cat("Fitting method: Gauss-Newton (nls port algorithm)\\n")
+        }
+
+        tryCatch({
+          bottom_init <- min(plot_data$response)
           top_init <- max(plot_data$response)
           ic50_init <- median(plot_data$conc)
           hill_init <- 1
 
-          fit <- nls(
-            response ~ Top / (1 + (conc / IC50)^Hill),
-            data = plot_data,
-            start = list(Top = top_init, IC50 = ic50_init, Hill = hill_init),
-            algorithm = "port",
-            lower = c(0, min(plot_data$conc)/10, 0.1),
-            upper = c(max(plot_data$response)*1.5, max(plot_data$conc)*10, 10),
-            control = list(maxiter = 500, warnOnly = TRUE)
-          )
-
+          if (use_nlsLM) {
+            fit <- minpack.lm::nlsLM(
+              response ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
+              data = plot_data,
+              start = list(Bottom = bottom_init, Top = top_init, IC50 = ic50_init, Hill = hill_init),
+              lower = c(0, 0, min(plot_data$conc)/10, 0.1),
+              upper = c(max(plot_data$response), max(plot_data$response)*1.5, max(plot_data$conc)*10, 10),
+              control = minpack.lm::nls.lm.control(maxiter = 500)
+            )
+          } else {
+            fit <- nls(
+              response ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
+              data = plot_data,
+              start = list(Bottom = bottom_init, Top = top_init, IC50 = ic50_init, Hill = hill_init),
+              algorithm = "port",
+              lower = c(0, 0, min(plot_data$conc)/10, 0.1),
+              upper = c(max(plot_data$response), max(plot_data$response)*1.5, max(plot_data$conc)*10, 10),
+              control = list(maxiter = 500, warnOnly = TRUE)
+            )
+          }
           ic50_value <- coef(fit)["IC50"]
           fit_success <- TRUE
-          cat("3PL IC50 fitted: ", ic50_value, "\\n")
-
+          cat("IC50 fitted successfully: ", ic50_value, "\\n")
         }, error = function(e) {
-          cat("3PL fitting also failed:", e$message, "\\n")
+          cat("4PL fitting failed:", e$message, "\\n")
+          cat("Trying 3PL model...\\n")
         })
+
+        # If 4PL fails, try 3-parameter model (fixed Bottom=0)
+        if (!fit_success) {
+          tryCatch({
+            top_init <- max(plot_data$response)
+            ic50_init <- median(plot_data$conc)
+            hill_init <- 1
+            if (use_nlsLM) {
+              fit <- minpack.lm::nlsLM(
+                response ~ Top / (1 + (conc / IC50)^Hill),
+                data = plot_data,
+                start = list(Top = top_init, IC50 = ic50_init, Hill = hill_init),
+                lower = c(0, min(plot_data$conc)/10, 0.1),
+                upper = c(max(plot_data$response)*1.5, max(plot_data$conc)*10, 10),
+                control = minpack.lm::nls.lm.control(maxiter = 500)
+              )
+            } else {
+              fit <- nls(
+                response ~ Top / (1 + (conc / IC50)^Hill),
+                data = plot_data,
+                start = list(Top = top_init, IC50 = ic50_init, Hill = hill_init),
+                algorithm = "port",
+                lower = c(0, min(plot_data$conc)/10, 0.1),
+                upper = c(max(plot_data$response)*1.5, max(plot_data$conc)*10, 10),
+                control = list(maxiter = 500, warnOnly = TRUE)
+              )
+            }
+            ic50_value <- coef(fit)["IC50"]
+            fit_success <- TRUE
+            cat("3PL IC50 fitted: ", ic50_value, "\\n")
+          }, error = function(e) {
+            cat("3PL fitting also failed:", e$message, "\\n")
+          })
+        }
       }
 
       # Generate curve data for plotting
@@ -16180,7 +18465,7 @@ async function initWebR() {
       if (fit_success && !is.null(fit)) {
         conc_seq <- 10^seq(log10(min(plot_data$conc)), log10(max(plot_data$conc)), length.out = 500)
         curve_data <- data.frame(conc = conc_seq)
-        curve_data$response <- predict(fit, newdata = curve_data)
+        curve_data$response <- as.numeric(predict(fit, newdata = data.frame(conc = conc_seq)))
       }
 
       # Create base plot based on data_display mode
@@ -16207,14 +18492,14 @@ async function initWebR() {
         p <- ggplot(summary_data, aes(x = conc, y = mean)) +
           geom_errorbar(aes(ymin = mean - error, ymax = mean + error),
                        width = 0.1, linewidth = 0.5, color = point_color) +
-          geom_point(size = point_size, color = point_color, alpha = point_alpha)
+          geom_point(size = point_size, shape = point_shape, color = point_color, alpha = point_alpha)
 
         # Use summary data for curve fitting as well (weighted by n)
         fit_data <- plot_data  # Still use all data for fitting
       } else {
         # Show all data points
         p <- ggplot(plot_data, aes(x = conc, y = response)) +
-          geom_point(size = point_size, color = point_color, alpha = point_alpha)
+          geom_point(size = point_size, shape = point_shape, color = point_color, alpha = point_alpha)
         fit_data <- plot_data
       }
 
@@ -16241,23 +18526,43 @@ async function initWebR() {
 
       # Add IC50 reference lines if requested and IC50 was calculated
       if (show_ic50_line && fit_success && !is.na(ic50_value)) {
-        # Calculate response at IC50 (should be ~50% between Bottom and Top)
-        y_at_ic50 <- predict(fit, newdata = data.frame(conc = ic50_value))
-
         p <- p +
-          geom_vline(xintercept = ic50_value, linetype = "dashed", color = ic50_line_color, linewidth = 0.8) +
-          geom_hline(yintercept = y_at_ic50, linetype = "dashed", color = "gray50", linewidth = 0.5)
+          geom_vline(xintercept = ic50_value, linetype = "dashed", color = ic50_line_color,
+                     linewidth = ic50_line_width, alpha = ic50_line_alpha)
+      }
+      if (show_half_max_line) {
+        p <- p + geom_hline(yintercept = 50, linetype = "dashed", color = ic50_half_line_color,
+                            linewidth = ic50_half_line_width, alpha = ic50_half_line_alpha)
       }
 
       # Add IC50 value annotation if requested
       if (show_ic50_value && fit_success && !is.na(ic50_value)) {
-        ic50_label <- sprintf("IC50 = %.3g", ic50_value)
+        if (x_is_log10) {
+          ic50_label <- sprintf("IC50 = %.3g  (log10 = %.2f)", ic50_value, log10(ic50_value))
+        } else {
+          ic50_label <- sprintf("IC50 = %.3g", ic50_value)
+        }
         p <- p + annotate("text", x = max(plot_data$conc) * 0.7, y = max(plot_data$response) * 0.95,
                          label = ic50_label, hjust = 1, vjust = 1, size = 5, fontface = "bold")
       }
 
-      # Log scale for x-axis
-      p <- p + scale_x_log10()
+      # Apply x-axis scale
+      if (x_scale == "log10") {
+        if (show_log10_labels) {
+          x_log_min <- floor(log10(min(plot_data$conc)))
+          x_log_max <- ceiling(log10(max(plot_data$conc)))
+          x_breaks_log <- 10^(seq(x_log_min, x_log_max, by = 1))
+          p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)
+        } else if (use_decimal_labels) {
+          p <- p + scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#"))
+          p <- p + annotation_logticks(sides = "b")
+        } else {
+          p <- p + scale_x_log10()
+          p <- p + annotation_logticks(sides = "b")
+        }
+      } else if (x_scale == "log2") {
+        p <- p + scale_x_continuous(trans = "log2")
+      }
 
       # Store IC50 results globally for export to Excel
       ic50_result <<- ifelse(fit_success, ic50_value, NA)
@@ -16265,7 +18570,17 @@ async function initWebR() {
       # Store curve data for export
       if (fit_success && !is.null(curve_data)) {
         ic50_curve_data <<- curve_data
-        ic50_model_params <<- if (!is.null(fit)) as.list(coef(fit)) else list()
+        if (fitting_method == "drc" && !is.null(fit)) {
+          params <- coef(fit)
+          ic50_model_params <<- list(
+            "Hill slope (b)"  = unname(params[grepl("^b", names(params))][1]),
+            "Bottom (c)"      = unname(params[grepl("^c", names(params))][1]),
+            "Top (d)"         = unname(params[grepl("^d", names(params))][1]),
+            "IC50 / ED50 (e)" = unname(params[grepl("^e", names(params))][1])
+          )
+        } else {
+          ic50_model_params <<- if (!is.null(fit)) as.list(coef(fit)) else list()
+        }
         cat("Stored curve data with", nrow(curve_data), "points for export\\n")
       } else {
         ic50_curve_data <<- NULL
@@ -16282,6 +18597,280 @@ async function initWebR() {
                       x_axis_hjust, x_axis_vjust,
                       y_axis_hjust, y_axis_vjust,
                       FALSE, "auto")  # No statistics for IC50 plot
+    }
+
+    sato_ic50_grouped <- function(dat, group_col=1, x_col=2, y_col=3,
+                                  group_name="Group",
+                                  line_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#59A14F", "#EDC948"),
+                                  curve_width=1.5,
+                                  point_size=3, point_shapes=c(16,17,15,18,1,2), point_alpha=1,
+                                  show_ic50_line=FALSE, show_half_max_line=FALSE,
+                                  ic50_line_color="#dc2626", ic50_line_width=0.8, ic50_line_alpha=1,
+                                  ic50_half_line_color="#808080", ic50_half_line_width=0.5, ic50_half_line_alpha=1,
+                                  data_display="all_points", fitting_method="drc",
+                                  target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
+                                  title_size=14, x_axis_title_size=12, y_axis_title_size=12,
+                                  x_axis_text_size=10, y_axis_text_size=10, legend_text_size=11,
+                                  title_text="Grouped IC50 Dose-Response", x_text="Concentration", y_text="Response (%)",
+                                  show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
+                                  theme_name="bw",
+                                  x_axis_rotation=0, y_axis_rotation=0,
+                                  x_axis_hjust=0.5, x_axis_vjust=0.5,
+                                  y_axis_hjust=0.5, y_axis_vjust=0.5,
+                                  x_scale="log10", x_is_log10=FALSE, show_log10_labels=FALSE, use_decimal_labels=TRUE) {
+
+      # Resolve actual group column name for legend title
+      col_names <- names(dat)
+      actual_group_name <- if (!is.null(col_names) && length(col_names) >= group_col &&
+                               !grepl("^V[0-9]+$", col_names[group_col])) {
+        col_names[group_col]
+      } else {
+        group_name
+      }
+
+      # Prepare data
+      plot_data <- data.frame(
+        group = as.character(dat[[group_col]]),
+        conc  = as.numeric(dat[[x_col]]),
+        resp  = as.numeric(dat[[y_col]])
+      )
+      plot_data <- plot_data[complete.cases(plot_data), ]
+
+      # If X values are log10-transformed, back-transform to linear for drc fitting
+      if (x_is_log10) {
+        cat("X values are log10-transformed — back-transforming to linear scale for fitting\\n")
+        plot_data$conc <- 10^plot_data$conc
+      }
+      plot_data <- plot_data[plot_data$conc > 0, ]
+
+      if (nrow(plot_data) == 0) {
+        stop("No valid data points after filtering. Check that: (1) Group column contains group labels, (2) X column contains concentration values, (3) Y column contains response values, and (4) if X values are log10-transformed, check the 'X values are log10-transformed' checkbox.")
+      }
+
+      groups   <- unique(plot_data$group)
+      n_groups <- length(groups)
+      plot_data$group <- factor(plot_data$group, levels = groups)
+
+      cat("Grouped IC50: ", n_groups, "groups\\n")
+      cat("Groups:", paste(groups, collapse = ", "), "\\n")
+
+      ic50_values <- rep(NA_real_, n_groups)
+      names(ic50_values) <- groups
+      all_curves  <- NULL
+      conc_seq    <- 10^seq(log10(min(plot_data$conc)), log10(max(plot_data$conc)), length.out = 500)
+
+      if (fitting_method == "drc") {
+        # drc: fit all groups simultaneously with curveid — most robust
+        cat("Fitting method: drc LL.4 (4-parameter log-logistic)\\n")
+        if (!requireNamespace("drc", quietly = TRUE)) webr::install("drc")
+        library(drc)
+        tryCatch({
+          fit_drc <- drm(resp ~ conc, curveid = group, data = plot_data, fct = LL.4())
+
+          # Extract IC50 for each group (row names: "e:GroupName:50")
+          ed_results <- ED(fit_drc, 50, display = FALSE)
+          for (grp in groups) {
+            row_name <- paste0("e:", grp, ":50")
+            if (row_name %in% rownames(ed_results)) {
+              ic50_values[grp] <- ed_results[row_name, "Estimate"]
+              cat("  IC50", grp, "=", ic50_values[grp], "\\n")
+            }
+          }
+
+          # Generate smooth curves
+          curve_rows <- lapply(groups, function(grp) {
+            nd <- data.frame(conc = conc_seq, group = factor(grp, levels = groups))
+            tryCatch(
+              data.frame(group = grp, conc = conc_seq, resp = predict(fit_drc, newdata = nd)),
+              error = function(e) NULL
+            )
+          })
+          all_curves <- do.call(rbind, Filter(Negate(is.null), curve_rows))
+          if (!is.null(all_curves)) all_curves$group <- factor(all_curves$group, levels = groups)
+        }, error = function(e) {
+          cat("drc fitting failed:", e$message, "\\n")
+        })
+
+      } else {
+        # Manual 4PL (fallback to 3PL) per group: nlsLM or nls
+        fit_list <- vector("list", n_groups)
+        names(fit_list) <- groups
+
+        use_nlsLM <- fitting_method == "nlsLM" && requireNamespace("minpack.lm", quietly = TRUE)
+        if (use_nlsLM) {
+          cat("Fitting method: Levenberg-Marquardt (minpack.lm::nlsLM)\\n")
+        } else {
+          if (fitting_method == "nlsLM") cat("minpack.lm not available, falling back to Gauss-Newton\\n")
+          cat("Fitting method: Gauss-Newton (nls port algorithm)\\n")
+        }
+
+        for (i in seq_along(groups)) {
+          grp      <- groups[i]
+          gd       <- plot_data[plot_data$group == grp, ]
+          cat("Fitting", grp, "(n =", nrow(gd), ")\\n")
+
+          bottom_i <- min(gd$resp)
+          top_i    <- max(gd$resp)
+          ic50_i   <- median(gd$conc)
+
+          if (use_nlsLM) {
+            f4 <- tryCatch(minpack.lm::nlsLM(
+              resp ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
+              data = gd,
+              start = list(Bottom = bottom_i, Top = top_i, IC50 = ic50_i, Hill = 1),
+              lower = c(0, 0, min(gd$conc)/10, 0.1),
+              upper = c(max(gd$resp), max(gd$resp)*1.5, max(gd$conc)*10, 10),
+              control = minpack.lm::nls.lm.control(maxiter = 500)
+            ), error = function(e) { cat("  4PL (LM) failed:", e$message, "\\n"); NULL })
+          } else {
+            f4 <- tryCatch(nls(
+              resp ~ Bottom + (Top - Bottom) / (1 + (conc / IC50)^Hill),
+              data = gd,
+              start = list(Bottom = bottom_i, Top = top_i, IC50 = ic50_i, Hill = 1),
+              algorithm = "port",
+              lower = c(0, 0, min(gd$conc)/10, 0.1),
+              upper = c(max(gd$resp), max(gd$resp)*1.5, max(gd$conc)*10, 10),
+              control = list(maxiter = 500, warnOnly = TRUE)
+            ), error = function(e) { cat("  4PL failed:", e$message, "\\n"); NULL })
+          }
+
+          if (!is.null(f4)) {
+            fit_list[[grp]]    <- f4
+            ic50_values[[grp]] <- coef(f4)["IC50"]
+            cat("  IC50 (4PL) =", ic50_values[[grp]], "\\n")
+          } else {
+            if (use_nlsLM) {
+              f3 <- tryCatch(minpack.lm::nlsLM(
+                resp ~ Top / (1 + (conc / IC50)^Hill),
+                data = gd,
+                start = list(Top = top_i, IC50 = ic50_i, Hill = 1),
+                lower = c(0, min(gd$conc)/10, 0.1),
+                upper = c(max(gd$resp)*1.5, max(gd$conc)*10, 10),
+                control = minpack.lm::nls.lm.control(maxiter = 500)
+              ), error = function(e) { cat("  3PL (LM) also failed:", e$message, "\\n"); NULL })
+            } else {
+              f3 <- tryCatch(nls(
+                resp ~ Top / (1 + (conc / IC50)^Hill),
+                data = gd,
+                start = list(Top = top_i, IC50 = ic50_i, Hill = 1),
+                algorithm = "port",
+                lower = c(0, min(gd$conc)/10, 0.1),
+                upper = c(max(gd$resp)*1.5, max(gd$conc)*10, 10),
+                control = list(maxiter = 500, warnOnly = TRUE)
+              ), error = function(e) { cat("  3PL also failed:", e$message, "\\n"); NULL })
+            }
+            if (!is.null(f3)) {
+              fit_list[[grp]]    <- f3
+              ic50_values[[grp]] <- coef(f3)["IC50"]
+              cat("  IC50 (3PL) =", ic50_values[[grp]], "\\n")
+            }
+          }
+        }
+
+        # Generate smooth curves from per-group fits
+        curve_rows <- lapply(seq_along(groups), function(i) {
+          grp <- groups[i]
+          f   <- fit_list[[grp]]
+          if (is.null(f)) return(NULL)
+          data.frame(group = grp, conc = conc_seq,
+                     resp  = predict(f, newdata = data.frame(conc = conc_seq)))
+        })
+        all_curves <- do.call(rbind, Filter(Negate(is.null), curve_rows))
+        if (!is.null(all_curves)) {
+          all_curves$group <- factor(all_curves$group, levels = groups)
+        }
+      }
+
+      # Color and shape mapping
+      color_vec         <- line_colors[seq_along(groups)]
+      names(color_vec)  <- groups
+      shape_vec         <- point_shapes[seq_along(groups)]
+      names(shape_vec)  <- groups
+
+      # Build base plot
+      if (data_display == "mean_sd" || data_display == "mean_se") {
+        sm <- aggregate(resp ~ group + conc, data = plot_data, FUN = function(x) {
+          c(mean = mean(x), sd = sd(x), se = sd(x)/sqrt(length(x)))
+        })
+        sm <- do.call(data.frame, sm)
+        colnames(sm) <- c("group", "conc", "mean", "sd", "se")
+        sm$group <- factor(sm$group, levels = groups)
+        sm$error <- if (data_display == "mean_sd") sm$sd else sm$se
+
+        p <- ggplot(sm, aes(x = conc, y = mean, color = group, shape = group)) +
+          geom_errorbar(aes(ymin = mean - error, ymax = mean + error),
+                        width = 0.1, linewidth = 0.5) +
+          geom_point(size = point_size, alpha = point_alpha)
+      } else {
+        p <- ggplot(plot_data, aes(x = conc, y = resp, color = group, shape = group)) +
+          geom_point(size = point_size, alpha = point_alpha)
+      }
+
+      # Add fitted curves
+      if (!is.null(all_curves) && nrow(all_curves) > 0) {
+        p <- p + geom_line(data = all_curves,
+                           aes(x = conc, y = resp, color = group),
+                           linewidth = curve_width)
+      }
+
+      p <- p + scale_color_manual(name = actual_group_name, values = color_vec) +
+               scale_shape_manual(name = actual_group_name, values = shape_vec)
+      if (x_scale == "log10") {
+        if (show_log10_labels) {
+          x_log_min <- floor(log10(min(plot_data$conc)))
+          x_log_max <- ceiling(log10(max(plot_data$conc)))
+          x_breaks_log <- 10^(seq(x_log_min, x_log_max, by = 1))
+          p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)
+        } else if (use_decimal_labels) {
+          p <- p + scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#"))
+          p <- p + annotation_logticks(sides = "b")
+        } else {
+          p <- p + scale_x_log10()
+          p <- p + annotation_logticks(sides = "b")
+        }
+      } else if (x_scale == "log2") {
+        p <- p + scale_x_continuous(trans = "log2")
+      }
+
+      # Add IC50 reference lines per group
+      if (show_ic50_line) {
+        valid_groups <- names(ic50_values)[!is.na(ic50_values)]
+        for (grp in valid_groups) {
+          p <- p + geom_vline(xintercept = ic50_values[grp], linetype = "dashed",
+                              color = color_vec[grp], linewidth = ic50_line_width, alpha = ic50_line_alpha)
+        }
+      }
+      if (show_half_max_line) {
+        p <- p + geom_hline(yintercept = 50, linetype = "dashed", color = ic50_half_line_color,
+                            linewidth = ic50_half_line_width, alpha = ic50_half_line_alpha)
+      }
+
+      # Store results globally for export
+      ic50_grouped_results <<- data.frame(
+        Group = groups,
+        IC50  = unname(ic50_values),
+        stringsAsFactors = FALSE
+      )
+      cat("\\nIC50 Summary:\\n")
+      print(ic50_grouped_results)
+
+      # Store curve data per group for export
+      if (!is.null(all_curves) && nrow(all_curves) > 0) {
+        ic50_grouped_curve_data <<- all_curves
+      } else {
+        ic50_grouped_curve_data <<- NULL
+      }
+
+      sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
+                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
+                       title_text, x_text, y_text,
+                       show_title, show_x_label, show_y_label,
+                       "linear", "linear",
+                       theme_name,
+                       x_axis_rotation, y_axis_rotation,
+                       x_axis_hjust, x_axis_vjust,
+                       y_axis_hjust, y_axis_vjust,
+                       FALSE, "auto")
     }
   `);
 
@@ -16609,6 +19198,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       case 'bar_grouped_error_dot': return 'Grouped Bar + Dot Plot with Error';
       case 'line': return 'Line Plot';
       case 'ic50_dose_response': return 'Dose-Response Curve';
+      case 'ic50_grouped_dose_response': return 'Grouped Dose-Response';
       default: return 'Chart';
     }
   };
@@ -16660,6 +19250,12 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     console.log("  ⚠️ Using default indices because lastProcessedData not available");
   }
 
+  // Validate: grouped charts must have different Group and X columns
+  if (GROUPED_CHART_TYPES.includes(chartType) && groupColIndex === xColIndex) {
+    setStatus("❌ Error: Group column and X-axis column cannot be the same. Please select different columns for each.");
+    return;
+  }
+
   // For grouped bar chart, we need to get all three column names
   // This will be filled when data is loaded, but we need fallbacks
   const columnNames = {
@@ -16682,6 +19278,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       case 'bar_grouped_error_dot': return selectedYColumn || 'Value';  // With dots, showing individual values
       case 'line': return selectedYColumn || 'Value';
       case 'ic50_dose_response': return selectedYColumn || 'Response (%)';
+      case 'ic50_grouped_dose_response': return selectedYColumn || 'Response (%)';
       default: return selectedYColumn || 'Y';
     }
   };
@@ -16694,6 +19291,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       case 'bar_grouped_error': return selectedXColumn || 'Treatment';  // For grouped data with error
       case 'bar_grouped_error_dot': return selectedXColumn || 'Treatment';  // For grouped data with error and dots
       case 'ic50_dose_response': return selectedXColumn || 'Concentration';
+      case 'ic50_grouped_dose_response': return selectedXColumn || 'Concentration';
       default: return selectedXColumn || 'Value';
     }
   };
@@ -16752,12 +19350,15 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const showYLabel = o.showYLabel ? 'TRUE' : 'FALSE';
   const xScale = o.xScale || 'linear';
   const yScale = o.yScale || 'linear';
-  const themeName = o.theme || 'minimal';
+  const xBreaksMode = o.xBreaksMode || 'auto';
+  const showBrackets = o.showBrackets !== false;
+  const themeName = o.theme || 'bw';
   const dataOrder = o.dataOrder || 'default';
   const customOrderGroup = o.customOrderGroup || '';
   const customOrderCategory = o.customOrderCategory || '';
   const numGroups = o.numGroups || 2;
   const groupColors = o.groupColors || ["#4C78A8", "#E15759", "#57C4AD", "#E9C46A", "#F76C6C", "#A8DADC"];
+  const fillMode = document.querySelector('input[name="fillMode"]:checked')?.value || "single";
   
   // Axis text positioning (with debugging)
   const xAxisRotation = o.xAxisRotation !== undefined ? o.xAxisRotation : 0;
@@ -16801,13 +19402,13 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   // ggpubr statistical bracket parameters (Symbol size uses existing statSymbolSize)
   const statLineSize = Number(o.statLineSize) || 1.0;
   const statTipLength = Number(o.statTipLength) || 0.04;
-  const statVjust = Number(o.statVjust) || -0.3;
+  const symbolGap = (o.symbolGap !== undefined && o.symbolGap !== null) ? Number(o.symbolGap) : 0.6;
+  const bracketSpacing = (o.bracketSpacing !== undefined && o.bracketSpacing !== null) ? Number(o.bracketSpacing) : 1.0;
 
   console.log("🔥 GGPUBR Parameters:", {
     statSymbolSize: statSymbolSize,
     statLineSize: statLineSize,
-    statTipLength: statTipLength,
-    statVjust: statVjust
+    statTipLength: statTipLength
   });
 
   // Comparison mode settings
@@ -16836,15 +19437,29 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const enableIC50Analysis = document.getElementById("enableIC50Analysis")?.checked || false;
   const showIC50Value = document.getElementById("showIC50Value")?.checked ?? true;
   const showIC50Line = document.getElementById("showIC50Line")?.checked ?? true;
+  const showHalfMaxLine = document.getElementById("showHalfMaxLine")?.checked || false;
   const showConfidenceBand = document.getElementById("showConfidenceBand")?.checked || false;
   const ic50CurveColor = document.getElementById("ic50CurveColor")?.value || "#2563eb";
   const ic50CurveWidth = Number(document.getElementById("ic50CurveWidth")?.value) || 1.5;
   const ic50LineColor = document.getElementById("ic50LineColor")?.value || "#dc2626";
+  const ic50LineWidth = Number(document.getElementById("ic50LineWidth")?.value) || 0.8;
+  const ic50LineAlpha = Number(document.getElementById("ic50LineAlpha")?.value) ?? 1;
+  const ic50HalfLineColor = document.getElementById("ic50HalfLineColor")?.value || "#808080";
+  const ic50HalfLineWidth = Number(document.getElementById("ic50HalfLineWidth")?.value) || 0.5;
+  const ic50HalfLineAlpha = Number(document.getElementById("ic50HalfLineAlpha")?.value) ?? 1;
   const ic50PointSize = Number(document.getElementById("ic50PointSize")?.value) || 3;
+  const ic50PointShape = Number(document.getElementById("ic50PointShape")?.value) || 16;
+  const ic50GroupShapes = [1,2,3,4,5,6].map((i, idx) => {
+    return Number(document.getElementById(`ic50GroupShape${i}`)?.value) || [16,17,15,18,1,2][idx];
+  });
   const ic50PointColor = document.getElementById("ic50PointColor")?.value || "#1f2937";
   const ic50PointAlpha = Number(document.getElementById("ic50PointAlpha")?.value) ?? 1;
-  const ic50DataDisplay = document.getElementById("ic50DataDisplay")?.value || "all_points";
-  console.log("IC50 settings:", { enableIC50Analysis, showIC50Value, showIC50Line, showConfidenceBand, ic50CurveColor, ic50CurveWidth, ic50LineColor, ic50PointSize, ic50PointColor, ic50PointAlpha, ic50DataDisplay });
+  const ic50DataDisplay = document.getElementById("ic50DataDisplay")?.value || "mean_sd";
+  const ic50FittingMethod = document.getElementById("ic50FittingMethod")?.value || "drc";
+  const ic50XisLog10 = document.getElementById("ic50XisLog10")?.checked || false;
+  const ic50ShowLog10Labels = document.getElementById("ic50ShowLog10Labels")?.checked || false;
+  const ic50DecimalLabels = document.getElementById("ic50DecimalLabels")?.checked ?? true;
+  console.log("IC50 settings:", { enableIC50Analysis, showIC50Value, showIC50Line, showConfidenceBand, ic50CurveColor, ic50CurveWidth, ic50LineColor, ic50PointSize, ic50PointColor, ic50PointAlpha, ic50DataDisplay, ic50FittingMethod, ic50XisLog10 });
 
   // Convert to JSON strings for R
   const customComparisonsJSON = JSON.stringify(customComparisons);
@@ -16852,7 +19467,21 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
   // Convert JavaScript boolean to R boolean format
   const addStatisticsR = addStatistics ? 'TRUE' : 'FALSE';
-  
+
+  // Axis range limits (null = auto)
+  const xMin = o.xMin !== undefined ? o.xMin : null;
+  const xMax = o.xMax !== undefined ? o.xMax : null;
+  const yMin = o.yMin !== undefined ? o.yMin : null;
+  const yMax = o.yMax !== undefined ? o.yMax : null;
+
+  // Build R limit vectors (NULL means auto, NA means one side is auto)
+  const rXLim = (xMin !== null || xMax !== null)
+    ? `c(${xMin !== null ? xMin : 'NA'}, ${xMax !== null ? xMax : 'NA'})`
+    : 'NULL';
+  const rYLim = (yMin !== null || yMax !== null)
+    ? `c(${yMin !== null ? yMin : 'NA'}, ${yMax !== null ? yMax : 'NA'})`
+    : 'NULL';
+
   // Debug log
   console.log("Axis positioning:", { xAxisRotation, yAxisRotation, xAxisHjust, xAxisVjust, yAxisHjust, yAxisVjust });
   console.log("Statistical analysis:", { addStatistics, statisticalTest, statSymbolSize });
@@ -16943,7 +19572,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     
     # データ確認
     if (!exists("dat") || !is.data.frame(dat) || nrow(dat) == 0) {
-      stop("データが読み込まれていません")
+      stop("No data loaded. Please load data first.")
     }
     
     # データ順序の制御
@@ -17080,6 +19709,11 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     cat("Normalized Font was:", "${effectiveFont}", "\\n")
     cat("Chart type:", "${chartType}", "\\n")
     
+    # User preferences
+    show_brackets <- ${showBrackets ? 'TRUE' : 'FALSE'}
+    symbol_gap <- ${symbolGap}
+    bracket_step_scale <- ${bracketSpacing}
+
     # フォント変数を設定（エスケープ問題回避）
     target_font <- "${rFontName}"
     title_weight <- "${titleWeight}"
@@ -17099,13 +19733,26 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     if (requireNamespace("systemfonts", quietly = TRUE)) {
       cat("systemfonts package available, attempting font registration...\\n")
       tryCatch({
+        # Register plain, bold, italic, and bolditalic so svglite outputs correct styles
+        bold_name       <- paste(target_font, "Bold")
+        italic_name     <- paste(target_font, "Italic")
+        bolditalic_name <- paste(target_font, "Bold Italic")
         systemfonts::register_font(
-          name = target_font,
-          plain = target_font
+          name       = target_font,
+          plain      = target_font,
+          bold       = bold_name,
+          italic     = italic_name,
+          bolditalic = bolditalic_name
         )
-        cat("Font registered successfully\\n")
+        cat("Font registered (plain + bold + italic + bolditalic) successfully\\n")
       }, error = function(e) {
-        cat("Font registration failed (this is normal in WebR):", e$message, "\\n")
+        # Fallback: register plain only
+        tryCatch({
+          systemfonts::register_font(name = target_font, plain = target_font)
+          cat("Font registered (plain only) successfully\\n")
+        }, error = function(e2) {
+          cat("Font registration failed (this is normal in WebR):", e2$message, "\\n")
+        })
       })
     } else {
       cat("systemfonts package not available, using system default\\n")
@@ -17170,7 +19817,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         dat = dat,
         x_col = ${xColIndex},
         y_col = if(ncol(dat) >= ${yColIndex}) ${yColIndex} else NULL,
-        fill = "${fillColor}",
+        fill_colors = ${ fillMode === 'per_category' ? rColorVector : `c("${fillColor}")` },
         color = "${strokeColor}",
         alpha = ${fillAlpha},
         linewidth = ${lineWidth},
@@ -17201,14 +19848,14 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # Add statistics if enabled by user
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=${statVjust}, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
       }
     } else if (chart_type == "box_dot") {
       p <- sato_box_dot(
         dat = dat,
         x_col = ${xColIndex},
         y_col = if(ncol(dat) >= ${yColIndex}) ${yColIndex} else NULL,
-        fill = "${fillColor}",
+        fill_colors = ${ fillMode === 'per_category' ? rColorVector : `c("${fillColor}")` },
         color = "${strokeColor}",
         alpha = ${fillAlpha},
         linewidth = ${lineWidth},
@@ -17243,14 +19890,14 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # Add statistics if enabled by user
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=${statVjust}, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
       }
     } else if (chart_type == "violin") {
       p <- sato_violin(
         dat = dat,
         x_col = ${xColIndex},
         y_col = if(ncol(dat) >= ${yColIndex}) ${yColIndex} else NULL,
-        fill = "${fillColor}",
+        fill_colors = ${ fillMode === 'per_category' ? rColorVector : `c("${fillColor}")` },
         color = "${strokeColor}",
         alpha = ${fillAlpha},
         linewidth = ${lineWidth},
@@ -17281,14 +19928,14 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # ADD STATISTICS FOR VIOLIN (only if enabled)
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=${statVjust}, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
       }
     } else if (chart_type == "violin_dot") {
       p <- sato_violin_dot(
         dat = dat,
         x_col = ${xColIndex},
         y_col = if(ncol(dat) >= ${yColIndex}) ${yColIndex} else NULL,
-        fill = "${fillColor}",
+        fill_colors = ${ fillMode === 'per_category' ? rColorVector : `c("${fillColor}")` },
         color = "${strokeColor}",
         alpha = ${fillAlpha},
         linewidth = ${lineWidth},
@@ -17323,7 +19970,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # ADD STATISTICS FOR VIOLIN_DOT (only if enabled)
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=${statVjust}, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
       }
     } else if (chart_type == "violin_grouped") {
       # Grouped violin chart - requires 3 columns: Group, Category, Value
@@ -17370,13 +20017,18 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         symbol_size = ${statSymbolSize},
         ggpubr_line_size = ${statLineSize},
         ggpubr_tip_length = ${statTipLength},
-        ggpubr_vjust = ${statVjust},
         comparison_mode = "${comparisonMode}",
         custom_comparisons = '${JSON.stringify(customComparisons).replace(/'/g, "\\'")}',
         custom_positions = '${JSON.stringify(customPositions).replace(/'/g, "\\'")}',
         selected_posthoc_test = selected_posthoc_test,
         dunnett_control = dunnett_control,
-        sato_symbol_size = ${statSymbolSize}
+        sato_symbol_size = ${statSymbolSize},
+        stat_symbol_type = "${statSymbolType}",
+        custom_symbol_05 = "${customSymbol05}",
+        custom_symbol_01 = "${customSymbol01}",
+        custom_symbol_001 = "${customSymbol001}",
+        custom_symbol_ns = "${customSymbolNS}",
+        error_type = "${errorBarType}"
       )
     } else if (chart_type == "violin_grouped_dot") {
       # Grouped violin + dot chart - requires 3 columns: Group, Category, Value
@@ -17427,7 +20079,6 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         symbol_size = ${statSymbolSize},
         ggpubr_line_size = ${statLineSize},
         ggpubr_tip_length = ${statTipLength},
-        ggpubr_vjust = ${statVjust},
         comparison_mode = "${comparisonMode}",
         custom_comparisons = '${customComparisonsJSON}',
         custom_positions = '${customPositionsJSON}',
@@ -17438,14 +20089,15 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         custom_symbol_05 = "${customSymbol05}",
         custom_symbol_01 = "${customSymbol01}",
         custom_symbol_001 = "${customSymbol001}",
-        custom_symbol_ns = "${customSymbolNS}"
+        custom_symbol_ns = "${customSymbolNS}",
+        error_type = "${errorBarType}"
       )
     } else if (chart_type == "dot") {
       p <- sato_dot(
         dat = dat,
         x_col = ${xColIndex},
         y_col = if(ncol(dat) >= ${yColIndex}) ${yColIndex} else NULL,
-        fill = "${dotColor}",
+        fill_colors = ${ fillMode === 'per_category' ? rColorVector : `c("${dotColor}")` },
         color = "${dotColor}",
         alpha = ${dotAlpha},
         size = ${dotSize},
@@ -17480,7 +20132,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         dat = dat,
         x_col = ${xColIndex},
         y_col = if(ncol(dat) >= ${yColIndex}) ${yColIndex} else NULL,
-        fill = "${fillColor}",
+        fill_colors = ${ fillMode === 'per_category' ? rColorVector : `c("${fillColor}")` },
         color = "${strokeColor}",
         alpha = ${fillAlpha},
         linewidth = ${lineWidth},
@@ -17554,7 +20206,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         x_col = ${xColIndex},
         y_col = if(ncol(dat) >= ${yColIndex}) ${yColIndex} else NULL,
         error_col = if(ncol(dat) >= ${errorColIndex}) ${errorColIndex} else NULL,
-        fill = "${fillColor}",
+        fill_colors = ${ fillMode === 'per_category' ? rColorVector : `c("${fillColor}")` },
         color = "${strokeColor}",
         alpha = ${fillAlpha},
         linewidth = ${lineWidth},
@@ -17590,7 +20242,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         dat = dat,
         x_col = ${xColIndex},
         y_col = if(ncol(dat) >= ${yColIndex}) ${yColIndex} else NULL,
-        fill = "${fillColor}",
+        fill_colors = ${ fillMode === 'per_category' ? rColorVector : `c("${fillColor}")` },
         color = "${strokeColor}",
         alpha = ${fillAlpha},
         linewidth = ${lineWidth},
@@ -17629,7 +20281,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       # Add statistics if enabled by user
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
         cat("\\n🔥 Adding statistics to bar_error_dot plot\\n")
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=${statVjust}, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
       }
     } else if (chart_type == "box_grouped") {
       # Grouped box chart - requires 3 columns: Group, Category, Value
@@ -17676,13 +20328,18 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         symbol_size = ${statSymbolSize},
         ggpubr_line_size = ${statLineSize},
         ggpubr_tip_length = ${statTipLength},
-        ggpubr_vjust = ${statVjust},
         comparison_mode = "${comparisonMode}",
         custom_comparisons = '${JSON.stringify(customComparisons).replace(/'/g, "\\'")}',
         custom_positions = '${JSON.stringify(customPositions).replace(/'/g, "\\'")}',
         selected_posthoc_test = selected_posthoc_test,
         dunnett_control = dunnett_control,
-        sato_symbol_size = ${statSymbolSize}
+        sato_symbol_size = ${statSymbolSize},
+        stat_symbol_type = "${statSymbolType}",
+        custom_symbol_05 = "${customSymbol05}",
+        custom_symbol_01 = "${customSymbol01}",
+        custom_symbol_001 = "${customSymbol001}",
+        custom_symbol_ns = "${customSymbolNS}",
+        error_type = "${errorBarType}"
       )
     } else if (chart_type == "box_grouped_dot") {
       # Grouped box + dot chart - requires 3 columns: Group, Category, Value
@@ -17733,7 +20390,6 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         symbol_size = ${statSymbolSize},
         ggpubr_line_size = ${statLineSize},
         ggpubr_tip_length = ${statTipLength},
-        ggpubr_vjust = ${statVjust},
         comparison_mode = "${comparisonMode}",
         custom_comparisons = '${customComparisonsJSON}',
         custom_positions = '${customPositionsJSON}',
@@ -17812,7 +20468,8 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         y_axis_hjust = ${yAxisHjust},
         y_axis_vjust = ${yAxisVjust},
         add_statistics = ${addStatistics ? 'TRUE' : 'FALSE'},
-        statistical_test = "${statisticalTest}"
+        statistical_test = "${statisticalTest}",
+        x_breaks_mode = "${xBreaksMode}"
       )
     } else if (chart_type == "line_grouped_error") {
       # Grouped line chart with error - for PRE-CALCULATED mean + error
@@ -17851,7 +20508,8 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         y_axis_hjust = ${yAxisHjust},
         y_axis_vjust = ${yAxisVjust},
         add_statistics = ${addStatistics ? 'TRUE' : 'FALSE'},
-        statistical_test = "${statisticalTest}"
+        statistical_test = "${statisticalTest}",
+        x_breaks_mode = "${xBreaksMode}"
       )
     } else if (chart_type == "line_grouped_error_raw") {
       # Grouped line chart with error - for RAW DATA with auto-calculation
@@ -17892,6 +20550,8 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         add_statistics = ${addStatistics ? 'TRUE' : 'FALSE'},
         statistical_test = "${statisticalTest}",
         variance_test = "${varianceTest}",
+        post_hoc_test = "${postHocTest}",
+        dunnett_control = "${dunnettControl}",
         stat_symbol_size = ${statSymbolSize},  # User-specified symbol size
         comparison_mode = "${comparisonMode}",
         custom_comparisons = '${customComparisonsJSON}',
@@ -17916,7 +20576,8 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         vbracket_item_spacing = ${vbracketItemSpacing},
         vbracket_bracket_layer_spacing = ${vbracketBracketLayerSpacing === null ? 'NULL' : vbracketBracketLayerSpacing},
         output_width = ${wIn},
-        output_height = ${hIn}
+        output_height = ${hIn},
+        x_breaks_mode = "${xBreaksMode}"
       )
     } else if (chart_type == "bar_grouped") {
       # Grouped bar chart - requires 3 columns: Group, Category, Value
@@ -18036,6 +20697,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         x_axis_text_size = ${xAxisTextSize},
         y_axis_text_size = ${yAxisTextSize},
         legend_text_size = ${legendTextSize},
+        title_text = ${formatR(title)},
+        x_text = ${formatR(xlab)},
+        y_text = ${formatR(ylab)},
         show_title = ${showTitle},
         show_x_label = ${showXLabel},
         show_y_label = ${showYLabel},
@@ -18054,7 +20718,6 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         symbol_size = ${statSymbolSize},
         ggpubr_line_size = ${statLineSize},
         ggpubr_tip_length = ${statTipLength},
-        ggpubr_vjust = ${statVjust},
         comparison_mode = "${comparisonMode}",
         custom_comparisons = '${JSON.stringify(customComparisons).replace(/'/g, "\\'")}',
         custom_positions = '${JSON.stringify(customPositions).replace(/'/g, "\\'") }',
@@ -18063,6 +20726,54 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         custom_symbol_01 = "${customSymbol01}",
         custom_symbol_001 = "${customSymbol001}",
         custom_symbol_ns = "${customSymbolNS}"
+      )
+    } else if (chart_type == "ic50_grouped_dose_response") {
+      # Grouped IC50 Dose-Response: one 4PL curve per group
+      p <- sato_ic50_grouped(
+        dat = dat,
+        group_col = ${groupColIndex},
+        x_col = ${xColIndex},
+        y_col = ${yColIndex},
+        group_name = "${escapeColumnName(selectedGroupColumn) || 'Group'}",
+        line_colors = ${rColorVector},
+        curve_width = ${ic50CurveWidth},
+        point_size = ${ic50PointSize},
+        point_shapes = c(${ic50GroupShapes.join(', ')}),
+        point_alpha = ${ic50PointAlpha},
+        show_ic50_line = ${showIC50Line ? 'TRUE' : 'FALSE'},
+        show_half_max_line = ${showHalfMaxLine ? 'TRUE' : 'FALSE'},
+        ic50_line_color = "${ic50LineColor}",
+        ic50_line_width = ${ic50LineWidth},
+        ic50_line_alpha = ${ic50LineAlpha},
+        ic50_half_line_color = "${ic50HalfLineColor}",
+        ic50_half_line_width = ${ic50HalfLineWidth},
+        ic50_half_line_alpha = ${ic50HalfLineAlpha},
+        data_display = "${ic50DataDisplay}",
+        fitting_method = "${ic50FittingMethod}",
+        x_scale = "${xScale}",
+        x_is_log10 = ${ic50XisLog10 ? 'TRUE' : 'FALSE'},
+        show_log10_labels = ${ic50ShowLog10Labels ? 'TRUE' : 'FALSE'},
+        use_decimal_labels = ${ic50DecimalLabels ? 'TRUE' : 'FALSE'},
+        target_font = target_font,
+        title_weight = title_weight,
+        axis_title_weight = axis_title_weight,
+        axis_text_weight = axis_text_weight,
+        title_size = ${titleSize},
+        x_axis_title_size = ${xAxisTitleSize},
+        y_axis_title_size = ${yAxisTitleSize},
+        x_axis_text_size = ${xAxisTextSize},
+        y_axis_text_size = ${yAxisTextSize},
+        legend_text_size = ${legendTextSize},
+        show_title = ${showTitle},
+        show_x_label = ${showXLabel},
+        show_y_label = ${showYLabel},
+        theme_name = "${themeName}",
+        x_axis_rotation = ${xAxisRotation},
+        y_axis_rotation = ${yAxisRotation},
+        x_axis_hjust = ${xAxisHjust},
+        x_axis_vjust = ${xAxisVjust},
+        y_axis_hjust = ${yAxisHjust},
+        y_axis_vjust = ${yAxisVjust}
       )
     } else if (chart_type == "ic50_dose_response") {
       # IC50 Dose-Response curve fitting and plotting
@@ -18073,13 +20784,25 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         curve_color = "${ic50CurveColor}",
         curve_width = ${ic50CurveWidth},
         point_size = ${ic50PointSize},
+        point_shape = ${ic50PointShape},
         point_color = "${ic50PointColor}",
         point_alpha = ${ic50PointAlpha},
         ic50_line_color = "${ic50LineColor}",
+        ic50_line_width = ${ic50LineWidth},
+        ic50_line_alpha = ${ic50LineAlpha},
+        ic50_half_line_color = "${ic50HalfLineColor}",
+        ic50_half_line_width = ${ic50HalfLineWidth},
+        ic50_half_line_alpha = ${ic50HalfLineAlpha},
         show_ic50_value = ${showIC50Value ? 'TRUE' : 'FALSE'},
         show_ic50_line = ${showIC50Line ? 'TRUE' : 'FALSE'},
+        show_half_max_line = ${showHalfMaxLine ? 'TRUE' : 'FALSE'},
         show_confidence_band = ${showConfidenceBand ? 'TRUE' : 'FALSE'},
         data_display = "${ic50DataDisplay}",
+        fitting_method = "${ic50FittingMethod}",
+        x_scale = "${xScale}",
+        x_is_log10 = ${ic50XisLog10 ? 'TRUE' : 'FALSE'},
+        show_log10_labels = ${ic50ShowLog10Labels ? 'TRUE' : 'FALSE'},
+        use_decimal_labels = ${ic50DecimalLabels ? 'TRUE' : 'FALSE'},
         target_font = target_font,
         title_weight = title_weight,
         axis_title_weight = axis_title_weight,
@@ -18116,9 +20839,36 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       p <- p + ylab(${formattedYlab})
     }
     
-    # Apply rotation if specified
-    if ("${rotation}" == "90") {
-      p <- p + coord_flip(clip = "off")
+    # Apply coordinate system: handles rotation and axis range limits together
+    {
+      x_lim <- ${rXLim}
+      y_lim <- ${rYLim}
+      if ("${rotation}" == "90") {
+        p <- p + coord_flip(xlim = x_lim, ylim = y_lim, clip = "off")
+      } else if (!is.null(x_lim) || !is.null(y_lim)) {
+        p <- p + coord_cartesian(xlim = x_lim, ylim = y_lim, clip = "off")
+      }
+      # Extend axis breaks to include limit boundary values (linear scale only)
+      if (!is.null(x_lim) && "${xScale}" == "linear") {
+        limit_vals <- x_lim[!is.na(x_lim)]
+        x_scale <- p$scales$get_scales("x")
+        cur_breaks <- if (!is.null(x_scale) && is.numeric(x_scale$breaks)) x_scale$breaks else numeric(0)
+        # Only extend if explicit breaks exist; otherwise ggplot2 auto-breaks naturally include limit values
+        if (length(cur_breaks) > 0) {
+          new_breaks <- sort(unique(c(cur_breaks, limit_vals)))
+          p <- p + scale_x_continuous(breaks = new_breaks)
+        }
+      }
+      if (!is.null(y_lim) && "${yScale}" == "linear") {
+        limit_vals <- y_lim[!is.na(y_lim)]
+        y_scale <- p$scales$get_scales("y")
+        cur_breaks <- if (!is.null(y_scale) && is.numeric(y_scale$breaks)) y_scale$breaks else numeric(0)
+        # Only extend if explicit breaks exist; otherwise ggplot2 auto-breaks naturally include limit values
+        if (length(cur_breaks) > 0) {
+          new_breaks <- sort(unique(c(cur_breaks, limit_vals)))
+          p <- p + scale_y_continuous(breaks = new_breaks)
+        }
+      }
     }
 
     # フォント確認
@@ -18152,18 +20902,23 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     themeName, fillColor, strokeColor, fillAlpha, barWidth, dodgeWidth, lineWidth,
     groupColors, dotSize, dotAlpha, dotColor, dotShape,
     xAxisRotation, yAxisRotation, xAxisHjust, xAxisVjust, yAxisHjust, yAxisVjust,
-    xScale, yScale, rotation, tableStyleLabels, groupColIndex, xColIndex, yColIndex, errorColIndex,
+    xMin, xMax, yMin, yMax,
+    xScale, yScale, xBreaksMode, showBrackets, rotation, tableStyleLabels, groupColIndex, xColIndex, yColIndex, errorColIndex,
     selectedGroupColumn, selectedXColumn, selectedYColumn, selectedErrorColumn,
     addStatistics, errorBarType, statisticalTest, varianceTest, postHocTest,
     statSymbolType, customSymbol05, customSymbol01, customSymbol001, customSymbolNS,
-    statSymbolSize, statLineSize, statTipLength, statVjust,
+    statSymbolSize, statLineSize, statTipLength, symbolGap, bracketSpacing,
     comparisonMode, customComparisons, customPositions,
     vbracketTimepoint, vbracketPosition, vbracketX, vbracketY, vbracketTextSize, vbracketSigSize, vbracketMargin, vbracketLineWidth,
+    fillMode,
     dataOrder, customOrderGroup, customOrderCategory, numGroups, bins, expWidth: wIn, expHeight: hIn,
     // IC50 settings
     enableIC50Analysis, showIC50Value, showIC50Line, showConfidenceBand,
-    ic50CurveColor, ic50CurveWidth, ic50LineColor, ic50PointSize, ic50PointColor, ic50PointAlpha,
-    ic50DataDisplay
+    ic50CurveColor, ic50CurveWidth,
+    ic50LineColor, ic50LineWidth, ic50LineAlpha,
+    ic50HalfLineColor, ic50HalfLineWidth, ic50HalfLineAlpha,
+    ic50PointSize, ic50PointColor, ic50PointAlpha,
+    ic50DataDisplay, ic50FittingMethod, ic50XisLog10, ic50ShowLog10Labels, ic50DecimalLabels
   };
   console.log("✅ Stored all plot settings for R code generation");
 
@@ -18360,13 +21115,13 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     
     await v.render();
     b64 = canvas.toDataURL("image/png").split(",")[1];
-    
+
   } catch (e) {
     console.error("SVG rendering failed:", e);
     setStatus("SVG rendering error: " + e.message);
     throw e;
   }
-  
+
   return {
     b64,
     wPt: wIn * 72,
@@ -18437,25 +21192,40 @@ function formatTextForR(text) {
 // 書式設定マーカーをR expression に変換（フォント対応版）
 function parseFormattingToRExpression(text) {
   if (!text) return 'NULL';
-  
+
+  // Unicode superscript map — used to avoid R plotmath spacing gaps on string^{n}
+  const SUPER_MAP = {
+    '0':'⁰','1':'¹','2':'²','3':'³','4':'⁴','5':'⁵','6':'⁶','7':'⁷','8':'⁸','9':'⁹',
+    '+':'⁺','-':'⁻','=':'⁼','(':'⁽',')':'⁾',
+    'a':'ᵃ','b':'ᵇ','c':'ᶜ','d':'ᵈ','e':'ᵉ','f':'ᶠ','g':'ᵍ','h':'ʰ','i':'ⁱ','j':'ʲ',
+    'k':'ᵏ','l':'ˡ','m':'ᵐ','n':'ⁿ','o':'ᵒ','p':'ᵖ','r':'ʳ','s':'ˢ','t':'ᵗ','u':'ᵘ',
+    'v':'ᵛ','w':'ʷ','x':'ˣ','y':'ʸ','z':'ᶻ'
+  };
+  function toUnicodeSuper(s) {
+    return s.split('').map(c => SUPER_MAP[c] || c).join('');
+  }
+  function canUnicodeSuper(s) {
+    return s.length > 0 && s.split('').every(c => SUPER_MAP.hasOwnProperty(c));
+  }
+
   // 単純なイタリックのみの場合
   const italicOnlyMatch = text.match(/^\*([^*]+)\*$/);
   if (italicOnlyMatch && !text.includes('^') && !text.includes('~')) {
     return `expression(italic("${escapeForR(italicOnlyMatch[1])}"))`;
   }
-  
+
   // 書式マーカーがあるかチェック
   const hasFormatting = text.includes('*') || text.includes('^') || text.includes('~');
-  
+
   if (!hasFormatting) {
     // 書式なし - 普通の文字列
     return `"${escapeForR(text)}"`;
   }
-  
+
   // 複数の書式を含む場合 - パーサーで処理
   const parts = [];
   let i = 0;
-  
+
   while (i < text.length) {
     // *italic* をチェック
     if (text[i] === '*' && text.substr(i, 2) !== '**') {
@@ -18467,53 +21237,87 @@ function parseFormattingToRExpression(text) {
         continue;
       }
     }
-    
+
     // ^superscript^ をチェック
     if (text[i] === '^') {
       const endPos = text.indexOf('^', i + 1);
       if (endPos !== -1) {
         const superText = text.substring(i + 1, endPos);
-        parts.push(`""^{${escapeForR(superText)}}`);
+
+        if (canUnicodeSuper(superText)) {
+          // Convert to Unicode superscript — avoids R plotmath spacing gap on "mm"^{"3"}
+          const unicodeText = toUnicodeSuper(superText);
+          if (parts.length > 0 && /^"[^"]*"$/.test(parts[parts.length - 1])) {
+            // Append directly to preceding plain string
+            const prev = parts[parts.length - 1].slice(1, -1);
+            parts[parts.length - 1] = `"${prev}${unicodeText}"`;
+          } else {
+            parts.push(`"${unicodeText}"`);
+          }
+        } else {
+          // Fall back to R plotmath for non-mappable superscripts
+          if (parts.length > 0 && /^"[^"]*"$/.test(parts[parts.length - 1])) {
+            parts[parts.length - 1] = `${parts[parts.length - 1]}^{"${escapeForR(superText)}"}`;
+          } else {
+            parts.push(`""^{"${escapeForR(superText)}"}`);
+          }
+        }
         i = endPos + 1;
         continue;
       }
     }
-    
+
     // ~subscript~ をチェック
     if (text[i] === '~') {
       const endPos = text.indexOf('~', i + 1);
       if (endPos !== -1) {
         const subText = text.substring(i + 1, endPos);
-        parts.push(`""[${escapeForR(subText)}]`);
+        parts.push(`""["${escapeForR(subText)}"]`);  // quoted to allow operators like + - =
         i = endPos + 1;
         continue;
       }
     }
-    
+
     // 通常の文字を収集
     let plainText = '';
     let j = i;
-    while (j < text.length && 
-           text[j] !== '*' && 
-           text[j] !== '^' && 
+    while (j < text.length &&
+           text[j] !== '*' &&
+           text[j] !== '^' &&
            text[j] !== '~') {
       plainText += text[j];
       j++;
     }
-    
+
     if (plainText) {
-      parts.push(`"${escapeForR(plainText)}"`);
+      // Append to preceding plain string if possible, to minimise * concatenations
+      if (parts.length > 0 && /^"[^"]*"$/.test(parts[parts.length - 1])) {
+        const prev = parts[parts.length - 1].slice(1, -1);
+        parts[parts.length - 1] = `"${prev}${escapeForR(plainText)}"`;
+      } else {
+        parts.push(`"${escapeForR(plainText)}"`);
+      }
     }
-    
+
     i = j;
   }
-  
+
   // 結果を結合
   if (parts.length === 0) {
     return 'NULL';
   } else if (parts.length === 1) {
+    // Plain string with no plotmath operators — skip expression() wrapper
+    if (/^"[^"]*"$/.test(parts[0])) {
+      return parts[0];
+    }
     return `expression(${parts[0]})`;
   } else {
+    // If all parts are plain strings, merge into one plain string (no expression() needed)
+    const allPlain = parts.every(p => /^"[^"]*"$/.test(p));
+    if (allPlain) {
+      const merged = parts.map(p => p.slice(1, -1)).join('');
+      return `"${merged}"`;
+    }
     // * 演算子を使って結合（plotmathでは * が連結演算子）
     return `expression(${parts.join(' * ')})`;
   }
@@ -18693,10 +21497,56 @@ window.formatText = function(fieldId, formatType) {
 window.insertSymbol = function(fieldId, symbol) {
   const field = document.getElementById(fieldId);
   if (!field) return;
-  
+
   insertAtCursor(field, symbol);
   field.focus();
 }
+
+// Greek / Symbol picker
+let _greekTargetField = null;
+
+window.openGreekPicker = function(event, fieldId) {
+  event.stopPropagation();
+  _greekTargetField = fieldId;
+  const panel = document.getElementById('greekPickerPanel');
+  if (!panel) return;
+
+  // Toggle
+  if (panel.style.display !== 'none') {
+    panel.style.display = 'none';
+    return;
+  }
+
+  // Position near the button
+  const btn = event.currentTarget;
+  const rect = btn.getBoundingClientRect();
+  const panelWidth = 228;
+  let left = rect.left;
+  // Keep panel within viewport
+  if (left + panelWidth > window.innerWidth - 8) {
+    left = window.innerWidth - panelWidth - 8;
+  }
+  panel.style.left = left + 'px';
+  panel.style.top = (rect.bottom + 4) + 'px';
+  panel.style.display = 'block';
+}
+
+window.insertGreekSymbol = function(symbol) {
+  const field = document.getElementById(_greekTargetField);
+  if (field) {
+    insertAtCursor(field, symbol);
+    field.focus();
+  }
+  // Keep picker open so user can insert multiple symbols
+}
+
+// Close picker when clicking outside
+document.addEventListener('click', function(e) {
+  const panel = document.getElementById('greekPickerPanel');
+  if (panel && panel.style.display !== 'none' && !panel.contains(e.target)) {
+    panel.style.display = 'none';
+  }
+});
 
 function insertAtCursor(field, text) {
   const start = field.selectionStart;
@@ -18858,17 +21708,23 @@ async function loadHeadersFromSelection(){
 
       ySel.value = headers[yIdx];  // Numeric column = Value
 
-      // For Group and X columns, use the first two non-Y columns
+      // For Group and X columns, use type detection to assign correctly
       const nonYIndices = headers.map((_, i) => i).filter(i => i !== yIdx);
-      if (groupSel && nonYIndices.length >= 2) {
-        groupSel.value = headers[nonYIndices[1]];  // 2nd non-numeric column = Group
-      } else if (groupSel && nonYIndices.length >= 1) {
-        groupSel.value = headers[nonYIndices[0]];  // 1st non-numeric column = Group
+
+      // Group column: prefer non-numeric (text) columns as group labels (e.g., "Control", "Drug A")
+      // Fallback to first non-Y column if all columns are numeric
+      const textNonYIndices = nonYIndices.filter(i => !isNum(i));
+      const groupColIdx = textNonYIndices.length > 0 ? textNonYIndices[0] : nonYIndices[0];
+      if (groupSel && nonYIndices.length >= 1) {
+        groupSel.value = headers[groupColIdx];
       }
-      if (nonYIndices.length >= 2) {
-        xSel.value = headers[nonYIndices[nonYIndices.length - 1]];  // Last non-numeric column before Y = X/Category
+
+      // X column: last non-Y column that isn't the group column (e.g., time points)
+      const xCandidates = nonYIndices.filter(i => i !== groupColIdx);
+      if (xCandidates.length > 0) {
+        xSel.value = headers[xCandidates[xCandidates.length - 1]];
       } else if (nonYIndices.length >= 1) {
-        xSel.value = headers[nonYIndices[0]];  // 1st non-numeric column = X
+        xSel.value = headers[nonYIndices[nonYIndices.length - 1]];
       }
 
       // For charts with error column (3+ or 4+ columns): Error=last column
@@ -18895,6 +21751,7 @@ async function loadHeadersFromSelection(){
         console.log("🔥 Auto-updated numGroups to:", actualGroups.length);
       }
     }
+    updateGroupColorLabels();
 
     // Update comparison checkboxes when new data is loaded
     populateComparisonCheckboxes();
@@ -18914,6 +21771,11 @@ async function loadHeadersFromSelection(){
 
     // Populate vbracket timepoint dropdown with unique X values
     populateVbracketTimepoints();
+
+    // Populate conversion column checkboxes
+    if (typeof window.populateConversionColumns === 'function') {
+      window.populateConversionColumns();
+    }
 
     setStatus(`Load complete: n=${rows.length}`);
   } catch (error) {
@@ -19039,7 +21901,7 @@ function uiOpts(){
     title:  (el("titleText")?.value || "").trim(),
     xlab:   (el("xLabel")?.value || "").trim(),
     ylab:   (el("yLabel")?.value || "").trim(),
-    theme:  el("ggtheme")?.value || "minimal",
+    theme:  el("ggtheme")?.value || "bw",
     family: el("fontFam")?.value || "Arial",
 
     // 色（←ここだけ変更）
@@ -19115,6 +21977,8 @@ function uiOpts(){
     // 軸スケール設定
     xScale: el("xScale")?.value || "linear",
     yScale: el("yScale")?.value || "linear",
+    xBreaksMode: el("xBreaksMode")?.value || "auto",
+    showBrackets: el("showBrackets")?.checked !== false,
 
     // 表示・非表示オプション
     showTitle: el("showTitle")?.checked !== false,
@@ -19162,7 +22026,8 @@ function uiOpts(){
     // ggpubr statistical bracket parameters (Symbol size uses existing statSymbolSize)
     statLineSize: Number(el("statLineSize")?.value) || 1.0,
     statTipLength: Number(el("statTipLength")?.value) || 0.04,
-    statVjust: Number(el("statVjust")?.value) || -0.3,
+    symbolGap: Number(el("symbolGap")?.value) ?? 0.6,
+    bracketSpacing: Number(el("bracketSpacing")?.value) ?? 1.0,
 
     // Comparison mode settings
     comparisonMode: document.querySelector('input[name="comparisonMode"]:checked')?.value || "significant",
@@ -19196,6 +22061,8 @@ async function previewPlotWithDebug() {
     setStatus("Generating preview...");
 
     lastRender = await renderPlotPngFromSelectionFixed();
+
+    if (!lastRender) return;  // Early return (e.g. validation error already shown via setStatus)
 
     // Update comparison checkboxes with actual data after rendering
     populateComparisonCheckboxes();
@@ -19268,7 +22135,7 @@ async function previewPlotWithDebug() {
         const chartType = document.getElementById("chartType")?.value || "";
         const exportIC50ToSheet = document.getElementById("exportIC50ToSheet")?.checked;
         console.log("IC50 export check - chartType:", chartType, "exportIC50ToSheet:", exportIC50ToSheet);
-        if (chartType === "ic50_dose_response" && exportIC50ToSheet) {
+        if ((chartType === "ic50_dose_response" || chartType === "ic50_grouped_dose_response") && exportIC50ToSheet) {
           console.log("Starting IC50 export...");
           exportIC50CurveDataToExcel().catch(err => {
             console.error("IC50 curve data export failed:", err.message || err);
