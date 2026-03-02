@@ -18857,12 +18857,12 @@ async function initWebR() {
         sm$group <- factor(sm$group, levels = groups)
         sm$error <- if (data_display == "mean_sd") sm$sd else sm$se
 
-        p <- ggplot(sm, aes(x = conc, y = mean, color = group, shape = group)) +
+        p <- ggplot(sm, aes(x = conc, y = mean, color = group, shape = group, fill = group)) +
           geom_errorbar(aes(ymin = mean - error, ymax = mean + error),
                         width = 0.1, linewidth = 0.5) +
           geom_point(size = point_size, alpha = point_alpha)
       } else {
-        p <- ggplot(plot_data, aes(x = conc, y = resp, color = group, shape = group)) +
+        p <- ggplot(plot_data, aes(x = conc, y = resp, color = group, shape = group, fill = group)) +
           geom_point(size = point_size, alpha = point_alpha)
       }
 
@@ -18874,7 +18874,8 @@ async function initWebR() {
       }
 
       p <- p + scale_color_manual(name = actual_group_name, values = color_vec) +
-               scale_shape_manual(name = actual_group_name, values = shape_vec)
+               scale_shape_manual(name = actual_group_name, values = shape_vec) +
+               scale_fill_manual(name = actual_group_name, values = color_vec)
       if (x_scale == "log10") {
         if (show_log10_labels) {
           x_log_min <- floor(log10(min(plot_data$conc)))
