@@ -5512,11 +5512,13 @@ function collectCurrentSettings() {
     showTitle: el("showTitle")?.checked ? "true" : "false",
     showXLabel: el("showXLabel")?.checked ? "true" : "false",
     showYLabel: el("showYLabel")?.checked ? "true" : "false",
+    showLegendTitle: el("showLegendTitle")?.checked !== false ? "true" : "false",
 
     // Label text content
     titleText: el("titleText")?.value || "",
     xLabel: el("xLabel")?.value || "",
     yLabel: el("yLabel")?.value || "",
+    legendTitle: el("legendTitle")?.value || "",
 
     // Data order
     dataOrder: el("dataOrder")?.value || "original",
@@ -5872,11 +5874,13 @@ function applySettingsToUI(settings) {
   setChecked("showTitle", settings.showTitle);
   setChecked("showXLabel", settings.showXLabel);
   setChecked("showYLabel", settings.showYLabel);
+  if (settings.showLegendTitle !== undefined) setChecked("showLegendTitle", settings.showLegendTitle);
 
   // Title and axis label text
   setValue("titleText", settings.titleText);
   setValue("xLabel", settings.xLabel);
   setValue("yLabel", settings.yLabel);
+  if (settings.legendTitle !== undefined) setValue("legendTitle", settings.legendTitle);
 
   // Data order
   setValue("dataOrder", settings.dataOrder);
@@ -19409,6 +19413,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const showTitle = o.showTitle ? 'TRUE' : 'FALSE';
   const showXLabel = o.showXLabel ? 'TRUE' : 'FALSE';
   const showYLabel = o.showYLabel ? 'TRUE' : 'FALSE';
+  const showLegendTitle = o.showLegendTitle !== false ? 'TRUE' : 'FALSE';
+  const legendTitle = (o.legendTitle || '').trim();
+  const escapedLegendTitle = legendTitle.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
   let xScale = o.xScale || 'linear';
   const yScale = o.yScale || 'linear';
 
@@ -20947,6 +20954,21 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     # フォント確認
     cat("Plot created with font:", target_font, "\\n")
 
+    # Legend title control
+    if (exists("p") && !is.null(p)) {
+      show_legend_title <- ${showLegendTitle}
+      legend_title_text <- "${escapedLegendTitle}"
+      if (!show_legend_title) {
+        p <- p + theme(legend.title = element_blank())
+      } else if (nchar(trimws(legend_title_text)) > 0) {
+        formatted_legend_title <- tryCatch(
+          parse(text = legend_title_text)[[1]],
+          error = function(e) legend_title_text
+        )
+        p <- p + labs(fill = formatted_legend_title, color = formatted_legend_title, shape = formatted_legend_title)
+      }
+    }
+
     # Dump debug log to console at the end
     if (exists("debug_log_file") && file.exists(debug_log_file)) {
       cat("\\n\\n========== DEBUG LOG START ==========\\n")
@@ -20970,6 +20992,8 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     showTitle: showTitle === 'TRUE',
     showXLabel: showXLabel === 'TRUE',
     showYLabel: showYLabel === 'TRUE',
+    showLegendTitle: showLegendTitle === 'TRUE',
+    legendTitle,
     fontFamily: rFontName, titleSize, xAxisTitleSize, yAxisTitleSize,
     xAxisTextSize, yAxisTextSize, legendTextSize, titleWeight, axisTitleWeight, axisTextWeight,
     themeName, fillColor, strokeColor, fillAlpha, barWidth, dodgeWidth, lineWidth,
@@ -22059,6 +22083,8 @@ function uiOpts(){
     showTitle: el("showTitle")?.checked !== false,
     showXLabel: el("showXLabel")?.checked !== false,
     showYLabel: el("showYLabel")?.checked !== false,
+    showLegendTitle: el("showLegendTitle")?.checked !== false,
+    legendTitle: (el("legendTitle")?.value || "").trim(),
 
     xMin: numVal("xMin"), xMax: numVal("xMax"),
     yMin: numVal("yMin"), yMax: numVal("yMax"),

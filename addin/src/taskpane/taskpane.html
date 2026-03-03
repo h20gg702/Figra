@@ -1024,8 +1024,7 @@
             <button type="button" onclick="formatText('titleText', 'sub')" title="Make selected text subscript">X₂</button>
             <button type="button" onclick="insertSymbol('titleText', 'log₂')" title="Insert log base 2">log₂</button>
             <button type="button" onclick="insertSymbol('titleText', 'log₁₀')" title="Insert log base 10">log₁₀</button>
-            <button type="button" onclick="openGreekPicker(event,'titleText')" title="Insert Greek letter or symbol">Ω</button>
-            <span style="font-size:10px; color:#888; align-self:center; white-space:nowrap;">← opens Greek/Symbol picker</span>
+            <button type="button" onclick="openGreekPicker(event,'titleText')" title="Insert Greek letter or symbol (click to open picker)">Ω…</button>
           </div>
         </div>
       </div>
@@ -1056,8 +1055,7 @@
             <button type="button" onclick="formatText('xLabel', 'sub')" title="Make selected text subscript">X₂</button>
             <button type="button" onclick="insertSymbol('xLabel', 'log₂')" title="Insert log base 2">log₂</button>
             <button type="button" onclick="insertSymbol('xLabel', 'log₁₀')" title="Insert log base 10">log₁₀</button>
-            <button type="button" onclick="openGreekPicker(event,'xLabel')" title="Insert Greek letter or symbol">Ω</button>
-            <span style="font-size:10px; color:#888; align-self:center; white-space:nowrap;">← opens Greek/Symbol picker</span>
+            <button type="button" onclick="openGreekPicker(event,'xLabel')" title="Insert Greek letter or symbol (click to open picker)">Ω…</button>
           </div>
         </div>
       </div>
@@ -1085,8 +1083,7 @@
             <button type="button" onclick="formatText('yLabel', 'sub')" title="Make selected text subscript">X₂</button>
             <button type="button" onclick="insertSymbol('yLabel', 'log₂')" title="Insert log base 2">log₂</button>
             <button type="button" onclick="insertSymbol('yLabel', 'log₁₀')" title="Insert log base 10">log₁₀</button>
-            <button type="button" onclick="openGreekPicker(event,'yLabel')" title="Insert Greek letter or symbol">Ω</button>
-            <span style="font-size:10px; color:#888; align-self:center; white-space:nowrap;">← opens Greek/Symbol picker</span>
+            <button type="button" onclick="openGreekPicker(event,'yLabel')" title="Insert Greek letter or symbol (click to open picker)">Ω…</button>
           </div>
         </div>
       </div>
@@ -1100,6 +1097,22 @@
       </div>
 
       <!-- Legend Section -->
+      <div class="row">
+        <label for="showLegendTitle">Show legend title</label>
+        <input type="checkbox" id="showLegendTitle" checked>
+      </div>
+      <div class="row">
+        <label>Legend title</label>
+        <div style="display:flex; flex-direction:column; gap:4px; width:280px;">
+          <input type="text" id="legendTitle" placeholder="Legend title (leave blank to use column name)" style="width:100%; padding:4px 6px; border:1px solid #ccc; border-radius:4px; font-size:12px;">
+          <div class="format-buttons">
+            <button type="button" onclick="formatText('legendTitle', 'italic')" title="Make selected text italic">*I*</button>
+            <button type="button" onclick="formatText('legendTitle', 'super')" title="Make selected text superscript">X²</button>
+            <button type="button" onclick="formatText('legendTitle', 'sub')" title="Make selected text subscript">X₂</button>
+            <button type="button" onclick="openGreekPicker(event,'legendTitle')" title="Insert Greek letter or symbol (click to open picker)">Ω…</button>
+          </div>
+        </div>
+      </div>
       <div class="row">
         <label for="legendTextSize">Legend text size</label>
         <input id="legendTextSize" type="number" min="3" max="36" value="16" style="width:80px" />
