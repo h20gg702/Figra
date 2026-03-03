@@ -19409,8 +19409,20 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const showTitle = o.showTitle ? 'TRUE' : 'FALSE';
   const showXLabel = o.showXLabel ? 'TRUE' : 'FALSE';
   const showYLabel = o.showYLabel ? 'TRUE' : 'FALSE';
-  const xScale = o.xScale || 'linear';
+  let xScale = o.xScale || 'linear';
   const yScale = o.yScale || 'linear';
+
+  // If x_scale is not linear but the X column contains categorical (non-numeric) data,
+  // reset to linear to avoid R error "'log' not meaningful for factors"
+  if (xScale !== 'linear' && window.lastProcessedData && window.lastProcessedData.length > 1) {
+    const xVals = window.lastProcessedData.slice(1).map(row => row[xColIndex - 1]);
+    const xIsNumeric = xVals.every(v => v === null || v === '' || (!isNaN(parseFloat(v)) && isFinite(v)));
+    if (!xIsNumeric) {
+      console.warn(`X-axis scale "${xScale}" is not applicable to categorical data — resetting to linear.`);
+      xScale = 'linear';
+      setStatus(`⚠️ X-axis log scale is not applicable to categorical data. Switched to linear.`);
+    }
+  }
   const xBreaksMode = o.xBreaksMode || 'auto';
   const showBrackets = o.showBrackets !== false;
   const themeName = o.theme || 'bw';
