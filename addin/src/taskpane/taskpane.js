@@ -1979,6 +1979,33 @@ function generateSubsetRCodeFromData(chartType, opts) {
         ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
         break;
 
+      case 'scatter':
+        const scatterIsGrouped = document.getElementById('scatterGrouped')?.checked;
+        const scatterIsPerGroupShape = document.getElementById('scatterPerGroupShape')?.checked;
+        if (scatterIsGrouped && groupColIndex) {
+          const scatterGroupColors = (rColorVector || "c('#4C78A8', '#E15759', '#76B7B2', '#F28E2B')").replace(/"/g, "'");
+          if (scatterIsPerGroupShape) {
+            const defShapes = [16,17,15,18,1,2];
+            const shapeVals = [1,2,3,4,5,6].map(i => parseInt(document.getElementById(`scatterShape${i}`)?.value || defShapes[i-1]));
+            ggplotCode += `p <- ggplot(dat, aes(x = col${xColIndex || 2}, y = col${yColIndex || 3}, color = col${groupColIndex || 1}, shape = col${groupColIndex || 1})) +\n`;
+            ggplotCode += `  geom_point(size = 3, alpha = 0.9) +\n`;
+            ggplotCode += `  scale_color_manual(values = ${scatterGroupColors}) +\n`;
+            ggplotCode += `  scale_shape_manual(values = c(${shapeVals.join(', ')})) +\n`;
+          } else {
+            ggplotCode += `p <- ggplot(dat, aes(x = col${xColIndex || 2}, y = col${yColIndex || 3}, color = col${groupColIndex || 1})) +\n`;
+            ggplotCode += `  geom_point(size = 3, alpha = 0.9) +\n`;
+            ggplotCode += `  scale_color_manual(values = ${scatterGroupColors}) +\n`;
+          }
+          ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Scatter Plot')}', x = '${xLabelOrig}', y = '${yLabelOrig}') +\n`;
+          ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        } else {
+          ggplotCode += `p <- ggplot(dat, aes(x = col${xColIndex || 1}, y = col${yColIndex || 2})) +\n`;
+          ggplotCode += `  geom_point(color = '${fillColor || '#4C78A8'}', size = 3, alpha = ${fillAlpha || 0.9}) +\n`;
+          ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Scatter Plot')}', x = '${xLabelOrig}', y = '${yLabelOrig}') +\n`;
+          ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        }
+        break;
+
       default:
         ggplotCode += `# Chart type: ${chartType}\n`;
         ggplotCode += `p <- ggplot(dat, aes(x = col1, y = col2)) +\n`;
@@ -2197,6 +2224,55 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
   } else if (chartType.startsWith('line_grouped')) {
     // Handle all line grouped types: line_grouped, line_grouped_error, line_grouped_error_raw
     code += generateLineGroupedCode(settings, groupColors);
+  } else if (chartType === 'scatter') {
+    // Scatter plot: continuous X vs continuous Y (optionally colored by group)
+    const escapeForRLabel = (str) => {
+      if (!str) return '';
+      return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    };
+    const originalHeaders = window.lastOriginalHeaders || [];
+    const xLabelOrig = originalHeaders[settings.xColIndex - 1] ? escapeForRLabel(originalHeaders[settings.xColIndex - 1]) : (settings.xLabel || 'X');
+    const yLabelOrig = originalHeaders[settings.yColIndex - 1] ? escapeForRLabel(originalHeaders[settings.yColIndex - 1]) : (settings.yLabel || 'Y');
+    const xColName = `col${settings.xColIndex || 1}`;
+    const yColName = `col${settings.yColIndex || 2}`;
+    const isGrouped = settings.scatterGrouped;
+    const groupColName = `col${settings.groupColIndex || 1}`;
+    const titleLabel = convertToRPlotmath(settings.title || 'Scatter plot');
+    const xLabel = convertToRPlotmath(xLabelOrig);
+    const yLabel = convertToRPlotmath(yLabelOrig);
+
+    const data = window.lastProcessedData;
+    const allRows = data.slice(1);
+    const xVals = allRows.map(r => r[settings.xColIndex - 1]);
+    const yVals = allRows.map(r => r[settings.yColIndex - 1]);
+
+    if (isGrouped && settings.groupColIndex) {
+      const groupVals = allRows.map(r => `'${String(r[settings.groupColIndex - 1]).replace(/'/g, "\\'")}'`);
+      const groupColors = settings.groupColors || ["#4C78A8", "#E15759", "#76B7B2", "#F28E2B"];
+      const groupColorsR = `c(${groupColors.slice(0, settings.numGroups || 2).map(c => `'${c}'`).join(', ')})`;
+      code += `dat <- data.frame(\n  ${groupColName} = c(${groupVals.join(', ')}),\n  ${xColName} = c(${xVals.join(', ')}),\n  ${yColName} = c(${yVals.join(', ')})\n)\n\n`;
+      if (settings.scatterPerGroupShape && settings.scatterGroupShapes) {
+        const shapeValsR = `c(${settings.scatterGroupShapes.slice(0, settings.numGroups || 2).join(', ')})`;
+        code += `p <- ggplot(dat, aes(x = ${xColName}, y = ${yColName}, color = ${groupColName}, shape = ${groupColName})) +\n`;
+        code += `  geom_point(size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}) +\n`;
+        code += `  scale_color_manual(values = ${groupColorsR}) +\n`;
+        code += `  scale_shape_manual(values = ${shapeValsR}) +\n`;
+      } else {
+        code += `p <- ggplot(dat, aes(x = ${xColName}, y = ${yColName}, color = ${groupColName})) +\n`;
+        code += `  geom_point(size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}, shape = ${settings.dotShape || 16}) +\n`;
+        code += `  scale_color_manual(values = ${groupColorsR}) +\n`;
+      }
+      code += `  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +\n`;
+      code += `  theme_${settings.themeName || 'bw'}(base_size = ${settings.xAxisTextSize || 12}, base_family = '${settings.fontFamily || 'Arial'}')\n`;
+    } else {
+      code += `dat <- data.frame(\n  ${xColName} = c(${xVals.join(', ')}),\n  ${yColName} = c(${yVals.join(', ')})\n)\n\n`;
+      code += `p <- ggplot(dat, aes(x = ${xColName}, y = ${yColName})) +\n`;
+      code += `  geom_point(color = '${settings.dotColor || '#4C78A8'}', size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}, shape = ${settings.dotShape || 16}) +\n`;
+      code += `  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +\n`;
+      code += `  theme_${settings.themeName || 'bw'}(base_size = ${settings.xAxisTextSize || 12}, base_family = '${settings.fontFamily || 'Arial'}')\n`;
+    }
+    code += `\nprint(p)\n`;
+
   } else if (chartType === 'histogram' || chartType === 'box' || chartType === 'box_dot' ||
              chartType === 'dot' || chartType === 'bar' || chartType === 'bar_error' ||
              chartType === 'bar_error_dot' || chartType === 'violin' || chartType === 'violin_dot') {
@@ -5520,6 +5596,11 @@ function collectCurrentSettings() {
     yLabel: el("yLabel")?.value || "",
     legendTitle: el("legendTitle")?.value || "",
 
+    // Scatter group toggle and per-group shapes
+    scatterGrouped: el("scatterGrouped")?.checked || false,
+    scatterPerGroupShape: el("scatterPerGroupShape")?.checked || false,
+    scatterGroupShapes: [1,2,3,4,5,6].map((i, idx) => parseInt(el(`scatterShape${i}`)?.value || [16,17,15,18,1,2][idx])),
+
     // Data order
     dataOrder: el("dataOrder")?.value || "original",
     customOrderGroup: (typeof getCustomOrderGroupString === 'function') ? getCustomOrderGroupString() : "",
@@ -5592,6 +5673,7 @@ function collectCurrentSettings() {
     ic50HalfLineAlpha: el("ic50HalfLineAlpha")?.value || "1",
     ic50PointSize: el("ic50PointSize")?.value || "3",
     ic50PointShape: el("ic50PointShape")?.value || "16",
+    ic50PerGroupShape: el("ic50PerGroupShape")?.checked || false,
     ic50PointColor: el("ic50PointColor")?.value || "#1f2937",
     ic50PointAlpha: el("ic50PointAlpha")?.value || "1",
     ic50GroupShape1: el("ic50GroupShape1")?.value || "16",
@@ -6211,6 +6293,80 @@ Office.onReady(() => {
     // This function is kept for compatibility but does nothing
   }
 
+  // Function to show/hide group column and group color controls for scatter
+  function updateScatterGroupVisibility() {
+    const isChecked = document.getElementById("scatterGrouped")?.checked || false;
+    const groupColumnRow = document.getElementById("groupColumnRow");
+    const groupColorRow = document.getElementById("groupColorRow");
+    const groupColorLabel = document.getElementById("groupColorRowLabel");
+    const dotColorRow = document.getElementById("dotColorRow");
+
+    if (isChecked) {
+      if (groupColumnRow) groupColumnRow.style.display = "flex";
+      if (groupColorRow) groupColorRow.style.display = "flex";
+      if (groupColorLabel) groupColorLabel.textContent = "Group Colors";
+      // Hide single dot color — group colors take over
+      if (dotColorRow) dotColorRow.style.display = "none";
+      // Update group count and colors based on selected group column
+      if (typeof detectAndStoreGroups === 'function') detectAndStoreGroups();
+      const actualGroups = typeof getActualGroupNames === 'function' ? getActualGroupNames() : null;
+      if (actualGroups && actualGroups.length >= 2) {
+        const numGroupsInput = document.getElementById("numGroups");
+        if (numGroupsInput) {
+          numGroupsInput.value = Math.min(actualGroups.length, 6);
+          numGroupsInput.dispatchEvent(new Event('change'));
+        }
+      }
+      if (typeof updateGroupColorLabels === 'function') updateGroupColorLabels();
+    } else {
+      if (groupColumnRow) groupColumnRow.style.display = "none";
+      if (groupColorRow) groupColorRow.style.display = "none";
+      // Restore single dot color when ungrouped
+      if (dotColorRow) dotColorRow.style.display = "flex";
+    }
+    // Always sync the shape section visibility
+    updateScatterShapeSectionVisibility();
+  }
+
+  // Show/hide per-group shape section for scatter
+  function updateScatterShapeSectionVisibility() {
+    const chartType = document.getElementById("chartType")?.value || "";
+    const isScatter = chartType === "scatter";
+    const isGrouped = document.getElementById("scatterGrouped")?.checked || false;
+    const isPerGroup = document.getElementById("scatterPerGroupShape")?.checked || false;
+
+    const scatterShapeSection = document.getElementById("scatterShapeSection");
+    const scatterGroupShapeRows = document.getElementById("scatterGroupShapeRows");
+    const dotShapeRow = document.getElementById("dotShapeRow");
+
+    if (scatterShapeSection) {
+      scatterShapeSection.style.display = (isScatter && isGrouped) ? "block" : "none";
+    }
+    if (scatterGroupShapeRows) {
+      scatterGroupShapeRows.style.display = (isScatter && isGrouped && isPerGroup) ? "flex" : "none";
+    }
+    // Hide single shape selector when per-group shapes are active
+    if (dotShapeRow) {
+      dotShapeRow.style.display = (isScatter && isGrouped && isPerGroup) ? "none" : "flex";
+    }
+    if (isScatter && isGrouped && isPerGroup) {
+      updateScatterShapeLabels();
+    }
+  }
+
+  // Update scatter per-group shape labels with actual group names
+  function updateScatterShapeLabels() {
+    const fallback = ['1st group', '2nd group', '3rd group', '4th group', '5th group', '6th group'];
+    const groups = (typeof getActualGroupNames === 'function') ? getActualGroupNames() : [];
+    const groupNames = Array.isArray(groups) ? groups : [];
+    for (let i = 1; i <= 6; i++) {
+      const label = document.getElementById(`scatterShapeLabel${i}`);
+      if (label) {
+        label.textContent = groupNames[i - 1] != null ? groupNames[i - 1] : fallback[i - 1];
+      }
+    }
+  }
+
   // Update Colors & Style tab controls visibility based on chart type
   function updateColorsStyleControlsVisibility() {
     const chartType = (document.getElementById("chartType")?.value || "").toLowerCase();
@@ -6246,7 +6402,7 @@ Office.onReady(() => {
 
     const dotCharts = [
       'box_dot', 'violin_dot', 'dot', 'bar_error_dot',
-      'bar_grouped_error_dot', 'box_grouped_dot', 'violin_grouped_dot'
+      'bar_grouped_error_dot', 'box_grouped_dot', 'violin_grouped_dot', 'scatter'
     ];
 
     const groupedWithDodge = [
@@ -6373,6 +6529,15 @@ Office.onReady(() => {
       if (groupColorRow) groupColorRow.style.display = "flex";
       const groupColorLabel = document.getElementById("groupColorRowLabel");
       if (groupColorLabel) groupColorLabel.textContent = "Group Colors";
+    } else if (v === "scatter") {
+      lx.textContent = "X Axis (continuous)";
+      ly.textContent = "Y Axis (continuous)";
+      // Show the "Color by group" checkbox for scatter
+      const scatterGroupRow = document.getElementById("scatterGroupRow");
+      if (scatterGroupRow) scatterGroupRow.style.display = "block";
+      // Apply current checkbox state
+      updateScatterGroupVisibility();
+      updateScatterShapeSectionVisibility();
     } else if (v === "box") {
       lx.textContent = "X Axis (optional)";
       ly.textContent = "Y Axis";
@@ -6419,8 +6584,21 @@ Office.onReady(() => {
       if (fillColorSubRow) fillColorSubRow.style.display = "flex";
     }
 
-    // Hide group controls for non-grouped chart types (except per-category color charts)
-    if (!isGrouped && !isPerCategoryColor) {
+    // Hide scatter group checkbox and shape section for non-scatter chart types
+    const scatterGroupRow = document.getElementById("scatterGroupRow");
+    const scatterShapeSection = document.getElementById("scatterShapeSection");
+    if (v !== "scatter") {
+      if (scatterGroupRow) scatterGroupRow.style.display = "none";
+      if (scatterShapeSection) scatterShapeSection.style.display = "none";
+      // Restore dot color and shape rows for non-scatter chart types
+      const dotColorRow = document.getElementById("dotColorRow");
+      const dotShapeRow = document.getElementById("dotShapeRow");
+      if (dotColorRow) dotColorRow.style.display = "flex";
+      if (dotShapeRow) dotShapeRow.style.display = "flex";
+    }
+
+    // Hide group controls for non-grouped chart types (except per-category color charts and scatter)
+    if (!isGrouped && !isPerCategoryColor && v !== "scatter") {
       if (groupColorRow) groupColorRow.style.display = "none";
       if (groupColumnRow) groupColumnRow.style.display = "none";
       // Reset bar width to default for non-grouped charts (only if it was 0.9)
@@ -6529,8 +6707,19 @@ Office.onReady(() => {
       // Single shape row vs per-group shape section
       const ic50PointShapeRow = document.getElementById("ic50PointShapeRow");
       const ic50GroupShapeSection = document.getElementById("ic50GroupShapeSection");
-      if (ic50PointShapeRow) ic50PointShapeRow.style.display = isGrouped ? "none" : "";
-      if (ic50GroupShapeSection) ic50GroupShapeSection.style.display = isGrouped ? "" : "none";
+      const ic50PerGroupShapeRow = document.getElementById("ic50PerGroupShapeRow");
+      const ic50PerGroupShape = document.getElementById("ic50PerGroupShape")?.checked || false;
+      if (isGrouped) {
+        // Grouped: show per-group checkbox; hide single shape row when per-group is active
+        if (ic50PointShapeRow) ic50PointShapeRow.style.display = ic50PerGroupShape ? "none" : "";
+        if (ic50PerGroupShapeRow) ic50PerGroupShapeRow.style.display = "flex";
+        if (ic50GroupShapeSection) ic50GroupShapeSection.style.display = ic50PerGroupShape ? "" : "none";
+      } else {
+        // Single: just the single shape row, hide grouped controls
+        if (ic50PointShapeRow) ic50PointShapeRow.style.display = "";
+        if (ic50PerGroupShapeRow) ic50PerGroupShapeRow.style.display = "none";
+        if (ic50GroupShapeSection) ic50GroupShapeSection.style.display = "none";
+      }
 
       // IC50 line (vertical) section header + color row: hide color for grouped (uses group colors)
       const ic50VerticalLineHeader = document.getElementById("ic50VerticalLineHeader");
@@ -7477,6 +7666,19 @@ Office.onReady(() => {
     updateVbracketVisibility();
   });
 
+  // Set up scatter "Color by group" checkbox listener
+  document.getElementById("scatterGrouped")?.addEventListener("change", updateScatterGroupVisibility);
+
+  // Set up scatter "Per group shape" checkbox listener
+  document.getElementById("scatterPerGroupShape")?.addEventListener("change", function() {
+    updateScatterShapeSectionVisibility();
+  });
+
+  // IC50 per-group shape toggle
+  document.getElementById("ic50PerGroupShape")?.addEventListener("change", function() {
+    updateIC50AnalysisVisibility();
+  });
+
   // vbracket position dropdown removed - now uses manual X/Y positioning only
 
   // Set up group column change listener to auto-update number of groups and custom order
@@ -7484,11 +7686,12 @@ Office.onReady(() => {
     const actualGroups = getActualGroupNames();
     if (actualGroups && actualGroups.length >= 2) {
       const numGroupsInput = document.getElementById("numGroups");
-      if (numGroupsInput && parseInt(numGroupsInput.value) !== actualGroups.length) {
-        numGroupsInput.value = actualGroups.length;
+      const clampedCount = Math.min(actualGroups.length, 6);
+      if (numGroupsInput && parseInt(numGroupsInput.value) !== clampedCount) {
+        numGroupsInput.value = clampedCount;
         // Trigger change event to show/hide color inputs
         numGroupsInput.dispatchEvent(new Event('change'));
-        console.log("🔥 Auto-updated numGroups to:", actualGroups.length, "when Group Column changed");
+        console.log("🔥 Auto-updated numGroups to:", clampedCount, "when Group Column changed");
       }
     }
     updateGroupColorLabels();
@@ -8093,8 +8296,10 @@ function getActualGroupNames() {
       }
     }
 
-    // For line plots and explicit grouped charts, use the Group column selector
-    if ((isLinePlot || isGroupedChart) && window.lastProcessedData && window.lastProcessedData.length > 0) {
+    const isScatterGrouped = chartType === 'scatter' && document.getElementById("scatterGrouped")?.checked;
+
+    // For line plots, explicit grouped charts, and grouped scatter: use the Group column selector
+    if ((isLinePlot || isGroupedChart || isScatterGrouped) && window.lastProcessedData && window.lastProcessedData.length > 0) {
       const groupColumn = document.getElementById("groupColumn")?.value;
       if (groupColumn) {
         const headers = window.lastProcessedData[0];
@@ -8159,8 +8364,10 @@ function updateGroupColorLabels() {
   if (window.lastProcessedData && window.lastProcessedData.length >= 2) {
     const headers = window.lastProcessedData[0];
 
-    if (isGrouped) {
-      // Grouped charts (including ic50_grouped_dose_response): read from Group column selector
+    const isScatterGrouped = chartType === 'scatter' && document.getElementById("scatterGrouped")?.checked;
+
+    if (isGrouped || isScatterGrouped) {
+      // Grouped charts + grouped scatter: read from Group column selector
       const groupColValue = document.getElementById("groupColumn")?.value;
       if (groupColValue) {
         const groupIdx = headers.findIndex(h => h === groupColValue);
@@ -8192,10 +8399,15 @@ function updateGroupColorLabels() {
     if (label) {
       label.textContent = uniqueGroups[i - 1] != null ? uniqueGroups[i - 1] : fallback[i - 1];
     }
-    // Also update per-group shape labels
+    // Also update IC50 per-group shape labels
     const shapeLabel = document.getElementById(`ic50GroupShapeLabel${i}`);
     if (shapeLabel) {
       shapeLabel.textContent = uniqueGroups[i - 1] != null ? uniqueGroups[i - 1] : fallback[i - 1];
+    }
+    // Also update scatter per-group shape labels
+    const scatterShapeLabel = document.getElementById(`scatterShapeLabel${i}`);
+    if (scatterShapeLabel) {
+      scatterShapeLabel.textContent = uniqueGroups[i - 1] != null ? uniqueGroups[i - 1] : fallback[i - 1];
     }
   }
 }
@@ -13071,6 +13283,61 @@ async function initWebR() {
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
                       title_text, x_text, y_text, 
+                      show_title, show_x_label, show_y_label,
+                      x_scale, y_scale,
+                      theme_name,
+                      x_axis_rotation, y_axis_rotation,
+                      x_axis_hjust, x_axis_vjust,
+                      y_axis_hjust, y_axis_vjust,
+                      add_statistics, statistical_test)
+    }
+
+    sato_scatter <- function(dat, x_col=1, y_col=2, group_col=NULL,
+                            color="#4C78A8", group_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"),
+                            group_name="Group",
+                            group_shapes=NULL,
+                            size=2, alpha=0.9, shape=16,
+                            target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
+                            title_size=14, x_axis_title_size=12, y_axis_title_size=12, x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
+                            title_text="Scatter plot", x_text="X", y_text="Y",
+                            show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
+                            x_scale="linear", y_scale="linear",
+                            theme_name="bw",
+                            x_axis_rotation=0, y_axis_rotation=0,
+                            x_axis_hjust=0.5, x_axis_vjust=0.5,
+                            y_axis_hjust=0.5, y_axis_vjust=0.5,
+                            add_statistics=FALSE, statistical_test="auto") {
+
+      dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
+
+      if (!is.null(group_col) && ncol(dat) >= group_col) {
+        # Grouped scatter: color by group
+        group_levels <- levels(factor(dat[[group_col]]))
+        n_groups <- length(group_levels)
+        col_vals <- group_colors[((seq_len(n_groups) - 1) %% length(group_colors)) + 1]
+        names(col_vals) <- group_levels
+        if (!is.null(group_shapes) && length(group_shapes) >= n_groups) {
+          # Per-group shape mode
+          shape_vals <- group_shapes[1:n_groups]
+          names(shape_vals) <- group_levels
+          p <- ggplot(dat, aes(x=dat[[x_col]], y=dat[[y_col]], color=factor(dat[[group_col]]), shape=factor(dat[[group_col]]))) +
+               geom_point(size=size, alpha=alpha) +
+               scale_color_manual(values=col_vals, name=group_name) +
+               scale_shape_manual(values=shape_vals, name=group_name)
+        } else {
+          p <- ggplot(dat, aes(x=dat[[x_col]], y=dat[[y_col]], color=factor(dat[[group_col]]))) +
+               geom_point(size=size, alpha=alpha, shape=shape) +
+               scale_color_manual(values=col_vals, name=group_name)
+        }
+      } else {
+        # Single-color scatter
+        p <- ggplot(dat, aes(x=dat[[x_col]], y=dat[[y_col]])) +
+             geom_point(color=color, size=size, alpha=alpha, shape=shape)
+      }
+
+      sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
+                      title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
+                      title_text, x_text, y_text,
                       show_title, show_x_label, show_y_label,
                       x_scale, y_scale,
                       theme_name,
@@ -19529,9 +19796,10 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const ic50HalfLineAlpha = Number(document.getElementById("ic50HalfLineAlpha")?.value) ?? 1;
   const ic50PointSize = Number(document.getElementById("ic50PointSize")?.value) || 3;
   const ic50PointShape = Number(document.getElementById("ic50PointShape")?.value) || 16;
-  const ic50GroupShapes = [1,2,3,4,5,6].map((i, idx) => {
-    return Number(document.getElementById(`ic50GroupShape${i}`)?.value) || [16,17,15,18,1,2][idx];
-  });
+  const ic50PerGroupShape = document.getElementById("ic50PerGroupShape")?.checked || false;
+  const ic50GroupShapes = ic50PerGroupShape
+    ? [1,2,3,4,5,6].map((i, idx) => Number(document.getElementById(`ic50GroupShape${i}`)?.value) || [16,17,15,18,1,2][idx])
+    : Array(6).fill(ic50PointShape);
   const ic50PointColor = document.getElementById("ic50PointColor")?.value || "#1f2937";
   const ic50PointAlpha = Number(document.getElementById("ic50PointAlpha")?.value) ?? 1;
   const ic50DataDisplay = document.getElementById("ic50DataDisplay")?.value || "mean_sd";
@@ -20206,6 +20474,47 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         y_axis_vjust = ${yAxisVjust},
         add_statistics = ${addStatistics ? 'TRUE' : 'FALSE'},
         statistical_test = "${statisticalTest}"
+      )
+    } else if (chart_type == "scatter") {
+      p <- sato_scatter(
+        dat = dat,
+        x_col = ${xColIndex},
+        y_col = ${yColIndex},
+        group_col = ${ document.getElementById('scatterGrouped')?.checked ? groupColIndex : 'NULL' },
+        group_colors = c("${groupColors.join('", "')}"),
+        group_name = "${(window.lastOriginalHeaders || [])[groupColIndex - 1] || 'Group'}",
+        group_shapes = ${ (() => { const isGrouped = document.getElementById('scatterGrouped')?.checked; const isPerGroup = document.getElementById('scatterPerGroupShape')?.checked; if (isGrouped && isPerGroup) { const defaults = [16,17,15,18,1,2]; const vals = [1,2,3,4,5,6].map(i => parseInt(document.getElementById(`scatterShape${i}`)?.value || defaults[i-1])); return `c(${vals.join(', ')})`; } return 'NULL'; })() },
+        color = "${dotColor}",
+        alpha = ${dotAlpha},
+        size = ${dotSize},
+        shape = ${dotShape},
+        target_font = target_font,
+        title_weight = title_weight,
+        axis_title_weight = axis_title_weight,
+        axis_text_weight = axis_text_weight,
+        title_size = ${titleSize},
+        x_axis_title_size = ${xAxisTitleSize},
+        y_axis_title_size = ${yAxisTitleSize},
+        x_axis_text_size = ${xAxisTextSize},
+        y_axis_text_size = ${yAxisTextSize},
+        legend_text_size = ${legendTextSize},
+        title_text = ${formatR(title)},
+        x_text = ${formatR(xlab)},
+        y_text = ${formatR(ylab)},
+        show_title = ${showTitle},
+        show_x_label = ${showXLabel},
+        show_y_label = ${showYLabel},
+        x_scale = "${xScale}",
+        y_scale = "${yScale}",
+        theme_name = "${themeName}",
+        x_axis_rotation = ${xAxisRotation},
+        y_axis_rotation = ${yAxisRotation},
+        x_axis_hjust = ${xAxisHjust},
+        x_axis_vjust = ${xAxisVjust},
+        y_axis_hjust = ${yAxisHjust},
+        y_axis_vjust = ${yAxisVjust},
+        add_statistics = FALSE,
+        statistical_test = "auto"
       )
     } else if (chart_type == "bar") {
       p <- sato_bar(
@@ -21836,21 +22145,36 @@ async function loadHeadersFromSelection(){
       // For regular charts
       xSel.value=headers[xIdx];
       ySel.value=headers[yIdx];
-      if (groupSel && headers.length > 0) groupSel.value = headers[0];  // Default to first column
+      if (groupSel && headers.length > 0) {
+        // For scatter: prefer a non-numeric (text) column as the default group column
+        // so "Color by group" labels show actual group names, not X values
+        if (chartType === 'scatter' && headers.length >= 3) {
+          const textIndices = headers.map((_, i) => i).filter(i => !isNum(i));
+          groupSel.value = textIndices.length > 0 ? headers[textIndices[0]] : headers[0];
+        } else {
+          groupSel.value = headers[0];  // Default to first column for other chart types
+        }
+      }
     }
 
     // Auto-detect number of groups and update UI (after column selectors are populated)
     const actualGroups = getActualGroupNames();
     if (actualGroups && actualGroups.length >= 2) {
       const numGroupsInput = document.getElementById("numGroups");
-      if (numGroupsInput && parseInt(numGroupsInput.value) !== actualGroups.length) {
-        numGroupsInput.value = actualGroups.length;
+      const clampedCount = Math.min(actualGroups.length, 6);
+      if (numGroupsInput && parseInt(numGroupsInput.value) !== clampedCount) {
+        numGroupsInput.value = clampedCount;
         // Trigger change event to show/hide color inputs
         numGroupsInput.dispatchEvent(new Event('change'));
-        console.log("🔥 Auto-updated numGroups to:", actualGroups.length);
+        console.log("🔥 Auto-updated numGroups to:", clampedCount);
       }
     }
     updateGroupColorLabels();
+
+    // For scatter: refresh group visibility so labels update after data load
+    if (chartType === 'scatter' && typeof updateScatterGroupVisibility === 'function') {
+      updateScatterGroupVisibility();
+    }
 
     // Update comparison checkboxes when new data is loaded
     populateComparisonCheckboxes();

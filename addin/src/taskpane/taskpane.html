@@ -433,6 +433,7 @@
       <button class="tab-button" data-tab="tab-stats">Statistics</button>
       <button class="tab-button" data-tab="tab-analysis">Analysis</button>
       <button class="tab-button" data-tab="tab-help">Help</button>
+      <button class="tab-button" data-tab="tab-donate">Donate</button>
     </div>
 
     <!-- Tab 1: Data & Chart -->
@@ -451,8 +452,8 @@
           <div style="display:flex; align-items:flex-start; gap:4px;">
             <!-- Wide table -->
             <div style="flex:1; min-width:0;">
-              <div style="font-size:9px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">Your data (Wide format)</div>
-              <table style="width:100%; border-collapse:collapse; font-size:9px;">
+              <div style="font-size:11px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">Your data (Wide format)</div>
+              <table style="width:100%; border-collapse:collapse; font-size:11px;">
                 <tr style="background:#e8f0fe;">
                   <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Sample</th>
                   <th style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</th>
@@ -467,8 +468,8 @@
             <div style="display:flex; align-items:center; padding-top:20px; font-size:18px; color:#888; flex-shrink:0;">→</div>
             <!-- Long table -->
             <div style="flex:1; min-width:0;">
-              <div style="font-size:9px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">For Figra (Long format)</div>
-              <table style="width:100%; border-collapse:collapse; font-size:9px;">
+              <div style="font-size:11px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">For Figra (Long format)</div>
+              <table style="width:100%; border-collapse:collapse; font-size:11px;">
                 <tr style="background:#e8f0fe;">
                   <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Sample</th>
                   <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Category</th>
@@ -509,6 +510,7 @@
         <option value="violin">Violin plot</option>
         <option value="violin_dot">Violin plot + dots</option>
         <option value="dot">Dot plot</option>
+        <option value="scatter">Scatter plot</option>
         <option value="bar">Bar plot</option>
         <option value="bar_error">Bar plot with error (pre-calculated)</option>
         <option value="bar_error_dot" selected>Bar + error + dots</option>
@@ -556,7 +558,13 @@
       <input type="number" id="bins" value="20" min="1" max="100">
     </div>
 
-    <!-- Group column selector (only for grouped charts) -->
+    <!-- Scatter: Color by group checkbox (only for scatter) -->
+    <div id="scatterGroupRow" style="display:none; margin: 4px 0 6px 0;">
+      <input type="checkbox" id="scatterGrouped" />
+      <label for="scatterGrouped" style="font-weight:normal; width:auto;">Color by group</label>
+    </div>
+
+    <!-- Group column selector (only for grouped charts and grouped scatter) -->
     <div class="row" id="groupColumnRow" style="display:none;">
       <label for="groupColumn">Group Column</label>
       <select id="groupColumn"></select>
@@ -767,28 +775,149 @@
       <!-- Dot Settings -->
       <div class="row" id="dotSettingsRow">
         <label>Dot Settings</label>
-        <div class="half" style="width:280px">
-          <label for="dotSize">size</label>
-          <input id="dotSize" type="number" min="0.5" max="10" step="0.5" value="4" style="width:60px" />
-          <label for="dotColor">color</label>
-          <input id="dotColorPicker" type="color" value="#333333" />
-          <input id="dotColor" type="text" placeholder="#333333" style="width:100px" />
-          <label for="dotShape">shape</label>
-          <select id="dotShape">
-            <option value="16" selected>● Circle (filled)</option>
-            <option value="1">○ Circle (open)</option>
-            <option value="15">■ Square (filled)</option>
-            <option value="0">□ Square (open)</option>
-            <option value="17">▲ Triangle (filled)</option>
-            <option value="2">△ Triangle (open)</option>
-            <option value="18">♦ Diamond (filled)</option>
-            <option value="5">◇ Diamond (open)</option>
-            <option value="19">● Large circle</option>
-            <option value="3">+ Plus</option>
-            <option value="4">× Cross</option>
-          </select>
-          <label for="dotAlpha">alpha</label>
-          <input id="dotAlpha" type="range" min="0" max="1" step="0.05" value="1.0" style="width:100%;">
+        <div style="display:flex; flex-direction:column; gap:6px; width:280px;">
+          <!-- Size & Alpha -->
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label for="dotSize" style="font-size:12px; width:36px;">Size</label>
+            <input id="dotSize" type="number" min="0.5" max="10" step="0.5" value="4" style="width:60px" />
+            <label for="dotAlpha" style="font-size:12px; width:36px;">Alpha</label>
+            <input id="dotAlpha" type="range" min="0" max="1" step="0.05" value="1.0" style="flex:1;">
+          </div>
+          <!-- Color (hidden for scatter+grouped) -->
+          <div id="dotColorRow" style="display:flex; align-items:center; gap:8px;">
+            <label for="dotColor" style="font-size:12px; width:36px;">Color</label>
+            <input id="dotColorPicker" type="color" value="#333333" />
+            <input id="dotColor" type="text" placeholder="#333333" style="width:100px" />
+          </div>
+          <!-- Shape (hidden when scatter per-group shape is on) -->
+          <div id="dotShapeRow" style="display:flex; align-items:center; gap:8px;">
+            <label for="dotShape" style="font-size:12px; width:36px;">Shape</label>
+            <select id="dotShape" style="flex:1; font-size:12px;">
+              <option value="16" selected>● Circle (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="17">▲ Triangle (filled)</option>
+              <option value="2">△ Triangle (open)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="19">● Large circle</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Per-group dot shape section (shown only for scatter with Color by group checked) -->
+      <div id="scatterShapeSection" style="display:none; margin-top: 4px;">
+        <div style="display:flex; align-items:center; gap:6px; padding:2px 0 6px 0;">
+          <input type="checkbox" id="scatterPerGroupShape" />
+          <label for="scatterPerGroupShape" style="font-weight:600; font-size:14px; width:auto;">Per group shape</label>
+        </div>
+        <div id="scatterGroupShapeRows" style="display:none; flex-direction:column; gap:4px; padding-left:4px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="scatterShapeLabel1" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">1st group</label>
+            <select id="scatterShape1" style="flex:1; font-size:12px;">
+              <option value="16" selected>● Circle (filled)</option>
+              <option value="17">▲ Triangle up (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2">△ Triangle up (open)</option>
+              <option value="25">▼ Triangle down (filled)</option>
+              <option value="6">▽ Triangle down (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="scatterShapeLabel2" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">2nd group</label>
+            <select id="scatterShape2" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17" selected>▲ Triangle up (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2">△ Triangle up (open)</option>
+              <option value="25">▼ Triangle down (filled)</option>
+              <option value="6">▽ Triangle down (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="scatterShapeLabel3" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">3rd group</label>
+            <select id="scatterShape3" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle up (filled)</option>
+              <option value="15" selected>■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2">△ Triangle up (open)</option>
+              <option value="25">▼ Triangle down (filled)</option>
+              <option value="6">▽ Triangle down (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="scatterShapeLabel4" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">4th group</label>
+            <select id="scatterShape4" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle up (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18" selected>♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2">△ Triangle up (open)</option>
+              <option value="25">▼ Triangle down (filled)</option>
+              <option value="6">▽ Triangle down (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="scatterShapeLabel5" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">5th group</label>
+            <select id="scatterShape5" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle up (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1" selected>○ Circle (open)</option>
+              <option value="2">△ Triangle up (open)</option>
+              <option value="25">▼ Triangle down (filled)</option>
+              <option value="6">▽ Triangle down (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="scatterShapeLabel6" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">6th group</label>
+            <select id="scatterShape6" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle up (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2" selected>△ Triangle up (open)</option>
+              <option value="25">▼ Triangle down (filled)</option>
+              <option value="6">▽ Triangle down (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -866,9 +995,13 @@
             <option value="4">× Cross</option>
           </select>
         </div>
-        <!-- Per-group point shapes (shown only for grouped IC50) -->
+        <!-- Per group shape toggle (shown only for grouped IC50) -->
+        <div id="ic50PerGroupShapeRow" style="display:none; align-items:center; gap:6px; padding:2px 0 6px 0;">
+          <input type="checkbox" id="ic50PerGroupShape" />
+          <label for="ic50PerGroupShape" style="font-weight:600; font-size:14px; width:auto;">Per group shape</label>
+        </div>
+        <!-- Per-group point shapes (shown only for grouped IC50 + checkbox checked) -->
         <div id="ic50GroupShapeSection" style="display:none;">
-          <div class="row"><label style="font-weight:600; font-size:12px;">Point shape per group</label></div>
           <div style="display:flex; flex-direction:column; gap:4px; padding-left:4px;">
             <div style="display:flex; align-items:center; gap:8px;">
               <label id="ic50GroupShapeLabel1" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">1st group</label>
@@ -1723,8 +1856,8 @@
           <div style="background:#fff; border:1px solid #e0e0e0; border-radius:4px; padding:8px;">
           <div style="display:flex; align-items:flex-start; gap:4px;">
             <div style="flex:1; min-width:0;">
-              <div style="font-size:9px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">Your data (Wide format)</div>
-              <table style="width:100%; border-collapse:collapse; font-size:9px;">
+              <div style="font-size:11px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">Your data (Wide format)</div>
+              <table style="width:100%; border-collapse:collapse; font-size:11px;">
                 <tr style="background:#e8f0fe;">
                   <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Sample</th>
                   <th style="border:1px solid #ccc; padding:2px 3px; text-align:center; color:#4C78A8;">Control</th>
@@ -1737,8 +1870,8 @@
             </div>
             <div style="display:flex; align-items:center; padding-top:20px; font-size:18px; color:#888; flex-shrink:0;">→</div>
             <div style="flex:1; min-width:0;">
-              <div style="font-size:9px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">For Figra (Long format)</div>
-              <table style="width:100%; border-collapse:collapse; font-size:9px;">
+              <div style="font-size:11px; font-weight:bold; color:#555; margin-bottom:3px; text-align:center;">For Figra (Long format)</div>
+              <table style="width:100%; border-collapse:collapse; font-size:11px;">
                 <tr style="background:#e8f0fe;">
                   <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Sample</th>
                   <th style="border:1px solid #ccc; padding:2px 3px; text-align:center;">Category</th>
@@ -1780,8 +1913,8 @@
 
             <!-- Example 1: Replicates in rows -->
             <div style="flex:1; min-width:0;">
-              <div style="font-size:9px; font-weight:bold; color:#444; margin-bottom:3px; text-align:center;">Replicates in rows</div>
-              <table style="border-collapse:collapse; font-size:8px; width:100%;">
+              <div style="font-size:11px; font-weight:bold; color:#444; margin-bottom:3px; text-align:center;">Replicates in rows</div>
+              <table style="border-collapse:collapse; font-size:10px; width:100%;">
                 <tr>
                   <td style="padding:1px 2px; border:1px solid #ddd; background:#fff;"></td>
                   <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group A</td>
@@ -1815,8 +1948,8 @@
 
             <!-- Example 2: Replicates in columns -->
             <div style="flex:1; min-width:0;">
-              <div style="font-size:9px; font-weight:bold; color:#444; margin-bottom:3px; text-align:center;">Replicates in columns</div>
-              <table style="border-collapse:collapse; font-size:8px; width:100%;">
+              <div style="font-size:11px; font-weight:bold; color:#444; margin-bottom:3px; text-align:center;">Replicates in columns</div>
+              <table style="border-collapse:collapse; font-size:10px; width:100%;">
                 <tr>
                   <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group A</td>
                   <td style="padding:1px 2px; border:2px solid #93c5fd; background:#dbeafe; color:#1d4ed8; font-weight:bold; text-align:center;">Group A</td>
@@ -1863,6 +1996,98 @@
             <span style="display:inline-block;width:10px;height:10px;background:#dcfce7;border:1px solid #86efac;vertical-align:middle; margin-right:3px;"></span><b>Factor 2</b>: another row or column of labels → becomes Factor 2 column in output<br>
             <span style="display:inline-block;width:10px;height:10px;background:#fef3c7;border:1px solid #fcd34d;vertical-align:middle; margin-right:3px;"></span><b>Values</b>: your data cells → becomes the Values column in output
           </div>
+
+          <!-- Chart schematic -->
+          <div style="margin-top:10px;">
+            <div style="font-size:9px; color:#888; margin-bottom:4px;">→ Resulting chart structure:</div>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 148" width="100%" style="display:block;">
+
+              <!-- Y axis -->
+              <line x1="46" y1="8" x2="46" y2="104" stroke="#bbb" stroke-width="1.2"/>
+              <!-- X axis -->
+              <line x1="46" y1="104" x2="315" y2="104" stroke="#bbb" stroke-width="1.2"/>
+
+              <!-- Y axis label: Value -->
+              <text transform="rotate(-90,13,56)" x="13" y="56" font-family="Arial,sans-serif" font-size="10" fill="#222" text-anchor="middle">Value</text>
+
+              <!-- Y gridlines (faint) -->
+              <line x1="46" y1="78" x2="315" y2="78" stroke="#eee" stroke-width="1"/>
+              <line x1="46" y1="52" x2="315" y2="52" stroke="#eee" stroke-width="1"/>
+              <line x1="46" y1="26" x2="315" y2="26" stroke="#eee" stroke-width="1"/>
+
+              <!-- Control bars -->
+              <rect x="62"  y="44" width="18" height="60" fill="#4C78A8" rx="2"/>
+              <rect x="82"  y="56" width="18" height="48" fill="#E15759" rx="2"/>
+              <!-- Control error bars -->
+              <line x1="71" y1="34" x2="71" y2="44" stroke="#222" stroke-width="1.5"/>
+              <line x1="68" y1="34" x2="74" y2="34" stroke="#222" stroke-width="1.5"/>
+              <line x1="91" y1="47" x2="91" y2="56" stroke="#222" stroke-width="1.5"/>
+              <line x1="88" y1="47" x2="94" y2="47" stroke="#222" stroke-width="1.5"/>
+              <!-- Control dots -->
+              <circle cx="68" cy="42" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="70" cy="46" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="73" cy="43" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="71" cy="48" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="88" cy="54" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="90" cy="58" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="93" cy="55" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="91" cy="60" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+
+              <!-- Drug A bars -->
+              <rect x="142" y="62" width="18" height="42" fill="#4C78A8" rx="2"/>
+              <rect x="162" y="68" width="18" height="36" fill="#E15759" rx="2"/>
+              <!-- Drug A error bars -->
+              <line x1="151" y1="52" x2="151" y2="62" stroke="#222" stroke-width="1.5"/>
+              <line x1="148" y1="52" x2="154" y2="52" stroke="#222" stroke-width="1.5"/>
+              <line x1="171" y1="59" x2="171" y2="68" stroke="#222" stroke-width="1.5"/>
+              <line x1="168" y1="59" x2="174" y2="59" stroke="#222" stroke-width="1.5"/>
+              <!-- Drug A dots -->
+              <circle cx="148" cy="60" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="150" cy="64" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="153" cy="61" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="151" cy="66" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="168" cy="66" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="170" cy="70" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="173" cy="67" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="171" cy="72" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+
+              <!-- Drug B bars -->
+              <rect x="222" y="54" width="18" height="50" fill="#4C78A8" rx="2"/>
+              <rect x="242" y="72" width="18" height="32" fill="#E15759" rx="2"/>
+              <!-- Drug B error bars -->
+              <line x1="231" y1="44" x2="231" y2="54" stroke="#222" stroke-width="1.5"/>
+              <line x1="228" y1="44" x2="234" y2="44" stroke="#222" stroke-width="1.5"/>
+              <line x1="251" y1="63" x2="251" y2="72" stroke="#222" stroke-width="1.5"/>
+              <line x1="248" y1="63" x2="254" y2="63" stroke="#222" stroke-width="1.5"/>
+              <!-- Drug B dots -->
+              <circle cx="228" cy="52" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="230" cy="56" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="233" cy="53" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="231" cy="58" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="248" cy="70" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="250" cy="74" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="253" cy="71" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+              <circle cx="251" cy="76" r="2" fill="#222" stroke="#222" stroke-width="1"/>
+
+              <!-- X axis labels (Factor 1 / Factor 2) -->
+              <text x="81"  y="117" font-family="Arial,sans-serif" font-size="10" fill="#222" text-anchor="middle" font-weight="bold">Control</text>
+              <text x="161" y="117" font-family="Arial,sans-serif" font-size="10" fill="#222" text-anchor="middle" font-weight="bold">Drug A</text>
+              <text x="241" y="117" font-family="Arial,sans-serif" font-size="10" fill="#222" text-anchor="middle" font-weight="bold">Drug B</text>
+
+              <!-- Factor 1/2 axis label -->
+              <text x="181" y="132" font-family="Arial,sans-serif" font-size="10" fill="#222" text-anchor="middle">Factor 1 / Factor 2</text>
+
+              <!-- Legend box -->
+              <rect x="328" y="18" width="146" height="52" rx="4" fill="#f9f9f9" stroke="#ddd" stroke-width="1"/>
+              <text x="401" y="32" font-family="Arial,sans-serif" font-size="10" fill="#222" text-anchor="middle" font-weight="bold">Factor 1 / Factor 2</text>
+              <rect x="336" y="38" width="10" height="10" fill="#4C78A8" rx="1"/>
+              <text x="350" y="47" font-family="Arial,sans-serif" font-size="10" fill="#444">Group A</text>
+              <rect x="336" y="52" width="10" height="10" fill="#E15759" rx="1"/>
+              <text x="350" y="61" font-family="Arial,sans-serif" font-size="10" fill="#444">Group B</text>
+
+            </svg>
+          </div>
+
         </div>
 
         <div id="vcMergedWarning" style="display:none; font-size:11px; color:#92400e; background:#fef3c7; border:1px solid #fcd34d; padding:6px 8px; border-radius:4px; margin-bottom:8px;">
@@ -2131,6 +2356,10 @@
         <!-- Resources -->
         <div style="font-weight: bold; font-size: 13px; margin-bottom: 8px;">Resources</div>
         <div style="display: flex; flex-direction: column; gap: 8px;">
+          <a href="https://h20gg702.github.io/figra-pages/index.html" target="_blank"
+             style="display:inline-block; padding: 8px 16px; background: #87a96b; color: #fff; border-radius: 6px; font-size: 13px; font-weight: 500; text-decoration: none; text-align:center;">
+            🏠 Figra Home — Example Figures &amp; Templates
+          </a>
           <a href="https://h20gg702.github.io/figra-pages/issues.html" target="_blank"
              style="font-size: 12px; color: #4C78A8; text-decoration: none;">
             Known Issues &amp; Q&amp;A
@@ -2152,6 +2381,27 @@
 
       </div>
     </div><!-- End Tab 7: Help -->
+
+    <!-- Tab 8: Donate -->
+    <div id="tab-donate" class="tab-content">
+      <div style="padding: 20px 14px; text-align: center;">
+        <div style="font-size: 32px; margin-bottom: 10px;">☕</div>
+        <div style="font-weight: bold; font-size: 15px; margin-bottom: 12px; color: #1a1a2e;">Support Figra</div>
+        <p style="font-size: 12px; color: #555; margin-bottom: 12px; line-height: 1.6; text-align: left;">
+          Figra is built and maintained by a single postdoctoral researcher in their spare time. It is completely free — no ads, no subscription, no paywalls.
+        </p>
+        <p style="font-size: 12px; color: #555; margin-bottom: 20px; line-height: 1.6; text-align: left;">
+          If Figra saves you time in the lab, a small donation helps keep it alive and supports future development. It is entirely voluntary and deeply appreciated.
+        </p>
+        <a href="https://www.paypal.com/donate/?hosted_button_id=GXZHHRXKJPKDS" target="_blank"
+           style="display: inline-block; padding: 10px 28px; background: #0070ba; color: #fff; text-decoration: none; border-radius: 6px; font-size: 13px; font-weight: 600; letter-spacing: 0.3px;">
+          Donate via PayPal
+        </a>
+        <p style="font-size: 11px; color: #aaa; margin-top: 16px;">
+          Completely optional. Thank you for using Figra!
+        </p>
+      </div>
+    </div><!-- End Tab 8: Donate -->
 
     <!-- Persistent action bar - always visible regardless of active tab -->
     <div id="persistentActionBar" style="border-top:1px solid #e5e7eb; padding:8px 8px 4px 8px; margin-top:4px;">
@@ -2210,6 +2460,7 @@
         violin: `<svg viewBox="0 0 40 30"><path d="M20 2 C28 4 26 10 22 14 C26 18 28 24 20 28 C12 24 14 18 18 14 C14 10 12 4 20 2 Z" fill="none" stroke="#4C78A8" stroke-width="1.8"/><line x1="20" y1="8" x2="20" y2="22" stroke="#4C78A8" stroke-width="1.5"/></svg>`,
         violin_dot: `<svg viewBox="0 0 40 30"><path d="M20 2 C28 4 26 10 22 14 C26 18 28 24 20 28 C12 24 14 18 18 14 C14 10 12 4 20 2 Z" fill="none" stroke="#4C78A8" stroke-width="1.8"/><circle cx="19" cy="9" r="1.5" fill="#E15759"/><circle cx="21" cy="15" r="1.5" fill="#E15759"/><circle cx="19" cy="22" r="1.5" fill="#E15759"/></svg>`,
         dot: `<svg viewBox="0 0 40 30"><circle cx="10" cy="20" r="2.5" fill="#4C78A8"/><circle cx="10" cy="14" r="2.5" fill="#4C78A8"/><circle cx="10" cy="8" r="2.5" fill="#4C78A8"/><circle cx="20" cy="18" r="2.5" fill="#4C78A8"/><circle cx="20" cy="12" r="2.5" fill="#4C78A8"/><circle cx="30" cy="22" r="2.5" fill="#4C78A8"/><circle cx="30" cy="16" r="2.5" fill="#4C78A8"/><circle cx="30" cy="10" r="2.5" fill="#4C78A8"/></svg>`,
+        scatter: `<svg viewBox="0 0 40 30"><circle cx="8" cy="24" r="2" fill="#4C78A8"/><circle cx="14" cy="20" r="2" fill="#4C78A8"/><circle cx="10" cy="16" r="2" fill="#4C78A8"/><circle cx="20" cy="12" r="2" fill="#4C78A8"/><circle cx="18" cy="22" r="2" fill="#4C78A8"/><circle cx="26" cy="8" r="2" fill="#4C78A8"/><circle cx="30" cy="16" r="2" fill="#4C78A8"/><circle cx="34" cy="6" r="2" fill="#4C78A8"/><circle cx="28" cy="24" r="2" fill="#4C78A8"/></svg>`,
         bar: `<svg viewBox="0 0 40 30"><rect x="4" y="14" width="8" height="14" fill="#4C78A8"/><rect x="16" y="8" width="8" height="20" fill="#4C78A8"/><rect x="28" y="4" width="8" height="24" fill="#4C78A8"/></svg>`,
         bar_error: `<svg viewBox="0 0 40 30"><rect x="4" y="14" width="8" height="14" fill="#4C78A8"/><line x1="8" y1="10" x2="8" y2="14" stroke="#333" stroke-width="1.5"/><line x1="5" y1="10" x2="11" y2="10" stroke="#333" stroke-width="1.5"/><rect x="16" y="8" width="8" height="20" fill="#4C78A8"/><line x1="20" y1="4" x2="20" y2="8" stroke="#333" stroke-width="1.5"/><line x1="17" y1="4" x2="23" y2="4" stroke="#333" stroke-width="1.5"/><rect x="28" y="10" width="8" height="18" fill="#4C78A8"/><line x1="32" y1="6" x2="32" y2="10" stroke="#333" stroke-width="1.5"/><line x1="29" y1="6" x2="35" y2="6" stroke="#333" stroke-width="1.5"/></svg>`,
         bar_error_dot: `<svg viewBox="0 0 40 30"><rect x="4" y="14" width="8" height="14" fill="#4C78A8"/><line x1="8" y1="10" x2="8" y2="14" stroke="#333" stroke-width="1.5"/><circle cx="8" cy="16" r="1.5" fill="#E15759"/><rect x="16" y="8" width="8" height="20" fill="#4C78A8"/><line x1="20" y1="4" x2="20" y2="8" stroke="#333" stroke-width="1.5"/><circle cx="20" cy="12" r="1.5" fill="#E15759"/><rect x="28" y="10" width="8" height="18" fill="#4C78A8"/><line x1="32" y1="6" x2="32" y2="10" stroke="#333" stroke-width="1.5"/><circle cx="32" cy="14" r="1.5" fill="#E15759"/></svg>`,
@@ -2235,6 +2486,7 @@
         violin: 'Violin plot',
         violin_dot: 'Violin plot + dots',
         dot: 'Dot plot',
+        scatter: 'Scatter plot',
         bar: 'Bar plot',
         bar_error: 'Bar plot with error (pre-calculated)',
         bar_error_dot: 'Bar + error + dots',
