@@ -5614,6 +5614,8 @@ function collectCurrentSettings() {
 
     // Statistics
     addStatistics: el("addStatistics")?.checked ? "true" : "false",
+    pairedSamples: el("pairedSamples")?.checked || false,
+    subjectColumn: el("subjectColumn")?.value || "",
     showBrackets: el("showBrackets")?.checked !== false,
     errorBarType: el("errorBarType")?.value || "sd",
     statisticalTestMode: el("statisticalTestMode")?.value || "auto",
@@ -5975,6 +5977,11 @@ function applySettingsToUI(settings) {
 
   // Statistics
   setChecked("addStatistics", settings.addStatistics);
+  setChecked("pairedSamples", settings.pairedSamples);
+  if (settings.subjectColumn !== undefined) {
+    const subjectSel = document.getElementById("subjectColumn");
+    if (subjectSel) subjectSel.value = settings.subjectColumn;
+  }
   setValue("errorBarType", settings.errorBarType);
   setValue("statisticalTest", settings.statisticalTest);
   setValue("varianceTest", settings.varianceTest);
@@ -6291,6 +6298,31 @@ Office.onReady(() => {
   function updateVbracketPositionInputs() {
     // X/Y position inputs are always visible now (no dropdown)
     // This function is kept for compatibility but does nothing
+  }
+
+  function updatePairedModeUI() {
+    const isPaired = document.getElementById("pairedSamples")?.checked || false;
+    // Update auto mode explanation
+    const autoModeTitle = document.getElementById("autoModeTitle");
+    const autoModeUnpaired = document.getElementById("autoModeUnpaired");
+    const autoModePaired = document.getElementById("autoModePaired");
+    if (autoModeTitle) autoModeTitle.textContent = isPaired ? "Auto mode (paired):" : "Auto mode (unpaired):";
+    if (autoModeUnpaired) autoModeUnpaired.style.display = isPaired ? "none" : "block";
+    if (autoModePaired) autoModePaired.style.display = isPaired ? "block" : "none";
+    // Hide variance test when paired (not applicable)
+    const varianceTestSection = document.getElementById("varianceTestSection");
+    if (varianceTestSection) varianceTestSection.style.display = isPaired ? "none" : "";
+    // Show/hide subject ID column selector
+    const subjectColRow = document.getElementById("subjectColRow");
+    if (subjectColRow) subjectColRow.style.display = isPaired ? "flex" : "none";
+    // Hide Dunnett option when paired (no paired equivalent)
+    const postHocTest = document.getElementById("postHocTest");
+    if (postHocTest) {
+      Array.from(postHocTest.options).forEach(opt => {
+        if (opt.value === "dunnett") opt.style.display = isPaired ? "none" : "";
+      });
+      if (isPaired && postHocTest.value === "dunnett") postHocTest.value = "bonferroni";
+    }
   }
 
   // Function to show/hide group column and group color controls for scatter
@@ -7659,11 +7691,17 @@ Office.onReady(() => {
 
   // Trigger on initial page load to handle default selected chart type
   handleChartTypeChange();
+  updatePairedModeUI();
 
   // Set up statistics checkbox listener to update detailed controls and VBracket visibility
   document.getElementById("addStatistics")?.addEventListener("change", function() {
     updateStatsDetailedControlsVisibility();
     updateVbracketVisibility();
+  });
+
+  // Set up paired samples checkbox listener
+  document.getElementById("pairedSamples")?.addEventListener("change", function() {
+    updatePairedModeUI();
   });
 
   // Set up scatter "Color by group" checkbox listener
@@ -11397,7 +11435,7 @@ async function initWebR() {
       return("ns")
     }
     
-    sato_add_statistics_to_plot <- function(p, data, group_col, value_col, test_type="auto", symbol_size=15, show_main_symbol=TRUE, show_pairwise=TRUE, ggpubr_symbol_size=10, ggpubr_line_size=1.2, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3, comparison_mode="significant", custom_comparisons="[]", custom_positions="{}", posthoc_test="tukey", dunnett_control="", y_scale="linear", stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns") {
+    sato_add_statistics_to_plot <- function(p, data, group_col, value_col, test_type="auto", symbol_size=15, show_main_symbol=TRUE, show_pairwise=TRUE, ggpubr_symbol_size=10, ggpubr_line_size=1.2, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3, comparison_mode="significant", custom_comparisons="[]", custom_positions="{}", posthoc_test="tukey", dunnett_control="", y_scale="linear", stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns", paired=FALSE, subject_col=NULL) {
       cat("\\n\\n🔥🔥🔥 STAT FUNCTION CALLED 🔥🔥🔥\\n")
       cat("🔥 show_pairwise parameter value:", show_pairwise, "\\n")
       cat("🔥 posthoc_test:", posthoc_test, "\\n")
@@ -11485,9 +11523,23 @@ async function initWebR() {
                 # Determine which test to use for 2 groups
                 two_group_test <- test_type
                 if (test_type == "auto") {
-                  normality_check <- sato_check_normality(stat_data, "group")
-                  two_group_test <- if (normality_check$is_normal) "t.test" else "wilcox.test"
-                  cat("🔥 AUTO TEST SELECTION (2 groups): normality =", normality_check$is_normal, "→ using", two_group_test, "🔥\\n")
+                  if (paired) {
+                    # For paired: test normality of differences
+                    g1_temp <- stat_data$value[stat_data$group == actual_groups[1]]
+                    g2_temp <- stat_data$value[stat_data$group == actual_groups[2]]
+                    if (length(g1_temp) == length(g2_temp) && length(g1_temp) >= 3) {
+                      diff_sw <- shapiro.test(g1_temp - g2_temp)$p.value
+                      two_group_test <- if (diff_sw >= 0.05) "t.test" else "wilcox.test"
+                      cat("🔥 PAIRED AUTO (2 groups): normality of differences p=", diff_sw, "→", two_group_test, "🔥\\n")
+                    } else {
+                      normality_check <- sato_check_normality(stat_data, "group")
+                      two_group_test <- if (normality_check$is_normal) "t.test" else "wilcox.test"
+                    }
+                  } else {
+                    normality_check <- sato_check_normality(stat_data, "group")
+                    two_group_test <- if (normality_check$is_normal) "t.test" else "wilcox.test"
+                    cat("🔥 AUTO TEST SELECTION (2 groups): normality =", normality_check$is_normal, "→ using", two_group_test, "🔥\\n")
+                  }
                 } else if (test_type == "parametric") {
                   two_group_test <- "t.test"
                   cat("🔥 MANUAL MODE (2 groups): parametric → using t-test 🔥\\n")
@@ -11497,15 +11549,41 @@ async function initWebR() {
                 }
 
                 # Perform the 2-sample test
-                group1_data <- stat_data$value[stat_data$group == actual_groups[1]]
-                group2_data <- stat_data$value[stat_data$group == actual_groups[2]]
+                if (paired && !is.null(subject_col) && subject_col != "" && subject_col %in% names(data)) {
+                  # Match pairs by subject ID
+                  stat_data$subject_id <- as.character(data[[subject_col]])
+                  paired_df <- merge(
+                    stat_data[stat_data$group == actual_groups[1], c("subject_id", "value")],
+                    stat_data[stat_data$group == actual_groups[2], c("subject_id", "value")],
+                    by = "subject_id"
+                  )
+                  group1_data <- paired_df$value.x
+                  group2_data <- paired_df$value.y
+                  cat("🔥 PAIRED: matched", nrow(paired_df), "subject pairs by ID column\\n")
+                } else {
+                  if (paired) cat("⚠️ No valid subject_col - using row position for pairing\\n")
+                  group1_data <- stat_data$value[stat_data$group == actual_groups[1]]
+                  group2_data <- stat_data$value[stat_data$group == actual_groups[2]]
+                }
 
                 if (two_group_test == "t.test") {
-                  test_result <- t.test(group1_data, group2_data)
-                  omnibus_test_name <- "Student's t-test"
+                  if (paired && length(group1_data) == length(group2_data)) {
+                    test_result <- t.test(group1_data, group2_data, paired=TRUE)
+                    omnibus_test_name <- "Paired t-test"
+                  } else {
+                    if (paired) cat("⚠️ Unequal group sizes - using unpaired t-test\\n")
+                    test_result <- t.test(group1_data, group2_data)
+                    omnibus_test_name <- "Student's t-test"
+                  }
                 } else if (two_group_test == "wilcox.test") {
-                  test_result <- wilcox.test(group1_data, group2_data)
-                  omnibus_test_name <- "Wilcoxon rank-sum test"
+                  if (paired && length(group1_data) == length(group2_data)) {
+                    test_result <- wilcox.test(group1_data, group2_data, paired=TRUE)
+                    omnibus_test_name <- "Wilcoxon signed-rank test"
+                  } else {
+                    if (paired) cat("⚠️ Unequal group sizes - using unpaired Wilcoxon\\n")
+                    test_result <- wilcox.test(group1_data, group2_data)
+                    omnibus_test_name <- "Wilcoxon rank-sum test"
+                  }
                 } else {
                   # Default to t-test for unknown test types
                   test_result <- t.test(group1_data, group2_data)
@@ -11528,7 +11606,120 @@ async function initWebR() {
                 # THREE OR MORE GROUPS - Use omnibus test + post-hoc
                 cat("🔥 3+ GROUPS DETECTED - Using omnibus test 🔥\\n")
 
+                paired_3plus_handled <- FALSE
+
+                if (paired) {
+                  cat("🔥 PAIRED mode: checking group sizes for RM-ANOVA / Friedman 🔥\\n")
+                  grp_sizes <- as.integer(table(stat_data$group))
+                  has_subject_col <- !is.null(subject_col) && subject_col != "" && subject_col %in% names(data)
+                  if (length(unique(grp_sizes)) > 1 && !has_subject_col) {
+                    cat("⚠️ Unequal group sizes and no subject column. Falling back to unpaired.\\n")
+                  } else {
+                    if (!is.null(subject_col) && subject_col != "" && subject_col %in% names(data)) {
+                      stat_data$subject <- factor(data[[subject_col]][match(rownames(stat_data), rownames(data))])
+                      # Remove rows with missing subject ID
+                      stat_data <- stat_data[!is.na(stat_data$subject), ]
+                      cat("🔥 PAIRED 3+: using subject column:", subject_col, "\\n")
+                    } else {
+                      cat("⚠️ No valid subject_col for 3+ group paired - using row position\\n")
+                      n_per_grp <- grp_sizes[1]
+                      stat_data <- stat_data[order(stat_data$group), ]
+                      stat_data$subject <- factor(rep(seq_len(n_per_grp), length(unique(stat_data$group))))
+                    }
+
+                    # Normality check per group
+                    is_normal_all <- all(sapply(unique(stat_data$group), function(grp) {
+                      d <- stat_data$value[stat_data$group == grp]
+                      if (length(d) < 3) return(TRUE)
+                      shapiro.test(d)$p.value >= 0.05
+                    }))
+
+                    use_rm_anova <- (test_type == "auto" && is_normal_all) || test_type == "parametric"
+                    cat("🔥 PAIRED 3+: is_normal_all=", is_normal_all, " use_rm_anova=", use_rm_anova, " 🔥\\n")
+
+                    if (use_rm_anova) {
+                      tryCatch({
+                        rm_aov <- aov(value ~ group + Error(subject/group), data=stat_data)
+                        rm_sum <- summary(rm_aov)
+                        omnibus_p_value <- rm_sum[["Error: subject:group"]][[1]][["Pr(>F)"]][1]
+                        omnibus_test_name <- "Repeated measures ANOVA"
+                        cat("🔥 RM-ANOVA p-value:", omnibus_p_value, "🔥\\n")
+
+                        groups_list <- levels(factor(stat_data$group))
+                        combinations <- combn(groups_list, 2, simplify=FALSE)
+
+                        if (omnibus_p_value < 0.05) {
+                          ph_result <- pairwise.t.test(stat_data$value, stat_data$group, paired=TRUE, p.adjust.method="holm")
+                          p_adj_vals <- c(); cmp_names <- c(); diff_vals <- c()
+                          for (comp in combinations) {
+                            g1 <- comp[1]; g2 <- comp[2]
+                            if (g2 %in% rownames(ph_result$p.value) && g1 %in% colnames(ph_result$p.value)) {
+                              pv <- ph_result$p.value[g2, g1]
+                            } else if (g1 %in% rownames(ph_result$p.value) && g2 %in% colnames(ph_result$p.value)) {
+                              pv <- ph_result$p.value[g1, g2]
+                            } else { pv <- NA }
+                            cmp_names <- c(cmp_names, paste(g2, g1, sep="-"))
+                            p_adj_vals <- c(p_adj_vals, pv)
+                            diff_vals <- c(diff_vals, mean(stat_data$value[stat_data$group==g2], na.rm=TRUE) - mean(stat_data$value[stat_data$group==g1], na.rm=TRUE))
+                          }
+                          posthoc_summary <- data.frame(diff=diff_vals, lwr=rep(NA,length(diff_vals)), upr=rep(NA,length(diff_vals)), "p adj"=p_adj_vals, row.names=cmp_names, check.names=FALSE)
+                          real_p_values <- p_adj_vals
+                          real_p_symbols <- sapply(p_adj_vals, get_sig_symbol)
+                        } else {
+                          combinations <- combn(unique(stat_data$group), 2, simplify=FALSE)
+                          real_p_values <- rep(1.0, length(combinations))
+                          real_p_symbols <- rep("n.s.", length(combinations))
+                          posthoc_summary <- NULL
+                        }
+                        paired_3plus_handled <- TRUE
+                      }, error=function(e) {
+                        cat("⚠️ RM-ANOVA failed:", e$message, "- trying Friedman\\n")
+                      })
+                    }
+
+                    if (!paired_3plus_handled) {
+                      # Friedman test
+                      tryCatch({
+                        friedman_result <- friedman.test(value ~ group | subject, data=stat_data)
+                        omnibus_p_value <- friedman_result$p.value
+                        omnibus_test_name <- "Friedman test"
+                        cat("🔥 Friedman p-value:", omnibus_p_value, "🔥\\n")
+
+                        combinations <- combn(unique(stat_data$group), 2, simplify=FALSE)
+
+                        if (omnibus_p_value < 0.05) {
+                          if (!require("PMCMRplus", quietly=TRUE)) webr::install("PMCMRplus")
+                          library(PMCMRplus)
+                          conover_res <- frdAllPairsConoverTest(y=stat_data$value, groups=stat_data$group, blocks=stat_data$subject, p.adjust.method="holm")
+                          p_adj_vals <- c(); cmp_names <- c()
+                          for (comp in combinations) {
+                            g1 <- comp[1]; g2 <- comp[2]
+                            if (g2 %in% rownames(conover_res$p.value) && g1 %in% colnames(conover_res$p.value)) {
+                              pv <- conover_res$p.value[g2, g1]
+                            } else if (g1 %in% rownames(conover_res$p.value) && g2 %in% colnames(conover_res$p.value)) {
+                              pv <- conover_res$p.value[g1, g2]
+                            } else { pv <- NA }
+                            cmp_names <- c(cmp_names, paste(g2, g1, sep="-"))
+                            p_adj_vals <- c(p_adj_vals, pv)
+                          }
+                          posthoc_summary <- data.frame(diff=rep(NA,length(p_adj_vals)), lwr=rep(NA,length(p_adj_vals)), upr=rep(NA,length(p_adj_vals)), "p adj"=p_adj_vals, row.names=cmp_names, check.names=FALSE)
+                          real_p_values <- p_adj_vals
+                          real_p_symbols <- sapply(p_adj_vals, get_sig_symbol)
+                        } else {
+                          real_p_values <- rep(1.0, length(combinations))
+                          real_p_symbols <- rep("n.s.", length(combinations))
+                          posthoc_summary <- NULL
+                        }
+                        paired_3plus_handled <- TRUE
+                      }, error=function(e) {
+                        cat("⚠️ Friedman test failed:", e$message, "\\n")
+                      })
+                    }
+                  }
+                }
+
                 omnibus_test_type <- test_type
+                if (!paired_3plus_handled) {
                 if (test_type == "auto") {
                   normality_check <- sato_check_normality(stat_data, "group")
                   omnibus_test_type <- if (normality_check$is_normal) "anova" else "kruskal.test"
@@ -11862,6 +12053,7 @@ async function initWebR() {
                   cat("🔥", combinations[[i]][1], "vs", combinations[[i]][2], ": p =", p_val, "→", tail(real_p_symbols, 1), "🔥\\n")
                 }
               }  # Close the omnibus significance check (else block)
+              }  # end if (!paired_3plus_handled)
               }  # Close the 3+ groups else block
 
               # Calculate unit_step as a fraction of y_range (scale-aware)
@@ -13186,7 +13378,7 @@ async function initWebR() {
 
         # Add statistical analysis if requested and we have multiple groups
         if (add_statistics && length(unique(plot_data$group)) > 1) {
-          p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+          p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
         }
       }
 
@@ -14700,7 +14892,7 @@ async function initWebR() {
       
       if (add_statistics && length(unique(df$category)) > 1) {
         cat("🔥🔥🔥 CALLING STATISTICAL ANALYSIS FUNCTION FROM BAR_ERROR_DOT 🔥🔥🔥\\n")
-        p <- sato_add_statistics_to_plot(p, df, "category", "value", statistical_test, sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, df, "category", "value", statistical_test, sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
       } else {
         if (!add_statistics) {
           cat("🔥🔥🔥 STATISTICAL ANALYSIS IS DISABLED IN BAR_ERROR_DOT 🔥🔥🔥\\n")
@@ -14779,7 +14971,7 @@ async function initWebR() {
 
       # Add statistical analysis if requested and we have multiple groups
       if (add_statistics && length(unique(df$category)) > 1) {
-        p <- sato_add_statistics_to_plot(p, df, "category", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, df, "category", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -14901,7 +15093,7 @@ async function initWebR() {
       
       # Add statistical analysis if requested
       if (add_statistics && ncol(dat) >= 3) {
-        p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -19717,6 +19909,8 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   
   // Statistical analysis parameters
   const addStatistics = o.addStatistics || false;
+  const pairedSamples = o.pairedSamples || false;
+  const subjectColumn = o.subjectColumn || "";
   const statisticalTest = o.statisticalTest || 'auto';
   const varianceTest = o.varianceTest || 'levene';
   const postHocTest = o.postHocTest || 'tukey';
@@ -20196,7 +20390,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # Add statistics if enabled by user
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
       }
     } else if (chart_type == "box_dot") {
       p <- sato_box_dot(
@@ -20238,7 +20432,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # Add statistics if enabled by user
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
       }
     } else if (chart_type == "violin") {
       p <- sato_violin(
@@ -20276,7 +20470,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # ADD STATISTICS FOR VIOLIN (only if enabled)
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
       }
     } else if (chart_type == "violin_dot") {
       p <- sato_violin_dot(
@@ -20318,7 +20512,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # ADD STATISTICS FOR VIOLIN_DOT (only if enabled)
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
       }
     } else if (chart_type == "violin_grouped") {
       # Grouped violin chart - requires 3 columns: Group, Category, Value
@@ -20670,7 +20864,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       # Add statistics if enabled by user
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
         cat("\\n🔥 Adding statistics to bar_error_dot plot\\n")
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}")
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
       }
     } else if (chart_type == "box_grouped") {
       # Grouped box chart - requires 3 columns: Group, Category, Value
@@ -21311,7 +21505,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     xMin, xMax, yMin, yMax,
     xScale, yScale, xBreaksMode, showBrackets, rotation, tableStyleLabels, groupColIndex, xColIndex, yColIndex, errorColIndex,
     selectedGroupColumn, selectedXColumn, selectedYColumn, selectedErrorColumn,
-    addStatistics, errorBarType, statisticalTest, varianceTest, postHocTest,
+    addStatistics, pairedSamples, subjectColumn, errorBarType, statisticalTest, varianceTest, postHocTest,
     statSymbolType, customSymbol05, customSymbol01, customSymbol001, customSymbolNS,
     statSymbolSize, statLineSize, statTipLength, symbolGap, bracketSpacing,
     comparisonMode, customComparisons, customPositions,
@@ -22093,6 +22287,20 @@ async function loadHeadersFromSelection(){
       if (errorSel) errorSel.add(new Option(h,h));
     });
 
+    // Populate subject column dropdown
+    const subjectSel = document.getElementById("subjectColumn");
+    if (subjectSel) {
+      const currentSubject = subjectSel.value;
+      subjectSel.innerHTML = '<option value="">-- Select --</option>';
+      headers.forEach(h => {
+        const opt = document.createElement("option");
+        opt.value = h;
+        opt.textContent = h;
+        subjectSel.appendChild(opt);
+      });
+      if (currentSubject && headers.includes(currentSubject)) subjectSel.value = currentSubject;
+    }
+
     // Numeric column to Y, other column to X
     const rows = values.slice(1);
     const isNum = (i)=>rows.every(r=>r[i]==="" || Number.isFinite(+r[i]));
@@ -22430,6 +22638,8 @@ function uiOpts(){
     
     // Statistical analysis
     addStatistics: el("addStatistics")?.checked || false,
+    pairedSamples: el("pairedSamples")?.checked || false,
+    subjectColumn: el("subjectColumn")?.value || "",
     statisticalTestMode: el("statisticalTestMode")?.value || "auto",
     // When manual mode, use dataType to determine test; when auto, use "auto"
     statisticalTest: (el("statisticalTestMode")?.value || "auto") === "auto"

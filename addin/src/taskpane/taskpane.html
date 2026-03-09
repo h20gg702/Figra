@@ -1517,6 +1517,17 @@
             <label for="autoExportStats">Auto-export statistics to new sheet</label>
           </div>
 
+          <div style="display:flex; align-items:center; gap:10px; margin-left:20px; margin-top:5px;">
+            <input type="checkbox" id="pairedSamples" />
+            <label for="pairedSamples">Paired samples</label>
+          </div>
+          <div id="subjectColRow" style="display:none; align-items:center; gap:10px; margin-left:20px; margin-top:4px;">
+            <label style="font-size:12px;">Subject ID column:</label>
+            <select id="subjectColumn" style="width:160px; font-size:12px;">
+              <option value="">-- Select --</option>
+            </select>
+          </div>
+
           <div style="display:flex; gap:10px; margin-top:5px;">
             <label style="font-size:12px;">Error Bar Type:</label>
             <select id="errorBarType" style="width:200px;">
@@ -1562,15 +1573,26 @@
           </div>
           <!-- Auto mode explanation -->
           <div id="autoModeExplanation" style="margin-top:5px; padding:8px; background:#e8f4f8; border:1px solid #b8d4e8; border-radius:4px; font-size:11px; color:#2c5282;">
-            <div style="font-weight:bold; margin-bottom:4px;">Auto mode:</div>
-            <div>1. Tests data normality (Shapiro-Wilk test)</div>
-            <div>2. Selects appropriate test based on results:</div>
-            <div style="margin-left:12px;">
-              <div><b>Normal data:</b> t-test (2 groups) or ANOVA (3+ groups)</div>
-              <div><b>Non-normal:</b> Wilcoxon (2 groups) or Kruskal-Wallis (3+ groups)</div>
+            <div style="font-weight:bold; margin-bottom:4px;" id="autoModeTitle">Auto mode (unpaired):</div>
+            <div id="autoModeUnpaired">
+              <div>1. Tests data normality (Shapiro-Wilk test)</div>
+              <div>2. Selects appropriate test based on results:</div>
+              <div style="margin-left:12px;">
+                <div><b>Normal data:</b> t-test (2 groups) or ANOVA (3+ groups)</div>
+                <div><b>Non-normal:</b> Wilcoxon (2 groups) or Kruskal-Wallis (3+ groups)</div>
+              </div>
+              <div style="margin-top:4px;">3. Variance test: Levene test (for t-test equal/unequal variance)</div>
+              <div>4. Post-hoc: ANOVA then Tukey, Kruskal-Wallis then Dunn</div>
             </div>
-            <div style="margin-top:4px;">3. Variance test: Levene test (for t-test equal/unequal variance)</div>
-            <div>4. Post-hoc: ANOVA then Tukey, Kruskal-Wallis then Dunn</div>
+            <div id="autoModePaired" style="display:none;">
+              <div>1. Tests normality of differences (2 groups) or each group (3+)</div>
+              <div>2. Selects appropriate paired test:</div>
+              <div style="margin-left:12px;">
+                <div><b>Normal:</b> Paired t-test (2 groups) or RM-ANOVA (3+ groups)</div>
+                <div><b>Non-normal:</b> Wilcoxon signed-rank (2 groups) or Friedman + Conover (3+ groups)</div>
+              </div>
+              <div style="margin-top:4px;">&#9888;&#65039; Requires a Subject ID column to link matched observations</div>
+            </div>
           </div>
           <!-- Manual test options - hidden when Auto is selected -->
           <!-- Hidden select for backward compatibility -->
