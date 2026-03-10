@@ -491,7 +491,7 @@
     </div>
 
     <!-- Step 1: Load Data — placed here so the top-to-bottom flow is natural -->
-    <div style="margin: 10px 0 14px 0;">
+    <div style="margin: 10px 0 6px 0;">
       <button onclick="document.getElementById('load').click()"
               style="width:100%; padding:9px; font-size:12px;
                      background:#f5f5f5; color:#333; border:1px solid #ccc; border-radius:6px;
@@ -499,6 +499,7 @@
         Select your data in Excel and click here to load
       </button>
     </div>
+    <div id="loadStatus" style="font-size:14px; color:#333; min-height:18px; margin-bottom:8px; padding-left:2px;"></div>
 
     <div class="row">
       <label for="chartType">Chart Type</label>
@@ -584,6 +585,18 @@
     <div class="row" id="errorColumnRow" style="display:none;">
       <label for="errorColumn">Error Column</label>
       <select id="errorColumn"></select>
+    </div>
+
+    <!-- Paired samples toggle (synced with Statistics tab) -->
+    <div class="row" id="pairedSamplesDataTabRow" style="display:none;">
+      <label for="pairedSamplesDataTab">Paired samples</label>
+      <input type="checkbox" id="pairedSamplesDataTab" />
+    </div>
+    <div class="row" id="subjectColRow" style="display:none;">
+      <label for="subjectColumn">Subject ID column</label>
+      <select id="subjectColumn">
+        <option value="">-- Select --</option>
+      </select>
     </div>
 
     <!-- Data Order -->
@@ -1521,13 +1534,6 @@
             <input type="checkbox" id="pairedSamples" />
             <label for="pairedSamples">Paired samples</label>
           </div>
-          <div id="subjectColRow" style="display:none; align-items:center; gap:10px; margin-left:20px; margin-top:4px;">
-            <label style="font-size:12px;">Subject ID column:</label>
-            <select id="subjectColumn" style="width:160px; font-size:12px;">
-              <option value="">-- Select --</option>
-            </select>
-          </div>
-
           <div style="display:flex; gap:10px; margin-top:5px;">
             <label style="font-size:12px;">Error Bar Type:</label>
             <select id="errorBarType" style="width:200px;">
