@@ -2954,8 +2954,9 @@ print(p)
     const nGroups   = settings.numGroups || 2;
     const statTest  = settings.statisticalTest || 'auto';
     const vbT       = settings.vbracketTimepoint || '';
-    const vbX       = settings.vbracketX || 0.85;
-    const vbY       = settings.vbracketY || 0.85;
+    const vbPos     = settings.vbracketPosition || 'bottomleft';
+    const vbX       = settings.vbracketX || 0.15;
+    const vbY       = settings.vbracketY || 0.05;
     const vbTs      = settings.vbracketTextSize || 10;
     const vbSig     = settings.vbracketSigSize  || 14;
     const vbMar     = settings.vbracketMargin   || 0.06;
@@ -6202,6 +6203,7 @@ p <- ggplot(summary_data, aes(x = TimePoint, y = Mean, color = Group, group = Gr
 
   // Add vbracket for statistical comparisons (3+ groups)
   if (settings.addStatistics && settings.numGroups >= 3) {
+    const vbracketPosition = settings.vbracketPosition || "topright";
     const vbracketX = settings.vbracketX || 0.05;
     const vbracketY = settings.vbracketY || 0.99;
     const vbracketTextSize = settings.vbracketTextSize || 14;
@@ -6727,7 +6729,7 @@ function collectCurrentSettings() {
 
     // VBracket legend settings (for 3+ groups line plots)
     vbracketTimepoint: el("vbracketTimepoint")?.value || "",
-    vbracketPosition: "custom",
+    vbracketPosition: el("vbracketPosition")?.value || "bottomleft",
     vbracketX: el("vbracketX")?.value || "0.05",
     vbracketY: el("vbracketY")?.value || "0.99",
     vbracketTextSize: el("vbracketTextSize")?.value || "14",
@@ -8996,6 +8998,10 @@ Office.onReady(() => {
       detectAndStoreGroups();
     }
     updateGroupColorLabels();
+    // Repopulate vbracket timepoint dropdown with new X values
+    if (typeof populateVbracketTimepoints === 'function') {
+      populateVbracketTimepoints();
+    }
   });
 
   // カラーピッカーとテキストの同期
@@ -16488,28 +16494,19 @@ async function initWebR() {
               # Summary of filtering
               cat(sprintf("VBracket filtering complete: %d comparisons selected (mode: %s)\\n", length(groups1), comparison_mode))
 
-              # Only add vbracket if we have significant comparisons
+              # Get group labels and colors
+              group_labels <- levels(plot_data$group)
+              legend_colors <- line_colors[1:length(group_labels)]
+              cat(sprintf("Using vbracket position: x=%.2f, y=%.2f\\n", vbracket_x, vbracket_y))
+
               if (length(groups1) > 0) {
-                # Create comparisons data frame (same format as add_bracket_comparisons())
                 comparisons_df <- data.frame(
                   group1 = groups1,
                   group2 = groups2,
                   label = labels,
                   stringsAsFactors = FALSE
                 )
-
-                cat(sprintf("DEBUG: Comparisons data frame:\\n"))
-                print(comparisons_df)
                 cat(sprintf("Adding vbracket legend with %d comparisons\\n", nrow(comparisons_df)))
-
-                # Get group labels and colors
-                group_labels <- levels(plot_data$group)
-                legend_colors <- line_colors[1:length(group_labels)]
-
-                # Add vbracket custom legend (default legend already suppressed above)
-
-                # Use manual X/Y positioning
-                cat(sprintf("Using vbracket position: x=%.2f, y=%.2f\\n", vbracket_x, vbracket_y))
                 p <- p + legend_bracket(
                   labels = group_labels,
                   colors = legend_colors,
@@ -16527,10 +16524,24 @@ async function initWebR() {
                   output_height = output_height,
                   text_family = target_font
                 )
-
-                cat("✅ Vbracket legend added successfully\\n")
+                cat("✅ Vbracket legend added with comparisons\\n")
               } else {
-                cat("No significant comparisons found for vbracket\\n")
+                # No comparisons — still show group color legend without brackets
+                cat("No comparisons found — showing group legend without brackets\\n")
+                p <- p + legend_bracket(
+                  labels = group_labels,
+                  colors = legend_colors,
+                  legend_x = vbracket_x,
+                  legend_y = vbracket_y,
+                  text_size = vbracket_text_size,
+                  line_length = vbracket_legend_line_length,
+                  line_width = vbracket_line_width,
+                  item_spacing = vbracket_item_spacing,
+                  output_width = output_width,
+                  output_height = output_height,
+                  text_family = target_font
+                )
+                cat("✅ Vbracket legend added (no comparisons)\\n")
               }
             }, error = function(e) {
               cat("Error adding vbracket:", e$message, "\\n")
@@ -22543,7 +22554,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
   // VBracket legend settings (for 3+ groups line plots)
   const vbracketTimepoint = o.vbracketTimepoint || "";
-  const vbracketPosition = "custom";  // Always use manual X/Y positioning
+  const vbracketPosition = o.vbracketPosition || "bottomleft";
   const vbracketX = Number(o.vbracketX) || 0.05;
   const vbracketY = Number(o.vbracketY) || 0.99;
   const vbracketTextSize = Number(o.vbracketTextSize) || 14;
@@ -22674,7 +22685,309 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   // Add debug info to persistent panel
   addDebugInfo("🔥 Loading R code - Stats: " + addStatistics + ", Chart: " + chartType);
   
+  const SHARED_STAT_HELPERS_R = `
+sato_run_stats_2group <- function(
+  group1_data, group2_data, group_names,
+  x_label,
+  statistical_test, variance_test,
+  stat_symbol_type = "stars",
+  paired = FALSE,
+  error_label = "SD",
+  desc_lines = c()
+) {
+  get_sig_sym <- function(p) {
+    if (stat_symbol_type == "pvalue") return(sprintf("p=%.3f", p))
+    if (p < 0.001) "***" else if (p < 0.01) "**" else if (p < 0.05) "*" else "ns"
+  }
+  normality_text <- c(); both_normal <- TRUE
+  if (paired) {
+    diffs <- group1_data - group2_data
+    if (length(diffs) >= 3 && length(diffs) <= 5000) {
+      sw <- tryCatch(shapiro.test(diffs), error = function(e) NULL)
+      if (!is.null(sw)) {
+        both_normal <- sw$p.value >= 0.05
+        normality_text <- c(normality_text,
+          sprintf("  Differences: p=%.4f (%s)", sw$p.value, if (both_normal) "normal" else "non-normal"))
+      }
+    }
+  } else {
+    is_n1 <- TRUE; is_n2 <- TRUE
+    if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
+      sw <- tryCatch(shapiro.test(group1_data), error = function(e) NULL)
+      if (!is.null(sw)) {
+        is_n1 <- sw$p.value >= 0.05
+        normality_text <- c(normality_text,
+          sprintf("  %s: p=%.4f (%s)", group_names[1], sw$p.value, if (is_n1) "normal" else "non-normal"))
+      }
+    }
+    if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
+      sw <- tryCatch(shapiro.test(group2_data), error = function(e) NULL)
+      if (!is.null(sw)) {
+        is_n2 <- sw$p.value >= 0.05
+        normality_text <- c(normality_text,
+          sprintf("  %s: p=%.4f (%s)", group_names[2], sw$p.value, if (is_n2) "normal" else "non-normal"))
+      }
+    }
+    both_normal <- is_n1 && is_n2
+  }
+  test_to_use <- statistical_test
+  if (statistical_test == "auto") {
+    test_to_use <- if (both_normal) "t-test" else "wilcoxon"
+  } else if (statistical_test == "parametric") {
+    test_to_use <- "t-test"
+  } else if (statistical_test == "nonparametric") {
+    test_to_use <- "wilcoxon"
+  }
+  variance_text <- ""; equal_variances <- TRUE
+  if (test_to_use != "wilcoxon" && !paired) {
+    if (variance_test == "levene") {
+      cd <- data.frame(
+        values = c(group1_data, group2_data),
+        group  = factor(c(rep(group_names[1], length(group1_data)),
+                          rep(group_names[2], length(group2_data))))
+      )
+      gm <- tapply(cd$values, cd$group, mean)
+      ad <- abs(cd$values - gm[cd$group])
+      lv <- tryCatch(anova(lm(ad ~ cd$group)), error = function(e) NULL)
+      if (!is.null(lv)) {
+        lv_p <- lv$\`Pr(>F)\`[1]
+        equal_variances <- lv_p > 0.05
+        variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", lv_p,
+                                 if (equal_variances) "equal variances" else "unequal variances")
+      }
+    } else {
+      vt <- tryCatch(var.test(group1_data, group2_data), error = function(e) NULL)
+      if (!is.null(vt)) {
+        equal_variances <- vt$p.value > 0.05
+        variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", vt$p.value,
+                                 if (equal_variances) "equal variances" else "unequal variances")
+      }
+    }
+  }
+  test_result <- NULL; test_name <- ""
+  if (paired) {
+    if (test_to_use == "wilcoxon") {
+      test_result <- tryCatch(wilcox.test(group1_data, group2_data, paired = TRUE), error = function(e) NULL)
+      test_name <- "Paired Wilcoxon"
+    } else {
+      test_result <- tryCatch(t.test(group1_data, group2_data, paired = TRUE), error = function(e) NULL)
+      test_name <- "Paired t-test"
+    }
+  } else if (test_to_use == "wilcoxon") {
+    test_result <- tryCatch(wilcox.test(group1_data, group2_data), error = function(e) NULL)
+    test_name <- "Wilcoxon"
+  } else {
+    test_result <- tryCatch(t.test(group1_data, group2_data, var.equal = equal_variances), error = function(e) NULL)
+    test_name <- if (equal_variances) "Student's t-test" else "Welch's t-test"
+  }
+  if (is.null(test_result)) return(list(result_text = "", sig_label = "ns", p_val = NA))
+  p_val <- test_result$p.value
+  sig_label <- get_sig_sym(p_val)
+  result_text <- sprintf(">> X-axis value: %s\\nGroups: %s vs %s", x_label, group_names[1], group_names[2])
+  if (length(desc_lines) > 0)
+    result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):\\n", error_label), paste(desc_lines, collapse="\\n"))
+  if (length(normality_text) > 0)
+    result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
+  else
+    result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
+  if (nchar(variance_text) > 0)
+    result_text <- paste0(result_text, "\\n", variance_text)
+  result_text <- paste0(result_text, sprintf("\\nTest: %s, p=%.4f (%s)", test_name, p_val, sig_label))
+  list(result_text = result_text, sig_label = sig_label, p_val = p_val)
+}
+
+sato_run_stats_ngroup <- function(
+  anova_data,
+  x_label,
+  statistical_test, post_hoc_test, dunnett_control = "",
+  stat_symbol_type = "stars",
+  paired = FALSE,
+  error_label = "SD",
+  desc_lines = c()
+) {
+  get_sig_sym <- function(p) {
+    if (stat_symbol_type == "pvalue") return(sprintf("p=%.3f", p))
+    if (p < 0.001) "***" else if (p < 0.01) "**" else if (p < 0.05) "*" else "ns"
+  }
+  result_text <- sprintf(">> X-axis value: %s\\nTime point %s:", x_label, x_label)
+  if (length(desc_lines) > 0)
+    result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):\\n", error_label), paste(desc_lines, collapse="\\n"))
+
+  if (paired) {
+    normality_text <- c(); all_normal <- TRUE
+    groups_list <- levels(anova_data$group)
+    for (pair_n in combn(groups_list, 2, simplify = FALSE)) {
+      g1 <- anova_data[anova_data$group == pair_n[1], c("subject_id","value")]
+      g2 <- anova_data[anova_data$group == pair_n[2], c("subject_id","value")]
+      mg <- merge(g1, g2, by = "subject_id")
+      diffs_n <- mg$value.x - mg$value.y
+      if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
+        sw <- tryCatch(shapiro.test(diffs_n), error = function(e) NULL)
+        if (!is.null(sw)) {
+          is_norm <- sw$p.value >= 0.05
+          normality_text <- c(normality_text,
+            sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], sw$p.value,
+                    if (is_norm) "normal" else "non-normal"))
+          if (!is_norm) all_normal <- FALSE
+        }
+      }
+    }
+    if (length(normality_text) > 0)
+      result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
+    test_to_use_p <- statistical_test
+    if (statistical_test == "auto")      test_to_use_p <- if (all_normal) "rm_anova" else "friedman"
+    else if (statistical_test == "parametric") test_to_use_p <- "rm_anova"
+    else                                       test_to_use_p <- "friedman"
+    omnibus_p <- NA; test_name_p <- ""
+    if (test_to_use_p == "rm_anova") {
+      rm_res <- tryCatch(summary(aov(value ~ group + Error(subject_id/group), data = anova_data)), error = function(e) NULL)
+      if (!is.null(rm_res)) {
+        omnibus_p <- tryCatch(rm_res[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1], error = function(e) NA)
+        if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
+        test_name_p <- "RM-ANOVA"
+      }
+    } else {
+      fr <- tryCatch(friedman.test(value ~ group | subject_id, data = anova_data), error = function(e) NULL)
+      if (!is.null(fr)) { omnibus_p <- fr$p.value; test_name_p <- "Friedman" }
+    }
+    if (!is.na(omnibus_p)) {
+      result_text <- paste0(result_text,
+        sprintf("\\nOverall test: %s, p=%.4f (%s)", test_name_p, omnibus_p, get_sig_sym(omnibus_p)))
+      if (omnibus_p < 0.05) {
+        ph_method <- if (post_hoc_test %in% c("bonferroni","holm")) post_hoc_test else "holm"
+        ph_label  <- if (ph_method == "bonferroni") "Bonferroni" else "Holm"
+        ph_func   <- if (test_to_use_p == "rm_anova") pairwise.t.test else pairwise.wilcox.test
+        ph_name   <- if (test_to_use_p == "rm_anova") "Pairwise paired t-test" else "Pairwise paired Wilcoxon"
+        ph_res <- tryCatch(ph_func(anova_data$value, anova_data$group, p.adjust.method=ph_method, paired=TRUE), error=function(e) NULL)
+        if (!is.null(ph_res)) {
+          result_text <- paste0(result_text, sprintf("\\nPost-hoc (%s, %s):", ph_name, ph_label))
+          p_mat <- ph_res$p.value
+          for (r in rownames(p_mat)) for (c in colnames(p_mat)) {
+            p_adj <- p_mat[r,c]
+            if (!is.na(p_adj)) result_text <- paste0(result_text,
+              sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, get_sig_sym(p_adj)))
+          }
+        }
+      }
+    }
+    return(list(result_text = result_text, omnibus_p = omnibus_p))
+  }
+
+  normality_text <- c(); all_normal <- TRUE
+  for (grp in levels(anova_data$group)) {
+    gd <- anova_data$value[anova_data$group == grp]
+    if (length(gd) >= 3 && length(gd) <= 5000) {
+      sw <- tryCatch(shapiro.test(gd), error = function(e) NULL)
+      if (!is.null(sw)) {
+        norm_status <- if (sw$p.value >= 0.05) "normal" else "non-normal"
+        if (sw$p.value < 0.05) all_normal <- FALSE
+        normality_text <- c(normality_text, sprintf("  %s: p=%.4f (%s)", grp, sw$p.value, norm_status))
+      }
+    }
+  }
+  if (length(normality_text) > 0)
+    result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
+  else
+    result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
+
+  use_nonparametric <- (statistical_test == "nonparametric") || (statistical_test == "auto" && !all_normal)
+  omnibus_p <- NA
+
+  if (use_nonparametric) {
+    kw <- tryCatch(kruskal.test(value ~ group, data = anova_data), error = function(e) NULL)
+    if (!is.null(kw)) {
+      omnibus_p <- kw$p.value
+      result_text <- paste0(result_text,
+        sprintf("\\nOverall test: Kruskal-Wallis, p=%.4f (%s)", omnibus_p, get_sig_sym(omnibus_p)))
+      if (!is.na(omnibus_p) && omnibus_p < 0.05) {
+        if (post_hoc_test == "steel") {
+          ctrl <- if (nchar(dunnett_control) > 0) dunnett_control else levels(anova_data$group)[1]
+          ok <- tryCatch({ if (!requireNamespace("kSamples",quietly=TRUE)) webr::install("kSamples"); library(kSamples); TRUE }, error=function(e) FALSE)
+          if (ok) {
+            result_text <- paste0(result_text, sprintf("\\nPost-hoc (Steel test, vs %s):", ctrl))
+            ctrl_vals <- anova_data$value[anova_data$group == ctrl]
+            for (trt in levels(anova_data$group)[levels(anova_data$group) != ctrl]) {
+              sr <- tryCatch(Steel.test(list(ctrl_vals, anova_data$value[anova_data$group == trt])), error=function(e) NULL)
+              if (!is.null(sr)) result_text <- paste0(result_text,
+                sprintf("\\n  %s-%s: p=%.4f (%s)", ctrl, trt, sr$st[2], get_sig_sym(sr$st[2])))
+            }
+          } else result_text <- paste0(result_text, "\\n[ERROR] Steel test requires kSamples package.")
+        } else {
+          dunn_method <- if (post_hoc_test == "dunn_holm") "holm" else "bonferroni"
+          dunn_label  <- if (dunn_method == "holm") "Holm" else "Bonferroni"
+          ok <- tryCatch({ if (!requireNamespace("dunn.test",quietly=TRUE)) webr::install("dunn.test"); library(dunn.test); TRUE }, error=function(e) FALSE)
+          if (ok) {
+            dr <- tryCatch(dunn.test(anova_data$value, anova_data$group, method=dunn_method), error=function(e) NULL)
+            if (!is.null(dr)) {
+              result_text <- paste0(result_text, sprintf("\\nPost-hoc (Dunn test with %s):", dunn_label))
+              for (i in seq_along(dr$comparisons)) {
+                comp_clean <- gsub(" - ", "-", dr$comparisons[i])
+                result_text <- paste0(result_text,
+                  sprintf("\\n  %s: p=%.4f (%s)", comp_clean, dr$P.adjusted[i], get_sig_sym(dr$P.adjusted[i])))
+              }
+            }
+          } else result_text <- paste0(result_text, "\\n[ERROR] Dunn test requires dunn.test package.")
+        }
+      }
+    }
+  } else {
+    ar <- tryCatch(aov(value ~ group, data = anova_data), error = function(e) NULL)
+    if (!is.null(ar)) {
+      as_ <- summary(ar)
+      anova_p <- as_[[1]][["Pr(>F)"]][1]
+      omnibus_p <- anova_p
+      result_text <- paste0(result_text,
+        sprintf("\\nOverall test: ANOVA, p=%.4f (%s)", anova_p, if (!is.na(anova_p)) get_sig_sym(anova_p) else ""))
+      if (!is.na(anova_p) && anova_p < 0.05) {
+        if (post_hoc_test == "dunnett") {
+          ctrl <- if (nchar(dunnett_control) > 0) dunnett_control else levels(anova_data$group)[1]
+          ok <- tryCatch({ if (!requireNamespace("multcomp",quietly=TRUE)) webr::install("multcomp"); library(multcomp); TRUE }, error=function(e) FALSE)
+          if (ok) {
+            dr <- tryCatch({
+              anova_data$group <- relevel(anova_data$group, ref = ctrl)
+              summary(glht(aov(value ~ group, data=anova_data), linfct=mcp(group="Dunnett")))
+            }, error=function(e) NULL)
+            if (!is.null(dr)) {
+              result_text <- paste0(result_text, sprintf("\\nPost-hoc (Dunnett, vs %s):", ctrl))
+              pvals <- dr$test$pvalues; cnames <- names(dr$test$coefficients)
+              for (i in seq_along(pvals)) result_text <- paste0(result_text,
+                sprintf("\\n  %s: p=%.4f (%s)", cnames[i], pvals[i], get_sig_sym(pvals[i])))
+            }
+          } else result_text <- paste0(result_text, "\\n[ERROR] Dunnett requires multcomp package.")
+        } else if (post_hoc_test %in% c("bonferroni","holm")) {
+          ph_label <- if (post_hoc_test == "bonferroni") "Bonferroni" else "Holm"
+          ph_res <- tryCatch(pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method=post_hoc_test), error=function(e) NULL)
+          if (!is.null(ph_res)) {
+            result_text <- paste0(result_text, sprintf("\\nPost-hoc (Pairwise t-test with %s):", ph_label))
+            p_mat <- ph_res$p.value
+            for (r in rownames(p_mat)) for (c in colnames(p_mat)) {
+              p_adj <- p_mat[r,c]
+              if (!is.na(p_adj)) result_text <- paste0(result_text,
+                sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, get_sig_sym(p_adj)))
+            }
+          }
+        } else {
+          tr <- tryCatch(TukeyHSD(ar), error=function(e) NULL)
+          if (!is.null(tr)) {
+            ts_ <- tr$group
+            result_text <- paste0(result_text, "\\nPost-hoc (Tukey HSD):")
+            for (i in 1:nrow(ts_)) {
+              comparison <- rownames(ts_)[i]; p_adj <- ts_[i,"p adj"]; diff <- ts_[i,"diff"]
+              result_text <- paste0(result_text,
+                sprintf("\\n  %s: diff=%.2f, p=%.4f (%s)", comparison, diff,
+                        ifelse(is.na(p_adj),1.0,p_adj), if (!is.na(p_adj)) get_sig_sym(p_adj) else "ns"))
+            }
+          }
+        }
+      }
+    }
+  }
+  list(result_text = result_text, omnibus_p = omnibus_p)
+}
+`;
+
   const plotCode = `
+${SHARED_STAT_HELPERS_R}
     # Create debug log file in taskpane directory (accessible from host filesystem)
     debug_log_file <- "/Users/yoshiakisato/My Office Add-in/src/taskpane/debug.txt"
 
@@ -22921,7 +23234,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       variance_test="levene", stat_symbol_type="stars",
       stat_symbol_size=5, comparison_mode="significant",
       post_hoc_test="tukey", custom_comparisons="[]",
-      vbracket_timepoint="", vbracket_x=0.85, vbracket_y=0.85,
+      vbracket_timepoint="", vbracket_position="bottomleft", vbracket_x=0.15, vbracket_y=0.05,
       vbracket_text_size=10, vbracket_sig_size=14,
       vbracket_margin=0.06, vbracket_line_width=3,
       vbracket_legend_line_length=0.05, vbracket_legend_line_width=2,
@@ -23479,6 +23792,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         } else if (n_groups >= 3) {
           cat("LQ survival (3+ groups): Using vbracket for statistical legend\\n")
 
+          # Always suppress default legend for 3+ groups with stats
+          p <- p + theme(legend.position="none")
+
           vbracket_loaded <- FALSE
           tryCatch({
             if (!require("vbracket", quietly=TRUE)) {
@@ -23496,7 +23812,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
               if (length(stat_text_results) > 0) {
                 if (nchar(vbracket_timepoint) == 0) {
-                  cat("⚠️ No dose point selected for legend. Please select one from the Statistics tab.\\n")
+                  cat("⚠️ No dose point selected for legend. Showing group legend without brackets.\\n")
                 } else {
                   dose_pattern <- sprintf(">> X-axis value: %s", gsub("\\\\.", "\\\\\\\\.", vbracket_timepoint))
                   filtered <- stat_text_results[grepl(dose_pattern, stat_text_results)]
@@ -23524,11 +23840,12 @@ const fontStack = buildCompleteFontStack(effectiveFont);
                 }
               }
 
+              group_labels <- levels(factor(summary_data$grp, levels=groups))
+              legend_colors <- line_colors[seq_along(group_labels)]
+              cat(sprintf("Using vbracket position: x=%.2f, y=%.2f\\n", vbracket_x, vbracket_y))
+
               if (length(groups1) > 0) {
                 comparisons_df <- data.frame(group1=groups1, group2=groups2, label=labels, stringsAsFactors=FALSE)
-                group_labels <- levels(factor(summary_data$grp, levels=groups))
-                legend_colors <- line_colors[seq_along(group_labels)]
-                p <- p + theme(legend.position="none")
                 p <- p + legend_bracket(
                   labels=group_labels, colors=legend_colors,
                   comparisons=comparisons_df,
@@ -23542,9 +23859,20 @@ const fontStack = buildCompleteFontStack(effectiveFont);
                   output_width=output_width, output_height=output_height,
                   text_family=target_font
                 )
-                cat("✅ Vbracket legend added\\n")
+                cat("✅ Vbracket legend added with comparisons\\n")
               } else {
-                cat("No comparisons to show for selected dose point\\n")
+                # No comparisons — still show group color legend without brackets
+                p <- p + legend_bracket(
+                  labels=group_labels, colors=legend_colors,
+                  legend_x=vbracket_x, legend_y=vbracket_y,
+                  text_size=vbracket_text_size,
+                  line_length=vbracket_legend_line_length,
+                  line_width=vbracket_line_width,
+                  item_spacing=vbracket_item_spacing,
+                  output_width=output_width, output_height=output_height,
+                  text_family=target_font
+                )
+                cat("✅ Vbracket legend added (no comparisons)\\n")
               }
             }, error=function(e) cat("Error in vbracket:", e$message, "\\n"))
           }
@@ -24721,6 +25049,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         post_hoc_test = "${postHocTest}",
         custom_comparisons = '${JSON.stringify(customComparisons).replace(/'/g, "\\'")}',
         vbracket_timepoint = "${vbracketTimepoint}",
+        vbracket_position = "${vbracketPosition}",
         vbracket_x = ${vbracketX},
         vbracket_y = ${vbracketY},
         vbracket_text_size = ${vbracketTextSize},
