@@ -4,7 +4,7 @@
 const ADDIN_VERSION = "1.0.0";
 
 // Grouped chart types constant (used throughout the file)
-const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw", "ic50_grouped_dose_response"];
+const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw", "ic50_grouped_dose_response", "lq_survival_grouped"];
 
 // ========= Registration System =========
 const REGISTRATION_KEY = "figra_registered";
@@ -461,7 +461,7 @@ async function saveFigureWithMetadata() {
       "box", "box_dot", "violin", "violin_dot", "bar_error_dot",
       "bar_grouped_error_dot", "box_grouped", "box_grouped_dot",
       "violin_grouped", "violin_grouped_dot",
-      "line_grouped_error_raw"
+      "line_grouped_error_raw", "lq_survival_grouped"
     ];
 
     const chartType = document.getElementById("chartType")?.value || "";
@@ -476,6 +476,8 @@ async function saveFigureWithMetadata() {
         // Get statistical results based on chart type
         if (chartType === "line_grouped_error_raw") {
           statResults = await getLineStatisticalResultsText();
+        } else if (chartType === "lq_survival_grouped") {
+          statResults = await getLQSurvivalStatisticalResultsText();
         } else if (chartType === "bar_grouped_error_dot" || chartType === "box_grouped" || chartType === "box_grouped_dot" || chartType === "violin_grouped" || chartType === "violin_grouped_dot") {
           statResults = await getGroupedBarStatisticalResultsText();
         } else {
@@ -629,7 +631,7 @@ async function downloadMetadataJson() {
       "box", "box_dot", "violin", "violin_dot", "bar_error_dot",
       "bar_grouped_error_dot", "box_grouped", "box_grouped_dot",
       "violin_grouped", "violin_grouped_dot",
-      "line_grouped_error_raw"
+      "line_grouped_error_raw", "lq_survival_grouped"
     ];
 
     const chartType = document.getElementById("chartType")?.value || "";
@@ -642,6 +644,8 @@ async function downloadMetadataJson() {
 
         if (chartType === "line_grouped_error_raw") {
           statResults = await getLineStatisticalResultsText();
+        } else if (chartType === "lq_survival_grouped") {
+          statResults = await getLQSurvivalStatisticalResultsText();
         } else if (chartType === "bar_grouped_error_dot" || chartType === "box_grouped" || chartType === "box_grouped_dot" || chartType === "violin_grouped" || chartType === "violin_grouped_dot") {
           statResults = await getGroupedBarStatisticalResultsText();
         } else {
@@ -827,6 +831,11 @@ async function loadFromFigure() {
         if (typeof updateGroupColorVisibility === 'function') {
           updateGroupColorVisibility();
         }
+        // Sync paired mode UI: show/hide subjectColRow, sync Data-tab checkbox,
+        // update auto mode description
+        if (typeof updatePairedModeUI === 'function') {
+          updatePairedModeUI();
+        }
 
         // Display statistical results if available
         if (metadata.statisticalResults) {
@@ -970,6 +979,7 @@ async function loadFromFigure() {
           // IMPORTANT: Re-apply all settings that might have been affected by loadHeadersFromSelection
           // This ensures font, weight, title, labels, etc. are correctly restored
           applySettingsToUI(metadata.settings);
+          if (typeof updatePairedModeUI === 'function') updatePairedModeUI();
           console.log("✅ Settings re-applied after loadHeadersFromSelection");
         } catch (err) {
           console.error('Error auto-loading data:', err);
@@ -1081,6 +1091,21 @@ function populateColumnSelectors(headers) {
       option.textContent = header;
       selector.appendChild(option);
     });
+  }
+
+  // Also populate subjectColumn (used for paired tests)
+  const subjectSel = document.getElementById("subjectColumn");
+  if (subjectSel) {
+    const currentVal = subjectSel.value;
+    subjectSel.innerHTML = '<option value="">-- Select --</option>';
+    headers.forEach(header => {
+      const option = document.createElement("option");
+      option.value = header;
+      option.textContent = header;
+      subjectSel.appendChild(option);
+    });
+    // Preserve existing selection if still valid
+    if (currentVal && headers.includes(currentVal)) subjectSel.value = currentVal;
   }
 }
 
@@ -1950,6 +1975,10 @@ function generateSubsetRCodeFromData(chartType, opts) {
       case 'box_grouped_dot':
       case 'violin_grouped':
       case 'violin_grouped_dot':
+      case 'lq_survival_grouped':
+        ggplotCode += `# Use 'Copy R Code' button for full LQ survival educational code.\n# Requires: nls() for LQ fitting, scale_y_log10()\n`;
+        break;
+
       case 'line_grouped':
       case 'line_grouped_error':
       case 'line_grouped_error_raw':
@@ -2194,8 +2223,9 @@ function getGroupColorsForRCode() {
 
 // Generate educational R code with manual calculations
 function generateEducationalRCode(chartType, dataFrame, settings, groupColors) {
-  // Check if vbracket is needed (line_grouped with 3+ groups and statistics)
-  const needsVbracket = chartType.startsWith('line_grouped') && settings.addStatistics && settings.numGroups >= 3;
+  // Check if vbracket is needed (line_grouped or lq_survival with 3+ groups and statistics)
+  const needsVbracket = (chartType.startsWith('line_grouped') || chartType === 'lq_survival_grouped')
+    && settings.addStatistics && settings.numGroups >= 3;
 
   // Start with libraries - USE ONLY SINGLE QUOTES to avoid Excel double-quote escaping
   let code = `# ============================================
@@ -2406,7 +2436,7 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
     }
 
     // Generate labels with plotmath support
-    const titleLabel = convertToRPlotmath(settings.title || 'Plot');
+    const titleLabel = settings.showTitle !== false ? convertToRPlotmath(settings.title || '') : "''";
     const xLabel = convertToRPlotmath(xLabelOrig);
     const yLabel = convertToRPlotmath(yLabelOrig);
 
@@ -2506,9 +2536,20 @@ ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
       code += generateSingleGroupStatisticalCode(settings, chartType);
     }
 
+    // Compute yMin/yMax R strings for coord system
+    const sgYMin = (settings.yMin != null && settings.yMin !== '') ? settings.yMin : null;
+    const sgYMax = (settings.yMax != null && settings.yMax !== '') ? settings.yMax : null;
+    const sgYLim = (sgYMin !== null || sgYMax !== null)
+      ? `c(${sgYMin !== null ? sgYMin : 'NA'}, ${sgYMax !== null ? sgYMax : 'NA'})`
+      : null;
+
     // Add chart rotation if needed
     if (settings.rotation === 90 || settings.rotation === "90") {
-      code += `\n# Rotate chart 90 degrees (horizontal bars)\np <- p + coord_flip()\n`;
+      if (sgYLim) {
+        code += `\n# Rotate chart and apply y-axis range\np <- p + coord_flip(ylim = ${sgYLim}, clip = "off")\n`;
+      } else {
+        code += `\n# Rotate chart 90 degrees (horizontal bars)\np <- p + coord_flip()\n`;
+      }
 
       // Add table-style Y-axis labels if enabled
       if (settings.tableStyleLabels) {
@@ -2529,6 +2570,8 @@ ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
         code += `# Adjust Y-axis to start from 0\n`;
         code += `p <- p + scale_y_continuous(expand = expansion(mult = c(0, 0.05)))\n`;
       }
+    } else if (sgYLim) {
+      code += `\n# Apply user-specified y-axis range\np <- p + coord_cartesian(ylim = ${sgYLim}, clip = "off")\n`;
     }
 
     code += `\nprint(p)\n`;
@@ -2893,6 +2936,179 @@ cat('IC50 =', ic50_value, '\\n')
 
 print(p)
 `;
+  } else if (chartType === 'lq_survival_grouped') {
+    const groupCol  = `col${settings.groupColIndex || 1}`;
+    const xCol      = `col${settings.xColIndex || 2}`;
+    const yCol      = `col${settings.yColIndex || 3}`;
+    const numGroups = settings.numGroups || 2;
+    const colors    = (settings.groupColors || ['#333333','#4C78A8','#E15759','#76B7B2','#F28E2B','#B07AA1']).slice(0, numGroups).map(c => `'${c}'`).join(', ');
+    const shapes    = [16, 17, 15, 18, 1, 2].slice(0, numGroups).join(', ');
+    const lw        = settings.lineWidth || 1.5;
+    const dotSz     = settings.dotSize   || 3;
+    const dotAlp    = settings.dotAlpha  ?? 0.6;
+    const showPts   = settings.lqShowPoints || 'se';
+    const curveN    = settings.lqCurvePoints || 200;
+    const errBarW   = 0.3;
+    const theme     = settings.themeName || 'classic';
+    const addStat   = settings.addStatistics && settings.addStatistics !== 'false';
+    const nGroups   = settings.numGroups || 2;
+    const statTest  = settings.statisticalTest || 'auto';
+    const vbT       = settings.vbracketTimepoint || '';
+    const vbX       = settings.vbracketX || 0.85;
+    const vbY       = settings.vbracketY || 0.85;
+    const vbTs      = settings.vbracketTextSize || 10;
+    const vbSig     = settings.vbracketSigSize  || 14;
+    const vbMar     = settings.vbracketMargin   || 0.06;
+    const vbLw      = settings.vbracketLineWidth || 3;
+    const vbLl      = settings.vbracketLegendLineLength || 0.05;
+    const vbLwl     = settings.vbracketLegendLineWidth  || 2;
+    const vbIs      = settings.vbracketItemSpacing || 0.1;
+    const compMode  = settings.comparisonMode || 'significant';
+
+    const statBlock2 = addStat && nGroups === 2 ? `
+# --- Statistical tests (2 groups, per dose) ---
+doses <- sort(unique(dat$${xCol}))
+stat_results <- data.frame(dose=numeric(0), label=character(0), stringsAsFactors=FALSE)
+
+for (d in doses) {
+  g1 <- dat[dat$${groupCol} == groups[1] & dat$${xCol} == d, '${yCol}']
+  g2 <- dat[dat$${groupCol} == groups[2] & dat$${xCol} == d, '${yCol}']
+  g1 <- g1[!is.na(g1)]; g2 <- g2[!is.na(g2)]
+  if (length(g1) < 2 || length(g2) < 2) next
+
+  # Auto-select t-test or Wilcoxon based on normality
+  n1 <- if (length(g1) >= 3) tryCatch(shapiro.test(g1)$p.value, error=function(e) 1) else 1
+  n2 <- if (length(g2) >= 3) tryCatch(shapiro.test(g2)$p.value, error=function(e) 1) else 1
+  use_parametric <- (n1 >= 0.05 && n2 >= 0.05)${statTest === 'nonparametric' ? ' & FALSE' : statTest === 'parametric' ? ' | TRUE' : ''}
+
+  res <- if (use_parametric) t.test(g1, g2) else wilcox.test(g1, g2)
+  p_val <- res$p.value
+  sig <- if (p_val < 0.001) '***' else if (p_val < 0.01) '**' else if (p_val < 0.05) '*' else 'ns'
+  if (sig != 'ns') stat_results <- rbind(stat_results, data.frame(dose=d, label=sig, stringsAsFactors=FALSE))
+  cat(sprintf('Dose %.2f Gy: p=%.4f (%s)\\n', d, p_val, sig))
+}
+
+# Add symbols below error bars (log scale: half-decade below)
+for (i in seq_len(nrow(stat_results))) {
+  d_val <- stat_results$dose[i]
+  rows_at_d <- summary_data[summary_data$dose == d_val, ]
+  min_bottom <- min(pmax(rows_at_d$sf_mean - rows_at_d$sf_err, 1e-10), na.rm=TRUE)
+  p <- p + annotate('text', x=d_val, y=min_bottom * 0.45,
+                    label=stat_results$label[i], size=5, fontface='plain')
+}` : '';
+
+    const statBlock3 = addStat && nGroups >= 3 ? `
+# --- Statistical tests (3+ groups, per dose) ---
+doses <- sort(unique(dat$${xCol}))
+stat_df <- data.frame(group1=character(0), group2=character(0), label=character(0), stringsAsFactors=FALSE)
+
+for (d in doses) {
+  sub <- dat[dat$${xCol} == d, ]
+  sub <- sub[!is.na(sub$${yCol}), ]
+  if (length(unique(sub$${groupCol})) < 2) next
+
+  # Overall test
+  kw <- tryCatch(kruskal.test(as.formula(paste0('${yCol} ~ ${groupCol}')), data=sub), error=function(e) NULL)
+  if (is.null(kw)) next
+  cat(sprintf('Dose %.2f Gy: Kruskal-Wallis p=%.4f\\n', d, kw$p.value))
+
+  # Pairwise (Wilcoxon + Bonferroni)
+  pairs <- combn(levels(factor(sub$${groupCol})), 2, simplify=FALSE)
+  for (pair in pairs) {
+    g1v <- sub[sub$${groupCol}==pair[1], '${yCol}']
+    g2v <- sub[sub$${groupCol}==pair[2], '${yCol}']
+    res <- tryCatch(wilcox.test(g1v, g2v), error=function(e) NULL)
+    if (is.null(res)) next
+    p_adj <- min(res$p.value * length(pairs), 1)
+    sig <- if (p_adj < 0.001) '***' else if (p_adj < 0.01) '**' else if (p_adj < 0.05) '*' else 'ns'
+    stat_df <- rbind(stat_df, data.frame(group1=pair[1], group2=pair[2], label=sig, stringsAsFactors=FALSE))
+    cat(sprintf('  %s vs %s: p_adj=%.4f (%s)\\n', pair[1], pair[2], p_adj, sig))
+  }
+}
+
+# VBracket legend — filter to selected dose point
+selected_dose <- ${vbT !== '' ? `'${vbT}'` : 'doses[1]'}  # dose to display in legend
+stat_at_dose <- stat_df  # already filtered by dose in loop above; use all for legend
+# (In practice, re-run the loop above for only selected_dose and collect comparisons)
+${compMode === 'significant' ? `stat_at_dose <- stat_at_dose[stat_at_dose$label != 'ns', ]` : ''}
+
+if (nrow(stat_at_dose) > 0) {
+  p <- p + theme(legend.position = 'none')
+  p <- p + legend_bracket(
+    labels = groups,
+    colors = c(${colors}),
+    comparisons = stat_at_dose,
+    legend_x = ${vbX}, legend_y = ${vbY},
+    text_size = ${vbTs}, sig_size = ${vbSig},
+    bracket_margin = ${vbMar},
+    line_length = ${vbLl}, line_width = ${vbLw},
+    item_spacing = ${vbIs},
+    output_width = 6, output_height = 4
+  )
+}` : '';
+
+    code += `# ---- Data preparation ----
+groups <- levels(factor(dat$${groupCol}))
+color_vec <- setNames(c(${colors}), groups)
+shape_vec <- setNames(c(${shapes}), groups)
+
+# ---- Calculate mean +/- ${showPts === 'sd' ? 'SD' : 'SE'} per group × dose ----
+summary_data <- do.call(rbind, lapply(groups, function(g) {
+  gd <- dat[dat$${groupCol} == g, ]
+  do.call(rbind, lapply(sort(unique(gd$${xCol})), function(d) {
+    vals <- gd[gd$${xCol} == d, '${yCol}']; vals <- vals[!is.na(vals)]; n <- length(vals)
+    data.frame(group=g, dose=d, sf_mean=mean(vals),
+               sf_err=if (n > 1) ${showPts === 'sd' ? 'sd(vals)' : 'sd(vals)/sqrt(n)'} else 0,
+               stringsAsFactors=FALSE)
+  }))
+}))
+summary_data$group <- factor(summary_data$group, levels=groups)
+
+# ---- Fit LQ model per group: SF = exp(-alpha*D - beta*D^2) ----
+dose_seq <- seq(0, max(dat$${xCol}, na.rm=TRUE), length.out=${curveN})
+fit_data <- do.call(rbind, lapply(groups, function(g) {
+  gd <- summary_data[summary_data$group == g, ]
+  fit <- tryCatch(
+    nls(sf_mean ~ exp(-a*dose - b*dose^2), data=gd,
+        start=list(a=0.3, b=0.02), algorithm='port', lower=c(a=1e-6, b=0)),
+    error=function(e) tryCatch(
+      nls(sf_mean ~ exp(-a*dose), data=gd,
+          start=list(a=0.3), algorithm='port', lower=c(a=1e-6)),
+      error=function(e2) NULL))
+  if (is.null(fit)) return(NULL)
+  coefs <- coef(fit)
+  alpha <- coefs['a']; beta <- if ('b' %in% names(coefs)) coefs['b'] else 0
+  cat(sprintf('%s: alpha=%.4f, beta=%.4f, alpha/beta=%.2f Gy\\n', g, alpha, beta,
+              if (beta > 1e-8) alpha/beta else Inf))
+  data.frame(group=g, dose=dose_seq, sf_pred=pmax(exp(-alpha*dose_seq - beta*dose_seq^2), 1e-10),
+             stringsAsFactors=FALSE)
+}))
+fit_data$group <- factor(fit_data$group, levels=groups)
+
+# ---- Plot ----
+p <- ggplot(summary_data, aes(x=dose, y=sf_mean, color=group, shape=group)) +
+${showPts === 'raw' ? `  geom_point(data=dat[dat$${yCol} > 0 & !is.na(dat$${yCol}), ],
+             aes(x=${xCol}, y=${yCol}, color=${groupCol}),
+             size=${dotSz}, alpha=${dotAlp}, shape=16, inherit.aes=FALSE) +` : ''}
+  geom_errorbar(aes(ymin=pmax(sf_mean - sf_err, 1e-10), ymax=sf_mean + sf_err),
+                width=${errBarW}, linewidth=${lw * 0.5}) +
+  geom_point(size=${dotSz * 1.4}, alpha=0.95) +
+  geom_line(data=fit_data, aes(x=dose, y=sf_pred, color=group),
+            linewidth=${lw}, inherit.aes=FALSE) +
+  scale_y_log10(labels=function(x) ifelse(x >= 0.1, formatC(x, format='g', digits=2),
+                                          formatC(x, format='e', digits=0))) +
+  scale_color_manual(values=color_vec) +
+  scale_shape_manual(values=shape_vec) +
+  labs(title=${settings.showTitle !== false ? `'${settings.title || 'Clonogenic Survival'}'` : 'NULL'},
+       x=${settings.showXLabel !== false ? `'${settings.xlab || 'Dose (Gy)'}'` : 'NULL'},
+       y=${settings.showYLabel !== false ? `'${settings.ylab || 'Surviving Fraction'}'` : 'NULL'},
+       color=NULL, shape=NULL) +
+  theme_${theme}(base_size=14)
+${statBlock2}${statBlock3}
+
+print(p)
+`;
+
   } else {
     // Unknown chart type
     code += `# Chart type '${chartType}' is not yet supported for educational R code generation.
@@ -3138,7 +3354,7 @@ summary_data <- dat %>%
 colnames(summary_data) <- c('Group', 'Category', 'Mean', 'SD', 'SE', 'N')
 
 # Add error values based on error type
-summary_data$Error <- summary_data$${settings.errorBarType === 'SE' ? 'SE' : 'SD'}
+summary_data$Error <- ${settings.errorBarType === 'se' ? 'summary_data$SE' : settings.errorBarType === 'ci95' ? '1.96 * summary_data$SE' : 'summary_data$SD'}
 
 `;
   }
@@ -3231,6 +3447,15 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
   // Add statistical comparisons using helper function
   code += generateStatisticalComparisonCode(settings, groupColName, xColName);
 
+  // Apply user-specified y-axis range if set
+  const yMinEdu = (settings.yMin != null && settings.yMin !== '') ? settings.yMin : null;
+  const yMaxEdu = (settings.yMax != null && settings.yMax !== '') ? settings.yMax : null;
+  if (yMinEdu !== null || yMaxEdu !== null) {
+    const yMinR = yMinEdu !== null ? yMinEdu : 'NA';
+    const yMaxR = yMaxEdu !== null ? yMaxEdu : 'NA';
+    code += `\n# Apply user-specified y-axis range\np <- p + coord_cartesian(ylim = c(${yMinR}, ${yMaxR}), clip = "off")\n`;
+  }
+
   code += `\n# Display the plot
 print(p)
 `;
@@ -3240,7 +3465,28 @@ print(p)
 
 // Helper function to generate statistical comparison code for grouped charts
 function generateStatisticalComparisonCode(settings, groupColName, xColName) {
-  if (!settings.addStatistics) return '';
+  // Always read live DOM state first — stored settings may be stale
+  // (DOM is always present in the taskpane; reading .checked on a boolean element never returns undefined)
+  const resolvedAddStatistics = document.getElementById("addStatistics")?.checked ||
+                                settings.addStatistics ||
+                                false;
+  if (!resolvedAddStatistics) return '';
+
+  // comparisonMode: radio button — DOM value is always a non-empty string, so put it first
+  const resolvedComparisonMode = document.querySelector('input[name="comparisonMode"]:checked')?.value ||
+                                 settings.comparisonMode ||
+                                 'significant';
+
+  // pairedSamples: boolean checkbox — either checkbox being checked means paired
+  const resolvedPairedSamples = document.getElementById("pairedSamples")?.checked ||
+                                document.getElementById("pairedSamplesDataTab")?.checked ||
+                                settings.pairedSamples ||
+                                false;
+  // Build effective settings with all resolved values
+  const effectiveSettings = Object.assign({}, settings, {
+    comparisonMode: resolvedComparisonMode,
+    pairedSamples: resolvedPairedSamples
+  });
 
   let code = `\n# ============ Statistical Comparisons ============
 # Note: Statistical brackets from the preview are calculated using custom functions.
@@ -3255,8 +3501,8 @@ library(ggpubr)
   if (window.lastProcessedData && window.lastProcessedData.length > 1) {
     const data = window.lastProcessedData;
     const headers = data[0];
-    const groupIdx = settings.groupColIndex - 1;
-    const catIdx = settings.xColIndex - 1;
+    const groupIdx = effectiveSettings.groupColIndex - 1;
+    const catIdx = effectiveSettings.xColIndex - 1;
 
     if (groupIdx >= 0 && groupIdx < headers.length) {
       uniqueGroups = [...new Set(data.slice(1).map(row => row[groupIdx]).filter(v => v))];
@@ -3268,20 +3514,20 @@ library(ggpubr)
 
   // Parse custom comparisons if available (could be string or array)
   let customComps = [];
-  if (settings.customComparisons) {
-    if (typeof settings.customComparisons === 'string') {
+  if (effectiveSettings.customComparisons) {
+    if (typeof effectiveSettings.customComparisons === 'string') {
       try {
-        customComps = JSON.parse(settings.customComparisons);
+        customComps = JSON.parse(effectiveSettings.customComparisons);
       } catch (e) {
         console.warn('Failed to parse customComparisons:', e);
       }
-    } else if (Array.isArray(settings.customComparisons)) {
-      customComps = settings.customComparisons;
+    } else if (Array.isArray(effectiveSettings.customComparisons)) {
+      customComps = effectiveSettings.customComparisons;
     }
   }
 
   // Generate actual comparisons based on mode
-  if (settings.comparisonMode === 'custom' && customComps.length > 0) {
+  if (resolvedComparisonMode === 'custom' && customComps.length > 0) {
     // Parse custom comparisons from "Group1-Group2@Category" format
     const comparisonsByCategory = {};
 
@@ -3304,21 +3550,21 @@ library(ggpubr)
     const categories = Object.keys(comparisonsByCategory);
     if (categories.length > 0) {
       // Use the simplified approach for all categories
-      code += generateCategoryByComparisonsCode(uniqueGroups, uniqueCategories, xColName, settings);
+      code += generateCategoryByComparisonsCode(uniqueGroups, uniqueCategories, xColName, effectiveSettings);
       code += `\n# Note: The add-in allows custom selection of which comparisons to show.
 # The simplified ggpubr approach above shows all comparisons.
 # For per-category control, you would need to manually compute tests and add annotations.
 `;
     } else {
       // Fallback - generate for all categories
-      code += generateCategoryByComparisonsCode(uniqueGroups, uniqueCategories, xColName, settings);
+      code += generateCategoryByComparisonsCode(uniqueGroups, uniqueCategories, xColName, effectiveSettings);
     }
-  } else if (settings.comparisonMode === 'all') {
+  } else if (resolvedComparisonMode === 'all') {
     // Generate comparisons for each category
-    code += generateCategoryByComparisonsCode(uniqueGroups, uniqueCategories, xColName, settings);
+    code += generateCategoryByComparisonsCode(uniqueGroups, uniqueCategories, xColName, effectiveSettings);
   } else {
     // Significant only mode - still generate structure for each category
-    code += generateCategoryByComparisonsCode(uniqueGroups, uniqueCategories, xColName, settings);
+    code += generateCategoryByComparisonsCode(uniqueGroups, uniqueCategories, xColName, effectiveSettings);
   }
 
   code += `\n# Modify the comparisons above as needed.
@@ -3339,12 +3585,25 @@ function generateCategoryByComparisonsCode(groups, categories, xColName, setting
   const groupColName = `col${settings.groupColIndex}`;
   const yColName = `col${settings.yColIndex}`;
 
+  // Paired test setup — DOM first (never stale), stored settings as fallback
+  const isPaired = document.getElementById("pairedSamples")?.checked ||
+                   document.getElementById("pairedSamplesDataTab")?.checked ||
+                   settings.pairedSamples ||
+                   false;
+  const pairedPostHocCorrection = settings.pairedPostHocCorrection || 'holm';
+  let subjectColName_r = null;
+  if (isPaired && settings.subjectColumn && window.lastProcessedData && window.lastProcessedData.length > 0) {
+    const hIdx = window.lastProcessedData[0].findIndex(h => h === settings.subjectColumn);
+    if (hIdx >= 0) subjectColName_r = `col${hIdx + 1}`;
+  }
+
   let code = '';
 
   // Generate manual statistical test code for each category
   code += `
 # ============ Perform Statistical Tests Manually ============
 # This replicates the add-in's internal statistical analysis
+# Test type: ${isPaired ? 'Paired' : 'Unpaired'}
 
 # Initialize results storage
 stat_results <- data.frame(
@@ -3361,7 +3620,238 @@ stat_results <- data.frame(
   // For each category, generate test code
   categories.forEach(category => {
     const safeName = category.replace(/[^a-zA-Z0-9]/g, '_');
-    code += `# Test for ${category}
+
+    if (isPaired && groups.length === 2) {
+      // --- PAIRED 2-GROUP test code ---
+      const subjectFrag = subjectColName_r
+        ? `g1_df_${safeName} <- cat_data_${safeName}[cat_data_${safeName}$${groupColName} == '${groups[0]}', c('${subjectColName_r}', '${yColName}')]
+g2_df_${safeName} <- cat_data_${safeName}[cat_data_${safeName}$${groupColName} == '${groups[1]}', c('${subjectColName_r}', '${yColName}')]
+paired_df_${safeName} <- merge(g1_df_${safeName}, g2_df_${safeName}, by = '${subjectColName_r}')
+group1_data <- as.numeric(paired_df_${safeName}[, 2])
+group2_data <- as.numeric(paired_df_${safeName}[, 3])`
+        : `group1_data <- as.numeric(cat_data_${safeName}[cat_data_${safeName}$${groupColName} == '${groups[0]}', '${yColName}'])
+group2_data <- as.numeric(cat_data_${safeName}[cat_data_${safeName}$${groupColName} == '${groups[1]}', '${yColName}'])`;
+
+      code += `# Paired test for ${category}
+cat_data_${safeName} <- dat[dat$${xColName} == '${category}', ]
+${subjectFrag}
+
+# Test normality of differences (Shapiro-Wilk) - correct approach for paired tests
+diffs_${safeName} <- group1_data - group2_data
+use_ttest_${safeName} <- TRUE
+if (length(diffs_${safeName}) >= 3 && length(diffs_${safeName}) <= 5000) {
+  diff_sw_${safeName} <- shapiro.test(diffs_${safeName})
+  use_ttest_${safeName} <- diff_sw_${safeName}$p.value >= 0.05
+  cat('  Normality of differences (${category}): p =', diff_sw_${safeName}$p.value,
+      if(use_ttest_${safeName}) '(normal → Paired t-test)' else '(non-normal → Paired Wilcoxon)', '\\n')
+}
+
+# Perform paired test
+if (use_ttest_${safeName}) {
+  test_result_${safeName} <- t.test(group1_data, group2_data, paired = TRUE)
+  test_name_${safeName} <- 'Paired t-test'
+} else {
+  test_result_${safeName} <- wilcox.test(group1_data, group2_data, paired = TRUE)
+  test_name_${safeName} <- 'Paired Wilcoxon'
+}
+
+p_val_${safeName} <- test_result_${safeName}$p.value
+
+# Determine significance symbol
+sig_${safeName} <- if (p_val_${safeName} < 0.001) '***' else if (p_val_${safeName} < 0.01) '**' else if (p_val_${safeName} < 0.05) '*' else 'ns'
+
+# Store result
+stat_results <- rbind(stat_results, data.frame(
+  category = '${category}',
+  group1 = '${groups[0]}',
+  group2 = '${groups[1]}',
+  p_value = p_val_${safeName},
+  significance = sig_${safeName}
+))
+
+cat('${category}:', test_name_${safeName}, 'p =', p_val_${safeName}, '(', sig_${safeName}, ')\\n')
+
+`;
+    } else if (isPaired && groups.length >= 3) {
+      // --- PAIRED 3+ GROUP test code: RM-ANOVA or Friedman ---
+      const subjectExpr = subjectColName_r
+        ? `factor(cat_data_${safeName}$${subjectColName_r})`
+        : `factor(seq_len(nrow(cat_data_${safeName}) / ${groups.length}))`;
+      const rShowAllPaired = (settings.comparisonMode || 'significant') === 'all' ? 'TRUE' : 'FALSE';
+      code += `# Paired 3+ groups test for ${category}
+cat_data_${safeName} <- dat[dat$${xColName} == '${category}', ]
+anova_df_${safeName} <- data.frame(
+  value = as.numeric(cat_data_${safeName}$${yColName}),
+  group = factor(as.character(cat_data_${safeName}$${groupColName})),
+  subject = ${subjectExpr}
+)
+anova_df_${safeName} <- anova_df_${safeName}[complete.cases(anova_df_${safeName}), ]
+anova_df_${safeName}$group <- droplevels(anova_df_${safeName}$group)
+
+# Test normality of pairwise differences
+groups_list_${safeName} <- levels(anova_df_${safeName}$group)
+pairs_${safeName} <- combn(groups_list_${safeName}, 2, simplify = FALSE)
+all_normal_${safeName} <- TRUE
+for (pair_n in pairs_${safeName}) {
+  g1_df <- anova_df_${safeName}[anova_df_${safeName}$group == pair_n[1], c('subject', 'value')]
+  g2_df <- anova_df_${safeName}[anova_df_${safeName}$group == pair_n[2], c('subject', 'value')]
+  merged_n <- merge(g1_df, g2_df, by = 'subject')
+  diffs_n <- merged_n$value.x - merged_n$value.y
+  if (length(diffs_n) >= 3) {
+    sw_n <- tryCatch(shapiro.test(diffs_n), error = function(e) NULL)
+    if (!is.null(sw_n)) {
+      cat('  Normality of differences (', pair_n[1], 'vs', pair_n[2], '): p =', sw_n$p.value,
+          if (sw_n$p.value >= 0.05) '(normal)' else '(non-normal)', '\\n')
+      if (sw_n$p.value < 0.05) all_normal_${safeName} <- FALSE
+    }
+  }
+}
+use_rm_anova_${safeName} <- all_normal_${safeName}
+show_all_${safeName} <- ${rShowAllPaired}
+cat('${category}: Using', if (use_rm_anova_${safeName}) 'RM-ANOVA' else 'Friedman test', '\\n')
+omnibus_p_${safeName} <- NA_real_
+if (use_rm_anova_${safeName}) {
+  tryCatch({
+    rm_sum_${safeName} <- summary(aov(value ~ group + Error(subject/group), data = anova_df_${safeName}))
+    omnibus_p_${safeName} <- rm_sum_${safeName}[['Error: subject:group']][[1]][['Pr(>F)']][1]
+    if (is.null(omnibus_p_${safeName}) || length(omnibus_p_${safeName}) == 0) omnibus_p_${safeName} <- NA_real_
+    cat('  RM-ANOVA p =', omnibus_p_${safeName}, '\\n')
+  }, error = function(e) { cat('  RM-ANOVA failed:', e$message, '\\n') })
+} else {
+  tryCatch({
+    friedman_r_${safeName} <- friedman.test(value ~ group | subject, data = anova_df_${safeName})
+    omnibus_p_${safeName} <- friedman_r_${safeName}$p.value
+    cat('  Friedman p =', omnibus_p_${safeName}, '\\n')
+  }, error = function(e) { cat('  Friedman failed:', e$message, '\\n') })
+}
+if (!is.na(omnibus_p_${safeName}) && (omnibus_p_${safeName} < 0.05 || show_all_${safeName})) {
+  ph_method_${safeName} <- '${pairedPostHocCorrection}'
+  if (use_rm_anova_${safeName}) {
+    ph_result_${safeName} <- pairwise.t.test(anova_df_${safeName}$value, anova_df_${safeName}$group,
+                                             paired = TRUE, p.adjust.method = ph_method_${safeName})
+    cat('  Post-hoc (Paired t-test,', ph_method_${safeName}, '):\\n')
+    ph_mat_${safeName} <- ph_result_${safeName}$p.value
+    for (i in seq_len(nrow(ph_mat_${safeName}))) {
+      for (j in seq_len(ncol(ph_mat_${safeName}))) {
+        if (!is.na(ph_mat_${safeName}[i, j])) {
+          p_adj <- ph_mat_${safeName}[i, j]
+          sig_ph <- if (p_adj < 0.001) '***' else if (p_adj < 0.01) '**' else if (p_adj < 0.05) '*' else 'ns'
+          if (show_all_${safeName} || sig_ph != 'ns') cat('  ', rownames(ph_mat_${safeName})[i], 'vs', colnames(ph_mat_${safeName})[j], ': p_adj =', p_adj, '(', sig_ph, ')\\n')
+        }
+      }
+    }
+  } else {
+    comps_${safeName} <- combn(levels(anova_df_${safeName}$group), 2, simplify = FALSE)
+    p_raw_${safeName} <- sapply(comps_${safeName}, function(comp) {
+      g1_df <- anova_df_${safeName}[anova_df_${safeName}$group == comp[1], c('subject', 'value')]
+      g2_df <- anova_df_${safeName}[anova_df_${safeName}$group == comp[2], c('subject', 'value')]
+      merged_fw <- merge(g1_df, g2_df, by = 'subject')
+      tryCatch(wilcox.test(merged_fw$value.x, merged_fw$value.y, paired = TRUE)$p.value, error = function(e) NA)
+    })
+    p_adj_${safeName} <- p.adjust(p_raw_${safeName}, method = ph_method_${safeName})
+    cat('  Post-hoc (Paired Wilcoxon,', ph_method_${safeName}, '):\\n')
+    for (i in seq_along(comps_${safeName})) {
+      sig_fw <- if (!is.na(p_adj_${safeName}[i]) && p_adj_${safeName}[i] < 0.001) '***' else if (!is.na(p_adj_${safeName}[i]) && p_adj_${safeName}[i] < 0.01) '**' else if (!is.na(p_adj_${safeName}[i]) && p_adj_${safeName}[i] < 0.05) '*' else 'ns'
+      if (show_all_${safeName} || sig_fw != 'ns') cat('  ', comps_${safeName}[[i]][1], 'vs', comps_${safeName}[[i]][2], ': p_adj =', p_adj_${safeName}[i], '(', sig_fw, ')\\n')
+    }
+  }
+} else if (is.na(omnibus_p_${safeName})) {
+  cat('  Omnibus test failed (NA result)\\n')
+} else {
+  cat('  Not significant (p =', omnibus_p_${safeName}, ')\\n')
+}
+
+`;
+    } else if (groups.length >= 3) {
+      // --- UNPAIRED 3+ GROUP test code: ANOVA or Kruskal-Wallis + post-hoc ---
+      const postHocTest3 = settings.postHocTest || 'tukey';
+      const comparisonMode3 = settings.comparisonMode || 'significant';
+      const phMethodParam3 = (postHocTest3 === 'tukey' || postHocTest3 === 'dunnett') ? 'tukey' : postHocTest3;
+      const phMethodNonParam3 = (postHocTest3 === 'tukey' || postHocTest3 === 'dunnett' || postHocTest3 === 'dunn') ? 'holm' : postHocTest3;
+      const rShowAll3 = comparisonMode3 === 'all' ? 'TRUE' : 'FALSE';
+
+      code += `# Unpaired 3+ groups test for ${category}
+cat_data_${safeName} <- dat[dat$${xColName} == '${category}', ]
+anova_df_${safeName} <- data.frame(
+  value = as.numeric(cat_data_${safeName}$${yColName}),
+  group = factor(as.character(cat_data_${safeName}$${groupColName}))
+)
+anova_df_${safeName} <- anova_df_${safeName}[complete.cases(anova_df_${safeName}), ]
+anova_df_${safeName}$group <- droplevels(anova_df_${safeName}$group)
+all_normal_${safeName} <- TRUE
+for (grp in levels(anova_df_${safeName}$group)) {
+  grp_vals <- anova_df_${safeName}$value[anova_df_${safeName}$group == grp]
+  if (length(grp_vals) >= 3) {
+    sw <- tryCatch(shapiro.test(grp_vals), error = function(e) NULL)
+    if (!is.null(sw)) {
+      cat('  Normality (${category}:', grp, '): p =', sw$p.value,
+          if (sw$p.value >= 0.05) '(normal)' else '(non-normal)', '\\n')
+      if (sw$p.value < 0.05) all_normal_${safeName} <- FALSE
+    }
+  }
+}
+omnibus_p_${safeName} <- NA_real_
+if (all_normal_${safeName}) {
+  anova_fit_${safeName} <- aov(value ~ group, data = anova_df_${safeName})
+  anova_sum_${safeName} <- summary(anova_fit_${safeName})
+  omnibus_p_${safeName} <- anova_sum_${safeName}[[1]][['Pr(>F)']][1]
+  cat('${category}: ANOVA p =', omnibus_p_${safeName}, '\\n')
+} else {
+  kw_${safeName} <- kruskal.test(value ~ group, data = anova_df_${safeName})
+  omnibus_p_${safeName} <- kw_${safeName}$p.value
+  cat('${category}: Kruskal-Wallis p =', omnibus_p_${safeName}, '\\n')
+}
+show_all_${safeName} <- ${rShowAll3}
+if (!is.na(omnibus_p_${safeName})) {
+  if (all_normal_${safeName}) {
+`;
+
+      if (phMethodParam3 === 'tukey') {
+        code += `    tukey_res_${safeName} <- TukeyHSD(anova_fit_${safeName})
+    tukey_df_${safeName} <- as.data.frame(tukey_res_${safeName}$group)
+    cat('  Tukey HSD (${category}):\\n')
+    for (comp_nm in rownames(tukey_df_${safeName})) {
+      p_adj <- tukey_df_${safeName}[comp_nm, 'p adj']
+      sig <- if (!is.na(p_adj) && p_adj < 0.001) '***' else if (!is.na(p_adj) && p_adj < 0.01) '**' else if (!is.na(p_adj) && p_adj < 0.05) '*' else 'ns'
+      if (show_all_${safeName} || sig != 'ns') cat('  ', comp_nm, ': p_adj =', p_adj, '(', sig, ')\\n')
+    }
+`;
+      } else {
+        code += `    ph_res_${safeName} <- pairwise.t.test(anova_df_${safeName}$value, anova_df_${safeName}$group, p.adjust.method = '${phMethodParam3}')
+    ph_mat_${safeName} <- ph_res_${safeName}$p.value
+    cat('  Pairwise t-test (${phMethodParam3}, ${category}):\\n')
+    for (i in seq_len(nrow(ph_mat_${safeName}))) {
+      for (j in seq_len(ncol(ph_mat_${safeName}))) {
+        if (!is.na(ph_mat_${safeName}[i, j])) {
+          p_adj <- ph_mat_${safeName}[i, j]
+          sig <- if (!is.na(p_adj) && p_adj < 0.001) '***' else if (!is.na(p_adj) && p_adj < 0.01) '**' else if (!is.na(p_adj) && p_adj < 0.05) '*' else 'ns'
+          if (show_all_${safeName} || sig != 'ns') cat('  ', rownames(ph_mat_${safeName})[i], 'vs', colnames(ph_mat_${safeName})[j], ': p_adj =', p_adj, '(', sig, ')\\n')
+        }
+      }
+    }
+`;
+      }
+
+      code += `  } else {
+    ph_np_${safeName} <- pairwise.wilcox.test(anova_df_${safeName}$value, anova_df_${safeName}$group, p.adjust.method = '${phMethodNonParam3}')
+    ph_mat_np_${safeName} <- ph_np_${safeName}$p.value
+    cat('  Pairwise Wilcoxon (${phMethodNonParam3}, ${category}):\\n')
+    for (i in seq_len(nrow(ph_mat_np_${safeName}))) {
+      for (j in seq_len(ncol(ph_mat_np_${safeName}))) {
+        if (!is.na(ph_mat_np_${safeName}[i, j])) {
+          p_adj <- ph_mat_np_${safeName}[i, j]
+          sig <- if (!is.na(p_adj) && p_adj < 0.001) '***' else if (!is.na(p_adj) && p_adj < 0.01) '**' else if (!is.na(p_adj) && p_adj < 0.05) '*' else 'ns'
+          if (show_all_${safeName} || sig != 'ns') cat('  ', rownames(ph_mat_np_${safeName})[i], 'vs', colnames(ph_mat_np_${safeName})[j], ': p_adj =', p_adj, '(', sig, ')\\n')
+        }
+      }
+    }
+  }
+}
+
+`;
+    } else {
+      // --- UNPAIRED 2-GROUP test code ---
+      code += `# Test for ${category}
 cat_data_${safeName} <- dat[dat$${xColName} == '${category}', ]
 group1_data <- as.numeric(cat_data_${safeName}[cat_data_${safeName}$${groupColName} == '${groups[0]}', '${yColName}'])
 group2_data <- as.numeric(cat_data_${safeName}[cat_data_${safeName}$${groupColName} == '${groups[1]}', '${yColName}'])
@@ -3419,6 +3909,7 @@ stat_results <- rbind(stat_results, data.frame(
 cat('${category}:', test_name_${safeName}, 'p =', p_val_${safeName}, '(', sig_${safeName}, ')\\n')
 
 `;
+    }
   });
 
   code += `
@@ -3525,9 +4016,10 @@ print(stat_results)
     });
   });
 
-  // Generate R code to create bracket data frame
-  const usingExactPositions = hasAddInBrackets;
-  code += `# Create data frame for statistical brackets
+  // Generate R code to create bracket data frame (2-group only)
+  if (groups.length === 2) {
+    const usingExactPositions = hasAddInBrackets;
+    code += `# Create data frame for statistical brackets
 ${usingExactPositions ? '# Note: Y positions below are the exact values from the add-in preview\n' : ''}bracket_df <- data.frame(
   group1 = character(),
   group2 = character(),
@@ -3540,9 +4032,29 @@ ${usingExactPositions ? '# Note: Y positions below are the exact values from the
 
 `;
 
-  // Add each bracket to the data frame
-  bracketData.forEach(bracket => {
-    code += `# Add bracket for ${bracket.category}
+    // Add each bracket to the data frame (filter by comparisonMode)
+    const comparisonMode2 = settings.comparisonMode || 'significant';
+    const showAllBrackets = comparisonMode2 === 'all';
+    const isCustomMode2 = comparisonMode2 === 'custom';
+
+    // Parse selected categories for custom mode (format: "group1-group2@category")
+    const selectedCategories2 = new Set();
+    if (isCustomMode2 && settings.customComparisons) {
+      let rawCustom2 = [];
+      if (typeof settings.customComparisons === 'string') {
+        try { rawCustom2 = JSON.parse(settings.customComparisons); } catch (e) {}
+      } else if (Array.isArray(settings.customComparisons)) {
+        rawCustom2 = settings.customComparisons;
+      }
+      rawCustom2.forEach(comp => {
+        const parts = comp.split('@');
+        if (parts.length === 2) selectedCategories2.add(parts[1].trim());
+      });
+    }
+
+    bracketData.forEach(bracket => {
+      if (showAllBrackets) {
+        code += `# Add bracket for ${bracket.category} (all comparisons mode)
 bracket_df <- rbind(bracket_df, data.frame(
   group1 = '${groups[0]}',
   group2 = '${groups[1]}',
@@ -3553,20 +4065,274 @@ bracket_df <- rbind(bracket_df, data.frame(
 ))
 
 `;
-  });
+      } else if (isCustomMode2) {
+        if (selectedCategories2.has(bracket.category)) {
+          code += `# Add bracket for ${bracket.category} (custom selection)
+bracket_df <- rbind(bracket_df, data.frame(
+  group1 = '${groups[0]}',
+  group2 = '${groups[1]}',
+  p.signif = sig_${bracket.safeName},
+  xmin = ${bracket.xmin},
+  xmax = ${bracket.xmax},
+  y.position = ${bracket.yPos}
+))
 
-  code += `# Add all brackets to plot using ggpubr
-p <- p + stat_pvalue_manual(
-  bracket_df,
-  label = 'p.signif',
-  xmin = 'xmin',
-  xmax = 'xmax',
-  y.position = 'y.position',
-  size = ${settings.statSymbolSize || 7},
-  size.line = ${settings.statLineSize || 1.0},
-  tip.length = ${settings.statTipLength || 0.04}
-)
 `;
+        }
+      } else {
+        code += `# Add bracket for ${bracket.category} (significant only)
+if (sig_${bracket.safeName} != 'ns') {
+  bracket_df <- rbind(bracket_df, data.frame(
+    group1 = '${groups[0]}',
+    group2 = '${groups[1]}',
+    p.signif = sig_${bracket.safeName},
+    xmin = ${bracket.xmin},
+    xmax = ${bracket.xmax},
+    y.position = ${bracket.yPos}
+  ))
+}
+
+`;
+      }
+    });
+
+    code += `# Add all brackets to plot using ggpubr
+if (nrow(bracket_df) > 0) {
+  p <- p + stat_pvalue_manual(
+    bracket_df,
+    label = 'p.signif',
+    xmin = 'xmin',
+    xmax = 'xmax',
+    y.position = 'y.position',
+    size = ${settings.statSymbolSize || 7},
+    bracket.size = ${settings.statLineSize || 0.5},
+    tip.length = ${settings.statTipLength || 0.04}
+  )
+  # Expand y-axis to show all brackets (matches add-in behavior)
+  p <- p + expand_limits(y = max(bracket_df$y.position) + diff(range(dat$${yColName}, na.rm = TRUE)) * 0.05)
+}
+`;
+  } else {
+    // 3+ groups: generate dynamic bracket-building R code using per-category post-hoc variables
+    const n_g = groups.length;
+    const dw = parseFloat(dodgeWidth).toFixed(3);
+    const symSize = settings.statSymbolSize || 7;
+    const tipLen = parseFloat(settings.statTipLength || 0.04).toFixed(3);
+    const lineSize = parseFloat(settings.statLineSize || 0.5).toFixed(2);
+
+    // Parse custom selected (category, g1, g2) triples for custom mode (format: "g1-g2@category")
+    const isCustomMode3 = settings.comparisonMode === 'custom';
+    let customTriples3 = [];
+    if (isCustomMode3 && settings.customComparisons) {
+      let rawCustom3 = [];
+      if (typeof settings.customComparisons === 'string') {
+        try { rawCustom3 = JSON.parse(settings.customComparisons); } catch (e) {}
+      } else if (Array.isArray(settings.customComparisons)) {
+        rawCustom3 = settings.customComparisons;
+      }
+      rawCustom3.forEach(comp => {
+        const parts = comp.split('@');
+        if (parts.length === 2) {
+          const gParts = parts[0].split('-');
+          if (gParts.length === 2) {
+            customTriples3.push({ cat: parts[1].trim(), g1: gParts[0].trim(), g2: gParts[1].trim() });
+          }
+        }
+      });
+    }
+
+    // Build the R bracket-add condition based on comparisonMode
+    let bracketCondition3;
+    if (isCustomMode3 && customTriples3.length > 0) {
+      const rList = customTriples3.map(t =>
+        `list(cat='${t.cat}', g1='${t.g1}', g2='${t.g2}')`).join(', ');
+      bracketCondition3 = `
+custom_selected <- list(${rList})
+is_custom_selected <- function(cat, g1, g2) {
+  any(sapply(custom_selected, function(cs)
+    cs$cat == cat && ((cs$g1 == g1 && cs$g2 == g2) || (cs$g1 == g2 && cs$g2 == g1))))
+}`;
+    } else {
+      bracketCondition3 = null; // use show_all || sig != 'ns'
+    }
+
+    // For paired tests, get_pair_p only looks at comps_/p_adj_ (Friedman/paired Wilcoxon path).
+    // This prevents stale tukey_df_/ph_mat_ variables from a previous unpaired run from
+    // contaminating results — those would be found first and produce wrong p-values.
+    const getPairPBody = isPaired
+      ? `
+  # Paired path only: RM-ANOVA pairwise.t.test matrix (ph_mat_) or Friedman comps/p_adj
+  # (Skipping TukeyHSD/pairwise.wilcox to avoid stale unpaired variables from previous runs)
+  phmat_nm <- paste0('ph_mat_', safe_nm)
+  if (exists(phmat_nm)) {
+    mat <- get(phmat_nm)
+    rn <- rownames(mat); cn <- colnames(mat)
+    if (!is.null(rn) && !is.null(cn)) {
+      if (g1 %in% rn && g2 %in% cn && !is.na(mat[g1, g2])) return(mat[g1, g2])
+      if (g2 %in% rn && g1 %in% cn && !is.na(mat[g2, g1])) return(mat[g2, g1])
+    }
+  }
+  comps_nm <- paste0('comps_', safe_nm); padj_nm <- paste0('p_adj_', safe_nm)
+  if (exists(comps_nm) && exists(padj_nm)) {
+    comps <- get(comps_nm); padj <- get(padj_nm)
+    for (idx in seq_along(comps)) {
+      if ((comps[[idx]][1] == g1 && comps[[idx]][2] == g2) ||
+          (comps[[idx]][1] == g2 && comps[[idx]][2] == g1)) return(padj[idx])
+    }
+  }
+  return(NA_real_)`
+      : `
+  # Unpaired path: TukeyHSD, pairwise.t.test, or pairwise.wilcox.test
+  tukey_nm <- paste0('tukey_df_', safe_nm)
+  if (exists(tukey_nm)) {
+    td <- get(tukey_nm)
+    comp1 <- paste0(g2, '-', g1); comp2 <- paste0(g1, '-', g2)
+    if (comp1 %in% rownames(td)) return(td[comp1, 'p adj'])
+    if (comp2 %in% rownames(td)) return(td[comp2, 'p adj'])
+  }
+  phmat_nm <- paste0('ph_mat_', safe_nm)
+  if (exists(phmat_nm)) {
+    mat <- get(phmat_nm)
+    rn <- rownames(mat); cn <- colnames(mat)
+    if (!is.null(rn) && !is.null(cn)) {
+      if (g1 %in% rn && g2 %in% cn && !is.na(mat[g1, g2])) return(mat[g1, g2])
+      if (g2 %in% rn && g1 %in% cn && !is.na(mat[g2, g1])) return(mat[g2, g1])
+    }
+  }
+  phmat_np_nm <- paste0('ph_mat_np_', safe_nm)
+  if (exists(phmat_np_nm)) {
+    mat <- get(phmat_np_nm)
+    rn <- rownames(mat); cn <- colnames(mat)
+    if (!is.null(rn) && !is.null(cn)) {
+      if (g1 %in% rn && g2 %in% cn && !is.na(mat[g1, g2])) return(mat[g1, g2])
+      if (g2 %in% rn && g1 %in% cn && !is.na(mat[g2, g1])) return(mat[g2, g1])
+    }
+  }
+  return(NA_real_)`;
+
+    // Build y-position lookup from add-in bracket data (exact positions, avoids spacing formula mismatch)
+    const yPosLookup3 = new Map();
+    if (window.lastBracketData && window.lastBracketData.length > 0) {
+      window.lastBracketData.forEach(b => {
+        // Infer category index from x-position column or from (xmin+xmax)/2
+        const catIdx = b['x.position']
+          ? parseInt(b['x.position'])
+          : Math.round((parseFloat(b.xmin) + parseFloat(b.xmax)) / 2);
+        const g1 = String(b.group1), g2 = String(b.group2);
+        const entry = { yPos: parseFloat(b['y.position']), xmin: parseFloat(b.xmin), xmax: parseFloat(b.xmax) };
+        yPosLookup3.set(`${catIdx}:${g1}:${g2}`, entry);
+        yPosLookup3.set(`${catIdx}:${g2}:${g1}`, entry);
+      });
+    }
+
+    // Try to build bracket_df rows directly from add-in data (exact y-positions)
+    let bracketBuildCode = '';
+    let addInMatchCount = 0;
+    if (yPosLookup3.size > 0) {
+      categories.forEach((cat, catIdx0) => {
+        const catIdx1 = catIdx0 + 1; // 1-based category index
+        const safeCat = cat.replace(/[^a-zA-Z0-9]/g, '_');
+        for (let gi = 0; gi < groups.length; gi++) {
+          for (let gj = gi + 1; gj < groups.length; gj++) {
+            const entry = yPosLookup3.get(`${catIdx1}:${groups[gi]}:${groups[gj]}`);
+            if (entry) {
+              addInMatchCount++;
+              bracketBuildCode += `tryCatch({
+  bracket_df <- rbind(bracket_df, data.frame(
+    group1 = '${groups[gi]}', group2 = '${groups[gj]}',
+    p.signif = sig_from_p(get_pair_p('${safeCat}', '${groups[gi]}', '${groups[gj]}')),
+    xmin = ${entry.xmin.toFixed(4)}, xmax = ${entry.xmax.toFixed(4)},
+    y.position = ${entry.yPos.toFixed(4)}, stringsAsFactors = FALSE
+  ))
+}, error = function(e) cat('Bracket error at ${cat}: ${groups[gi]} vs ${groups[gj]}\\n'))
+`;
+            }
+          }
+        }
+      });
+    }
+
+    if (addInMatchCount === 0) {
+      // Fallback: dynamic loop with improved spacing formula (matches add-in's unit_step * 0.6/1.0)
+      bracketBuildCode = `${bracketCondition3 ? bracketCondition3 + '\n' : ''}n_grps <- ${n_g}
+dw_all <- ${dw}
+cat_levels_all <- levels(dat$${xColName})
+grp_levels_all <- levels(dat$${groupColName})
+y_range_all <- diff(range(dat$${yColName}, na.rm = TRUE))
+
+for (ci in seq_along(cat_levels_all)) {
+  cat_nm <- cat_levels_all[ci]
+  safe_nm <- gsub('[^a-zA-Z0-9]', '_', cat_nm)
+  show_all_nm <- paste0('show_all_', safe_nm)
+  show_all <- if (exists(show_all_nm)) get(show_all_nm) else FALSE
+  cat_vals <- as.numeric(dat[dat$${xColName} == cat_nm, '${yColName}'])
+  y_cat_max <- if (length(cat_vals) > 0) max(cat_vals, na.rm = TRUE) else max(dat$${yColName}, na.rm = TRUE)
+  b_count <- 0
+  pairs_all <- combn(seq_along(grp_levels_all), 2, simplify = FALSE)
+  for (pair in pairs_all) {
+    gi <- pair[1]; gj <- pair[2]
+    g1_nm <- grp_levels_all[gi]; g2_nm <- grp_levels_all[gj]
+    p_val <- tryCatch(get_pair_p(safe_nm, g1_nm, g2_nm), error = function(e) NA_real_)
+    sig <- sig_from_p(p_val)
+    if (${bracketCondition3 ? 'is_custom_selected(cat_nm, g1_nm, g2_nm)' : 'show_all || sig != \'ns\''}) {
+      x_g1 <- ci + (gi - (n_grps + 1) / 2) * dw_all / n_grps
+      x_g2 <- ci + (gj - (n_grps + 1) / 2) * dw_all / n_grps
+      # Spacing matches add-in: first bracket at 0.15*y_range, subsequent +0.25*y_range each
+      y_pos <- y_cat_max + y_range_all * (0.15 + 0.25 * b_count)
+      bracket_df <- rbind(bracket_df, data.frame(
+        group1 = g1_nm, group2 = g2_nm,
+        p.signif = sig,
+        xmin = min(x_g1, x_g2),
+        xmax = max(x_g1, x_g2),
+        y.position = y_pos,
+        stringsAsFactors = FALSE
+      ))
+      b_count <- b_count + 1
+    }
+  }
+}`;
+    }
+
+    code += `# ============ Build Statistical Brackets (3+ Groups) ============
+bracket_df <- data.frame(
+  group1 = character(), group2 = character(), p.signif = character(),
+  xmin = numeric(), xmax = numeric(), y.position = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Ensure columns are factors for level ordering
+if (!is.factor(dat$${xColName})) dat$${xColName} <- factor(dat$${xColName})
+if (!is.factor(dat$${groupColName})) dat$${groupColName} <- factor(dat$${groupColName})
+
+# Helper: convert p-value to significance symbol
+sig_from_p <- function(p) {
+  if (is.na(p)) return('ns')
+  if (p < 0.001) '***' else if (p < 0.01) '**' else if (p < 0.05) '*' else 'ns'
+}
+
+# Helper: get adjusted p-value for a group pair from post-hoc result variables
+# Test type: ${isPaired ? 'Paired' : 'Unpaired'}
+get_pair_p <- function(safe_nm, g1, g2) {${getPairPBody}
+}
+
+${addInMatchCount > 0 ? '# Bracket positions from add-in preview (exact y-positions match)\n' : ''}${bracketBuildCode}
+
+if (nrow(bracket_df) > 0) {
+  p <- p + stat_pvalue_manual(
+    bracket_df,
+    label = 'p.signif',
+    xmin = 'xmin',
+    xmax = 'xmax',
+    y.position = 'y.position',
+    size = ${symSize},
+    bracket.size = ${lineSize},
+    tip.length = ${tipLen}
+  )
+  # Expand y-axis to show all brackets (matches add-in behavior)
+  p <- p + expand_limits(y = max(bracket_df$y.position) + diff(range(dat$${yColName}, na.rm = TRUE)) * 0.05)
+}
+`;
+  }
 
 
   return code;
@@ -3639,7 +4405,11 @@ p <- p + stat_compare_means(comparisons = comparisons, method = 't.test')
 
 // Helper function to generate statistical comparison code for single-group charts
 function generateSingleGroupStatisticalCode(settings, chartType) {
-  if (!settings.addStatistics) return '';
+  // DOM-first: live checkbox state takes priority over stale stored settings
+  const resolvedAddStats = document.getElementById("addStatistics")?.checked ||
+                           settings.addStatistics ||
+                           false;
+  if (!resolvedAddStats) return '';
 
   // Get unique categories from data
   let uniqueCategories = [];
@@ -3732,7 +4502,17 @@ function generateSingleGroupStatisticalCode(settings, chartType) {
   const postHocTest = settings.postHocTest || 'tukey';
   const isVsControl = postHocTest === 'dunnett' || postHocTest === 'steel';
   const controlGroup = settings.controlGroup || uniqueCategories[0];
-  const isPaired = settings.pairedSamples || false;
+  // DOM-first for pairedSamples — stored settings may be stale if user changed checkbox after Preview
+  const isPaired = document.getElementById("pairedSamples")?.checked ||
+                   document.getElementById("pairedSamplesDataTab")?.checked ||
+                   settings.pairedSamples ||
+                   false;
+  // DOM-first for comparisonMode (radio button string is always truthy, so stored value cannot be trusted)
+  const resolvedComparisonMode = document.querySelector('input[name="comparisonMode"]:checked')?.value ||
+                                 settings.comparisonMode ||
+                                 'significant';
+  // Shadow settings.comparisonMode with live DOM value for all downstream references
+  settings = Object.assign({}, settings, { comparisonMode: resolvedComparisonMode, pairedSamples: isPaired });
   // Find subject column R name (col1, col2, etc.)
   let subjectColName_r = null;
   if (isPaired && settings.subjectColumn && window.lastProcessedData && window.lastProcessedData.length > 0) {
@@ -4710,7 +5490,8 @@ print(stat_results)
           yBracketPos = Number(customYPos).toFixed(2);
         } else {
           const bracketLevel = pairIdx + 1;
-          yBracketPos = (yMax + yRange * (0.05 + bracketLevel * 0.1)).toFixed(2);
+          // Matches add-in: first bracket at 0.15*y_range, +0.25*y_range each subsequent
+          yBracketPos = (yMax + yRange * (0.15 + 0.25 * (bracketLevel - 1))).toFixed(2);
         }
       }
       return yBracketPos;
@@ -4771,7 +5552,8 @@ ${hasAddInBrackets ? '# Note: Y positions below are the exact values from the ad
         } else {
           // Last resort: Calculate automatically (stack multiple brackets)
           const bracketLevel = pairIdx + 1;
-          yBracketPos = (yMax + yRange * (0.05 + bracketLevel * 0.1)).toFixed(2);
+          // Matches add-in: first bracket at 0.15*y_range, +0.25*y_range each subsequent
+          yBracketPos = (yMax + yRange * (0.15 + 0.25 * (bracketLevel - 1))).toFixed(2);
         }
       }
 
@@ -4810,9 +5592,11 @@ if (nrow(comparison_df) > 0) {
     label = 'p.signif',
     y.position = 'y.position',
     size = ${settings.statSymbolSize || 7},
-    size.line = ${settings.statLineSize || 1.0},
+    bracket.size = ${settings.statLineSize || 0.5},
     tip.length = ${settings.statTipLength || 0.04}
   )
+  # Expand y-axis to show all brackets (matches add-in behavior)
+  p <- p + expand_limits(y = max(comparison_df$y.position) + diff(range(dat$${yColName}, na.rm = TRUE)) * 0.05)
 }
 
 `;
@@ -5357,7 +6141,7 @@ summary_data <- dat %>%
 
 # Rename columns
 colnames(summary_data) <- c('Group', 'TimePoint', 'Mean', 'SD', 'SE', 'N')
-summary_data$Error <- summary_data$${settings.errorBarType === 'SE' ? 'SE' : 'SD'}
+summary_data$Error <- ${settings.errorBarType === 'se' ? 'summary_data$SE' : settings.errorBarType === 'ci95' ? '1.96 * summary_data$SE' : 'summary_data$SD'}
 
 # ============ Create Plot ============
 
@@ -5432,6 +6216,10 @@ p <- ggplot(summary_data, aes(x = TimePoint, y = Mean, color = Group, group = Gr
     const postHocTest = settings.postHocTest || 'tukey';
     const isVsControl = postHocTest === 'dunnett' || postHocTest === 'steel';
     const controlGroup = settings.controlGroup || '';
+    const isPaired = settings.pairedSamples || false;
+    const subjectColIdx = isPaired && settings.subjectColumn && window.lastProcessedData
+      ? window.lastProcessedData[0].indexOf(settings.subjectColumn) : -1;
+    const subjectColNameR = subjectColIdx >= 0 ? `col${subjectColIdx + 1}` : null;
 
     code += `
 # ============ Statistical Analysis with vbracket ============
@@ -5470,7 +6258,33 @@ if (control_group == '' || !(control_group %in% group_order)) {
   control_group <- group_order[1]  # Default to first group
 }
 
-# Test normality for each group (Shapiro-Wilk)
+${isPaired && subjectColNameR ? `# Add subject ID column for paired analysis
+test_data$subject_id <- factor(test_data$${subjectColNameR})
+
+# Paired normality: test Shapiro-Wilk on pairwise differences
+cat('Normality of differences (Shapiro-Wilk) at timepoint', selected_timepoint, ':\\n')
+group_pairs_norm <- combn(group_order, 2, simplify = FALSE)
+normality_results <- list()
+any_non_normal <- FALSE
+for (pair_n in group_pairs_norm) {
+  g1_df_n <- test_data[test_data$${groupColName} == pair_n[1], c('subject_id', '${yColName}')]
+  g2_df_n <- test_data[test_data$${groupColName} == pair_n[2], c('subject_id', '${yColName}')]
+  merged_n <- merge(g1_df_n, g2_df_n, by = 'subject_id')
+  diffs_n <- merged_n$${yColName}.x - merged_n$${yColName}.y
+  pair_name_n <- paste0(pair_n[1], ' vs ', pair_n[2])
+  if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
+    sw_result <- shapiro.test(diffs_n)
+    normality_results[[pair_name_n]] <- sw_result$p.value
+    is_norm_n <- sw_result$p.value >= 0.05
+    if (!is_norm_n) any_non_normal <- TRUE
+    cat('  ', pair_name_n, ': p =', format(sw_result$p.value, digits = 4),
+        if(is_norm_n) '(normal)' else '(non-normal)', '\\n')
+  } else {
+    normality_results[[pair_name_n]] <- NA
+    cat('  ', pair_name_n, ': n =', length(diffs_n), '(skipped - need 3-5000 samples)\\n')
+  }
+}
+all_normal <- !any_non_normal` : `# Test normality for each group (Shapiro-Wilk)
 cat('Normality tests (Shapiro-Wilk) at timepoint', selected_timepoint, ':\\n')
 normality_results <- list()
 for (grp in group_order) {
@@ -5485,10 +6299,8 @@ for (grp in group_order) {
     cat('  ', grp, ': n =', length(grp_data), '(skipped - need 3-5000 samples)\\n')
   }
 }
-
-# Check normality and show appropriate warning
 any_non_normal <- any(sapply(normality_results, function(p) !is.na(p) && p < 0.05))
-all_normal <- all(sapply(normality_results, function(p) is.na(p) || p >= 0.05))
+all_normal <- all(sapply(normality_results, function(p) is.na(p) || p >= 0.05))`}
 
 if (data_type == 'parametric' && any_non_normal) {
   cat('\\n⚠️ WARNING: Some groups appear non-normal. Parametric test (ANOVA/', posthoc_type, ') was selected manually.\\n')
@@ -5504,12 +6316,14 @@ if (data_type == 'parametric' && any_non_normal) {
 if (n_groups >= 3) {
   comparisons_list <- list()
   labels_list <- c()
-
   if (data_type == 'nonparametric') {
-    # Kruskal-Wallis test (non-parametric)
+${isPaired && subjectColNameR ? `    # Friedman test (non-parametric paired)
+    friedman_r <- friedman.test(${yColName} ~ ${groupColName} | subject_id, data = test_data)
+    overall_p <- friedman_r$p.value
+    cat('Friedman test: p =', overall_p, '\\n')` : `    # Kruskal-Wallis test (non-parametric)
     kw_result <- kruskal.test(${yColName} ~ ${groupColName}, data = test_data)
     overall_p <- kw_result$p.value
-    cat('Kruskal-Wallis test: p =', overall_p, '\\n')
+    cat('Kruskal-Wallis test: p =', overall_p, '\\n')`}
 
     if (overall_p < 0.05) {
       if (posthoc_type == 'steel') {
@@ -5537,7 +6351,23 @@ if (n_groups >= 3) {
           }
         }
       } else {
-        # Dunn test - non-parametric pairwise
+${isPaired && subjectColNameR ? `        # Pairwise Wilcoxon signed-rank test (paired non-parametric)
+        cat('Running pairwise Wilcoxon signed-rank test (paired, Holm)\\n')
+        pw_result <- pairwise.wilcox.test(test_data$${yColName}, test_data$${groupColName}, p.adjust.method = 'holm', paired = TRUE)
+        p_matrix <- pw_result$p.value
+        for (i in 1:nrow(p_matrix)) {
+          for (j in 1:ncol(p_matrix)) {
+            if (!is.na(p_matrix[i, j])) {
+              grp1 <- colnames(p_matrix)[j]; grp2 <- rownames(p_matrix)[i]
+              p_val <- p_matrix[i, j]
+              cat(grp1, 'vs', grp2, ': p =', p_val, '\\n')
+              if (p_val < 0.05) {
+                comparisons_list[[length(comparisons_list) + 1]] <- c(grp1, grp2)
+                labels_list <- c(labels_list, if (p_val < 0.001) '***' else if (p_val < 0.01) '**' else '*')
+              }
+            }
+          }
+        }` : `        # Dunn test - non-parametric pairwise
         cat('Running Dunn test (pairwise comparisons)\\n')
         dunn_result <- dunn.test(test_data$${yColName}, test_data$${groupColName}, method = 'bonferroni')
 
@@ -5558,14 +6388,16 @@ if (n_groups >= 3) {
               labels_list <- c(labels_list, '*')
             }
           }
-        }
+        }`}
       }
     }
   } else {
-    # Parametric tests (ANOVA)
-    aov_result <- aov(${yColName} ~ ${groupColName}, data = test_data)
+    # Parametric tests${isPaired && subjectColNameR ? ' (RM-ANOVA)' : ' (ANOVA)'}
+${isPaired && subjectColNameR ? `    rm_result <- summary(aov(${yColName} ~ ${groupColName} + Error(subject_id/${groupColName}), data = test_data))
+    overall_p <- tryCatch(rm_result[['Error: subject_id:${groupColName}']][[1]][['Pr(>F)']][1], error = function(e) NA)
+    cat('RM-ANOVA: p =', overall_p, '\\n')` : `    aov_result <- aov(${yColName} ~ ${groupColName}, data = test_data)
     overall_p <- summary(aov_result)[[1]][['Pr(>F)']][1]
-    cat('ANOVA: p =', overall_p, '\\n')
+    cat('ANOVA: p =', overall_p, '\\n')`}
 
     if (overall_p < 0.05) {
       if (posthoc_type == 'dunnett') {
@@ -5596,10 +6428,10 @@ if (n_groups >= 3) {
           }
         }
       } else if (posthoc_type == 'bonferroni' || posthoc_type == 'holm') {
-        # Bonferroni or Holm correction - parametric pairwise
+        # ${isPaired && subjectColNameR ? 'Paired pairwise t-test' : 'Bonferroni or Holm correction - parametric pairwise'}
         cat('Running pairwise t-test with', posthoc_type, 'correction\\n')
         pairwise_result <- pairwise.t.test(test_data$${yColName}, test_data$${groupColName},
-                                            p.adjust.method = posthoc_type)
+                                            p.adjust.method = posthoc_type${isPaired && subjectColNameR ? ', paired = TRUE' : ''})
 
         # Extract p-values from the matrix
         p_matrix <- pairwise_result$p.value
@@ -5626,7 +6458,23 @@ if (n_groups >= 3) {
           }
         }
       } else {
-        # Tukey HSD - parametric pairwise (default)
+${isPaired && subjectColNameR ? `        # Paired pairwise t-test with Holm (Tukey HSD requires aov_result which is not available for RM-ANOVA)
+        cat('Running paired pairwise t-test (Holm) for RM-ANOVA\\n')
+        pairwise_result <- pairwise.t.test(test_data$${yColName}, test_data$${groupColName}, p.adjust.method = 'holm', paired = TRUE)
+        p_matrix <- pairwise_result$p.value
+        for (i in 1:nrow(p_matrix)) {
+          for (j in 1:ncol(p_matrix)) {
+            if (!is.na(p_matrix[i, j])) {
+              grp1 <- colnames(p_matrix)[j]; grp2 <- rownames(p_matrix)[i]
+              p_val <- p_matrix[i, j]
+              cat(grp1, 'vs', grp2, ': p =', p_val, '\\n')
+              if (p_val < 0.05) {
+                comparisons_list[[length(comparisons_list) + 1]] <- c(grp1, grp2)
+                labels_list <- c(labels_list, if (p_val < 0.001) '***' else if (p_val < 0.01) '**' else '*')
+              }
+            }
+          }
+        }` : `        # Tukey HSD - parametric pairwise (default)
         cat('Running Tukey HSD test (pairwise comparisons)\\n')
         tukey_result <- TukeyHSD(aov_result)
         tukey_df <- as.data.frame(tukey_result[['${groupColName}']])
@@ -5649,7 +6497,7 @@ if (n_groups >= 3) {
               labels_list <- c(labels_list, '*')
             }
           }
-        }
+        }`}
       }
     }
   }
@@ -5671,6 +6519,7 @@ if (n_groups >= 3) {
         text_size = ${vbracketTextSize},
         sig_size = ${vbracketSigSize},
         bracket_margin = ${vbracketMargin},
+        line_width = ${vbracketLineWidth},
         output_width = ${settings.expWidth || 6},
         output_height = ${settings.expHeight || 4}
       )
@@ -5682,6 +6531,7 @@ if (n_groups >= 3) {
         legend_x = ${vbracketX},
         legend_y = ${vbracketY},
         text_size = ${vbracketTextSize},
+        line_width = ${vbracketLineWidth},
         output_width = ${settings.expWidth || 6},
         output_height = ${settings.expHeight || 4}
       )
@@ -5861,7 +6711,11 @@ function collectCurrentSettings() {
     customSymbol01: el("customSymbol01")?.value || "**",
     customSymbol001: el("customSymbol001")?.value || "***",
     customSymbolNS: el("customSymbolNS")?.value || "ns",
-    statSymbolSize: el("statSymbolSize")?.value || "6",
+    statSymbolSize: el("statSymbolSize")?.value || "7",
+    statLineSize: el("statLineSize")?.value || "0.5",
+    statTipLength: el("statTipLength")?.value || "0.04",
+    symbolGap: el("symbolGap")?.value || "0.6",
+    bracketSpacing: el("bracketSpacing")?.value || "1.0",
     significanceLevel: el("significanceLevel")?.value || "0.05",
     comparisonMode: document.querySelector('input[name="comparisonMode"]:checked')?.value || "significant",
     fillMode: document.querySelector('input[name="fillMode"]:checked')?.value || "single",
@@ -5920,7 +6774,15 @@ function collectCurrentSettings() {
     ic50FittingMethod: el("ic50FittingMethod")?.value || "drc",
     ic50XisLog10: el("ic50XisLog10")?.checked ? "true" : "false",
     ic50ShowLog10Labels: el("ic50ShowLog10Labels")?.checked ? "true" : "false",
-    ic50DecimalLabels: el("ic50DecimalLabels")?.checked !== false ? "true" : "false"
+    ic50DecimalLabels: el("ic50DecimalLabels")?.checked !== false ? "true" : "false",
+    lqPointShape: el("lqPointShape")?.value || "16",
+    lqPerGroupShape: el("lqPerGroupShape")?.checked || false,
+    lqGroupShape1: el("lqGroupShape1")?.value || "16",
+    lqGroupShape2: el("lqGroupShape2")?.value || "17",
+    lqGroupShape3: el("lqGroupShape3")?.value || "15",
+    lqGroupShape4: el("lqGroupShape4")?.value || "18",
+    lqGroupShape5: el("lqGroupShape5")?.value || "1",
+    lqGroupShape6: el("lqGroupShape6")?.value || "2"
   };
 
   // Collect group colors dynamically
@@ -6219,6 +7081,10 @@ function applySettingsToUI(settings) {
   setValue("varianceTest", settings.varianceTest);
   setValue("symbolType", settings.symbolType);
   setValue("statSymbolSize", settings.statSymbolSize);
+  setValue("statLineSize", settings.statLineSize);
+  setValue("statTipLength", settings.statTipLength);
+  setValue("symbolGap", settings.symbolGap);
+  setValue("bracketSpacing", settings.bracketSpacing);
   setValue("significanceLevel", settings.significanceLevel);
   // Restore post-hoc selection to the correct dropdown based on value type
   const nonParamValues = ["dunn", "dunn_holm", "steel"];
@@ -6245,6 +7111,16 @@ function applySettingsToUI(settings) {
   if (settings.comparisonMode) {
     const radio = document.getElementById(settings.comparisonMode);
     if (radio) radio.checked = true;
+    // Update dependent visibility
+    const customArea = document.getElementById("customComparisonArea");
+    const bracketSpacingRow = document.getElementById("bracketSpacingRow");
+    if (settings.comparisonMode === "custom") {
+      if (customArea) customArea.style.display = "block";
+      if (bracketSpacingRow) bracketSpacingRow.style.display = "none";
+    } else {
+      if (customArea) customArea.style.display = "none";
+      if (bracketSpacingRow) bracketSpacingRow.style.display = "contents";
+    }
   }
 
   // Fill mode (radio buttons - for bar_error_dot)
@@ -6458,7 +7334,8 @@ Office.onReady(() => {
     "box_grouped_dot",
     "violin_grouped",
     "violin_grouped_dot",
-    "line_grouped_error_raw"
+    "line_grouped_error_raw",
+    "lq_survival_grouped"
   ];
 
   // Function to show/hide statistics controls based on chart type support
@@ -6518,7 +7395,7 @@ Office.onReady(() => {
     // Show VBracket controls only when:
     // 1. Chart type is "line_grouped_error_raw"
     // 2. Statistics checkbox is checked
-    const shouldShowVbracket = (chartType === "line_grouped_error_raw") && addStatistics;
+    const shouldShowVbracket = (chartType === "line_grouped_error_raw" || chartType === "lq_survival_grouped") && addStatistics;
 
     vbracketControls.style.display = shouldShowVbracket ? "block" : "none";
 
@@ -6530,6 +7407,23 @@ Office.onReady(() => {
     // Also populate timepoints when showing vbracket
     if (shouldShowVbracket && typeof populateVbracketTimepoints === 'function') {
       populateVbracketTimepoints();
+    }
+
+    // Set default position based on chart type:
+    // lq_survival_grouped → bottom left, others → top right
+    if (shouldShowVbracket) {
+      const vbracketPosition = document.getElementById("vbracketPosition");
+      const vbracketX = document.getElementById("vbracketX");
+      const vbracketY = document.getElementById("vbracketY");
+      if (vbracketPosition && !vbracketPosition.dataset.userModified) {
+        vbracketPosition.value = chartType === "lq_survival_grouped" ? "bottomleft" : "topright";
+      }
+      if (vbracketX && !vbracketX.dataset.userModified) {
+        vbracketX.value = chartType === "lq_survival_grouped" ? "0.15" : "0.85";
+      }
+      if (vbracketY && !vbracketY.dataset.userModified) {
+        vbracketY.value = chartType === "lq_survival_grouped" ? "0.05" : "0.85";
+      }
     }
   }
 
@@ -6554,17 +7448,24 @@ Office.onReady(() => {
     // Hide variance test when paired (not applicable)
     const varianceTestSection = document.getElementById("varianceTestSection");
     if (varianceTestSection) varianceTestSection.style.display = isPaired ? "none" : "";
+    // Update data type hint to reflect paired state
+    const dataTypeHint = document.getElementById("dataTypeHint");
+    const dataType = document.getElementById("dataTypeSelect")?.value || "parametric";
+    if (dataTypeHint) {
+      if (dataType === "parametric") {
+        dataTypeHint.textContent = isPaired ? "2 groups: Paired t-test, 3+ groups: RM-ANOVA" : "2 groups: t-test, 3+ groups: ANOVA";
+      } else {
+        dataTypeHint.textContent = isPaired ? "2 groups: Paired Wilcoxon, 3+ groups: Friedman" : "2 groups: Wilcoxon, 3+ groups: Kruskal-Wallis";
+      }
+    }
     // Show/hide subject ID column selector
     const subjectColRow = document.getElementById("subjectColRow");
     if (subjectColRow) subjectColRow.style.display = isPaired ? "flex" : "none";
-    // Hide Dunnett option when paired (no paired equivalent)
-    const postHocTest = document.getElementById("postHocTest");
-    if (postHocTest) {
-      Array.from(postHocTest.options).forEach(opt => {
-        if (opt.value === "dunnett") opt.style.display = isPaired ? "none" : "";
-      });
-      if (isPaired && postHocTest.value === "dunnett") postHocTest.value = "bonferroni";
-    }
+    // Swap post-hoc section: unpaired dropdown vs paired info text
+    const postHocSection = document.getElementById("postHocSection");
+    const pairedPostHocInfo = document.getElementById("pairedPostHocInfo");
+    if (postHocSection) postHocSection.style.display = isPaired ? "none" : "";
+    if (pairedPostHocInfo) pairedPostHocInfo.style.display = isPaired ? "block" : "none";
   }
 
   // Function to show/hide group column and group color controls for scatter
@@ -6676,7 +7577,8 @@ Office.onReady(() => {
 
     const dotCharts = [
       'box_dot', 'violin_dot', 'dot', 'bar_error_dot',
-      'bar_grouped_error_dot', 'box_grouped_dot', 'violin_grouped_dot', 'scatter'
+      'bar_grouped_error_dot', 'box_grouped_dot', 'violin_grouped_dot', 'scatter',
+      'lq_survival_grouped'
     ];
 
     const groupedWithDodge = [
@@ -6753,6 +7655,21 @@ Office.onReady(() => {
     if (dotSettingsRow) {
       const showDotSettings = !isIC50 && dotCharts.includes(chartType);
       dotSettingsRow.style.display = showDotSettings ? "flex" : "none";
+
+      // For LQ survival: hide per-dot color and shape (colors/shapes are per-group)
+      const isLQ = chartType === 'lq_survival_grouped';
+      const dotColorRowEl = document.getElementById("dotColorRow");
+      const dotShapeRowEl = document.getElementById("dotShapeRow");
+      if (dotColorRowEl) dotColorRowEl.style.display = isLQ ? "none" : "flex";
+      if (dotShapeRowEl) dotShapeRowEl.style.display = isLQ ? "none" : "flex";
+    }
+
+    // LQ shape section: show only for lq_survival_grouped
+    const lqShapeSectionEl = document.getElementById("lqShapeSection");
+    if (lqShapeSectionEl) {
+      const isLQ = chartType === 'lq_survival_grouped';
+      lqShapeSectionEl.style.display = isLQ ? "block" : "none";
+      if (isLQ) updateLQGroupShapeVisibility();
     }
   }
 
@@ -6803,6 +7720,17 @@ Office.onReady(() => {
       if (groupColorRow) groupColorRow.style.display = "flex";
       const groupColorLabel = document.getElementById("groupColorRowLabel");
       if (groupColorLabel) groupColorLabel.textContent = "Group Colors";
+    } else if (v === "lq_survival_grouped") {
+      lx.textContent = "Dose (Gy)";
+      ly.textContent = "Surviving Fraction";
+      // Show group column and group color controls
+      if (groupColumnRow) groupColumnRow.style.display = "flex";
+      if (groupColorRow) groupColorRow.style.display = "flex";
+      const groupColorLabelLQ = document.getElementById("groupColorRowLabel");
+      if (groupColorLabelLQ) groupColorLabelLQ.textContent = "Group Colors";
+      // Auto-set Y scale to log10 (survival curves are always on log scale)
+      const yScaleSelect = document.getElementById("yScale");
+      if (yScaleSelect) yScaleSelect.value = "log10";
     } else if (v === "scatter") {
       lx.textContent = "X Axis (continuous)";
       ly.textContent = "Y Axis (continuous)";
@@ -6937,6 +7865,9 @@ Office.onReady(() => {
     // Update IC50 Analysis controls
     updateIC50AnalysisVisibility();
 
+    // Update LQ Survival Analysis controls
+    updateLQSurvivalVisibility();
+
     // Update group color labels for new chart type
     updateGroupColorLabels();
   }
@@ -7024,7 +7955,9 @@ Office.onReady(() => {
       const showLog10Labels = document.getElementById("ic50ShowLog10Labels")?.checked || false;
       if (ic50DecimalLabelsRow) ic50DecimalLabelsRow.style.display = showLog10Labels ? "none" : "";
     } else {
-      if (ic50UnsupportedMessage) ic50UnsupportedMessage.style.display = "block";
+      // Also hide the unsupported message for LQ Survival (handled by its own section)
+      const isLQChart = chartType === "lq_survival_grouped";
+      if (ic50UnsupportedMessage) ic50UnsupportedMessage.style.display = isLQChart ? "none" : "block";
       if (ic50AnalysisSection) ic50AnalysisSection.style.display = "none";
       if (enableIC50Checkbox) enableIC50Checkbox.checked = false;
       if (ic50OptionsContainer) ic50OptionsContainer.style.display = "none";
@@ -7033,6 +7966,22 @@ Office.onReady(() => {
       if (xScaleRow) xScaleRow.style.display = "";
       if (yScaleRow) yScaleRow.style.display = "";
     }
+  }
+
+  // LQ Survival Analysis visibility control
+  function updateLQSurvivalVisibility() {
+    const chartType = document.getElementById("chartType")?.value || "";
+    const isLQ = chartType === "lq_survival_grouped";
+
+    const lqSection = document.getElementById("lqSurvivalAnalysisSection");
+    const lqDataOptions = document.getElementById("lqSurvivalDataOptions");
+    const yScaleRow = document.getElementById("yScaleRow");
+
+    if (lqSection) lqSection.style.display = isLQ ? "block" : "none";
+    if (lqDataOptions) lqDataOptions.style.display = isLQ ? "block" : "none";
+
+    // Always use log10 Y scale for survival curves — hide the scale selector
+    if (yScaleRow) yScaleRow.style.display = isLQ ? "none" : "";
   }
 
   // When ic50ShowLog10Labels changes, toggle decimal labels row visibility
@@ -7570,6 +8519,32 @@ Office.onReady(() => {
             outputRows.push(outRow);
           }
         }
+      } else if (xIsVerticalCol && groupIsVertical) {
+        // Both Factor 1 and Factor 2 are vertical columns, replicates spread across value columns.
+        // e.g. Gy | Rep1 | Rep2 | Rep3 | Treatment  →  Factor1 | Factor2 | Value
+        const groupLabelForRow = {};
+        for (const gc of groupCells) {
+          if (gc.val !== null && gc.val !== undefined && gc.val !== "") groupLabelForRow[gc.r] = gc.val;
+        }
+        const xLabelForRow = {};
+        for (const xc of xCells) {
+          if (xc.val !== null && xc.val !== undefined && xc.val !== "") xLabelForRow[xc.r] = xc.val;
+        }
+        const header = [groupColName, xColName];
+        if (numFactors >= 3) header.push(factor3ColName);
+        if (numFactors >= 4) header.push(factor4ColName);
+        header.push(valueColName);
+        outputRows = [header];
+        for (const row of valRows) {
+          if (autoSkipRows.has(row)) continue;
+          for (const col of valCols) {
+            const outRow = [groupLabelForRow[row] ?? "", xLabelForRow[row] ?? ""];
+            if (numFactors >= 3) outRow.push(getF3(row, col));
+            if (numFactors >= 4) outRow.push(getF4(row, col));
+            outRow.push(vcData[row][col]);
+            outputRows.push(outRow);
+          }
+        }
       } else if (xIsVerticalCol || groupIsVertical) {
         // "Replicates in rows": one vertical label column (Factor 1 or Factor 2),
         // replicates spread right across columns. Use whichever factor is the vertical
@@ -7941,6 +8916,24 @@ Office.onReady(() => {
     updateVbracketVisibility();
   });
 
+  // Track manual edits to vbracket position controls so chart-type-based defaults don't override user input
+  ["vbracketY", "vbracketX", "vbracketPosition"].forEach(function(id) {
+    document.getElementById(id)?.addEventListener("input", function() {
+      this.dataset.userModified = "true";
+    });
+    document.getElementById(id)?.addEventListener("change", function() {
+      this.dataset.userModified = "true";
+    });
+  });
+
+  // Clear userModified flag when chart type changes so default reapplies
+  document.getElementById("chartType")?.addEventListener("change", function() {
+    ["vbracketY", "vbracketX", "vbracketPosition"].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) delete el.dataset.userModified;
+    });
+  });
+
   // Set up paired samples checkbox listener
   // Sync: Stats tab → Data tab
   document.getElementById("pairedSamples")?.addEventListener("change", function() {
@@ -7967,6 +8960,11 @@ Office.onReady(() => {
   // IC50 per-group shape toggle
   document.getElementById("ic50PerGroupShape")?.addEventListener("change", function() {
     updateIC50AnalysisVisibility();
+  });
+
+  // LQ per-group shape toggle
+  document.getElementById("lqPerGroupShape")?.addEventListener("change", function() {
+    updateLQGroupShapeVisibility();
   });
 
   // vbracket position dropdown removed - now uses manual X/Y positioning only
@@ -8319,7 +9317,7 @@ Office.onReady(() => {
   // Reset statistical parameters to default values
   document.getElementById("resetStatParams")?.addEventListener("click", function() {
     document.getElementById("statSymbolSize").value = "7";
-    document.getElementById("statLineSize").value = "1.0";
+    document.getElementById("statLineSize").value = "0.5";
     document.getElementById("statTipLength").value = "0.04";
     document.getElementById("symbolGap").value = "0.6";
     document.getElementById("bracketSpacing").value = "1.0";
@@ -8335,11 +9333,14 @@ Office.onReady(() => {
   document.querySelectorAll('input[name="comparisonMode"]').forEach(radio => {
     radio.addEventListener("change", function() {
       const customArea = document.getElementById("customComparisonArea");
+      const bracketSpacingRow = document.getElementById("bracketSpacingRow");
       if (this.value === "custom") {
         customArea.style.display = "block";
         populateComparisonCheckboxes();
+        if (bracketSpacingRow) bracketSpacingRow.style.display = "none";
       } else {
         customArea.style.display = "none";
+        if (bracketSpacingRow) bracketSpacingRow.style.display = "contents";
       }
 
       // Update chart if statistics are enabled
@@ -8409,6 +9410,7 @@ Office.onReady(() => {
   // Switch between parametric and non-parametric post-hoc options
   document.getElementById("dataTypeSelect")?.addEventListener("change", function() {
     const dataType = this.value;
+    const isPaired = document.getElementById("pairedSamples")?.checked || false;
     const parametricPostHoc = document.getElementById("parametricPostHoc");
     const nonparametricPostHoc = document.getElementById("nonparametricPostHoc");
     const dataTypeHint = document.getElementById("dataTypeHint");
@@ -8418,13 +9420,13 @@ Office.onReady(() => {
     if (dataType === "parametric") {
       parametricPostHoc.style.display = "block";
       nonparametricPostHoc.style.display = "none";
-      if (varianceTestSection) varianceTestSection.style.display = "block";
-      dataTypeHint.textContent = "2 groups: t-test, 3+ groups: ANOVA";
+      if (varianceTestSection) varianceTestSection.style.display = isPaired ? "none" : "block";
+      if (dataTypeHint) dataTypeHint.textContent = isPaired ? "2 groups: Paired t-test, 3+ groups: RM-ANOVA" : "2 groups: t-test, 3+ groups: ANOVA";
     } else {
       parametricPostHoc.style.display = "none";
       nonparametricPostHoc.style.display = "block";
       if (varianceTestSection) varianceTestSection.style.display = "none";
-      dataTypeHint.textContent = "2 groups: Wilcoxon, 3+ groups: Kruskal-Wallis";
+      if (dataTypeHint) dataTypeHint.textContent = isPaired ? "2 groups: Paired Wilcoxon, 3+ groups: Friedman" : "2 groups: Wilcoxon, 3+ groups: Kruskal-Wallis";
     }
 
     // Update control group visibility based on current post-hoc selection
@@ -8704,7 +9706,20 @@ function updateGroupColorLabels() {
     if (scatterShapeLabel) {
       scatterShapeLabel.textContent = uniqueGroups[i - 1] != null ? uniqueGroups[i - 1] : fallback[i - 1];
     }
+    // Also update LQ per-group shape labels
+    const lqShapeLabel = document.getElementById(`lqGroupShapeLabel${i}`);
+    if (lqShapeLabel) {
+      lqShapeLabel.textContent = uniqueGroups[i - 1] != null ? uniqueGroups[i - 1] : fallback[i - 1];
+    }
   }
+}
+
+function updateLQGroupShapeVisibility() {
+  const perGroup = document.getElementById("lqPerGroupShape")?.checked || false;
+  const lqPointShapeRow = document.getElementById("lqPointShapeRow");
+  const lqGroupShapeSection = document.getElementById("lqGroupShapeSection");
+  if (lqPointShapeRow) lqPointShapeRow.style.display = perGroup ? "none" : "";
+  if (lqGroupShapeSection) lqGroupShapeSection.style.display = perGroup ? "flex" : "none";
 }
 
 // Helper function to get number of groups
@@ -8726,15 +9741,19 @@ function populateVbracketTimepoints() {
   // Get current selection before clearing
   const currentValue = timepointSelect.value;
 
-  // Clear existing options
-  timepointSelect.innerHTML = '<option value="">-- Select time point --</option>';
-
-  // Only populate for line_grouped_error_raw chart type
+  // Only populate for supported chart types
   const chartType = document.getElementById("chartType")?.value || "";
-  if (chartType !== "line_grouped_error_raw") {
+  const isLQ = chartType === "lq_survival_grouped";
+  if (chartType !== "line_grouped_error_raw" && !isLQ) {
     timepointSelect.innerHTML = '<option value="">-- Not applicable --</option>';
     return;
   }
+
+  // Update label based on chart type
+  const timepointLabel = document.querySelector('label[for="vbracketTimepoint"]');
+  if (timepointLabel) timepointLabel.textContent = isLQ ? "Dose point:" : "X-axis value:";
+
+  timepointSelect.innerHTML = `<option value="">-- Select ${isLQ ? "dose" : "time"} point --</option>`;
 
   // Get unique X values (time points) from the data
   if (window.lastProcessedData && window.lastProcessedData.length > 1) {
@@ -9165,6 +10184,7 @@ async function getStatisticalResultsText() {
   const pairedSamples = document.getElementById("pairedSamples")?.checked ||
                         document.getElementById("pairedSamplesDataTab")?.checked || false;
   const subjectColumn = document.getElementById("subjectColumn")?.value || "";
+  const pairedPostHocCorrection = document.getElementById("pairedPostHocCorrection")?.value || "holm";
 
   // Get selected columns from UI
   const selectedXColumn = document.getElementById("xColumn")?.value || "";
@@ -9781,6 +10801,31 @@ async function getGroupedBarStatisticalResultsText() {
   }
 }
 
+async function getLQSurvivalStatisticalResultsText() {
+  try {
+    await initWebR();
+    const addStatistics = document.getElementById("addStatistics")?.checked;
+    if (!addStatistics) return "Statistics disabled";
+
+    const statResultsR = await webR.evalR(`
+      if (exists("lq_stat_results") && nchar(lq_stat_results) > 0) {
+        lq_stat_results
+      } else {
+        "NO_RESULTS"
+      }
+    `);
+    const statResultsJS = await statResultsR.toJs();
+    const statText = statResultsJS?.values?.[0] || "NO_RESULTS";
+
+    return (statText && statText !== "NO_RESULTS" && statText.trim() !== "")
+      ? statText
+      : "No statistical results available";
+  } catch (error) {
+    console.error("Get LQ survival statistical results error:", error);
+    return `ERROR: ${error.message}`;
+  }
+}
+
 async function getLineStatisticalResultsText() {
   try {
     await initWebR();
@@ -9859,13 +10904,13 @@ async function displayStatisticalResultsInUI() {
 
     // Handle line plots (time-point specific comparisons)
     if (chartType === "line_grouped_error_raw") {
-      const lineStatResults = await getLineStatisticalResultsText();
-      // Debug output suppressed - results available in console and export
-      // if (lineStatResults && !lineStatResults.startsWith("ERROR:") && !lineStatResults.includes("No statistical")) {
-      //   setStatus(`Statistical results: ${lineStatResults}`);
-      // } else {
-      //   setStatus(`DEBUG: ${lineStatResults}`);
-      // }
+      await getLineStatisticalResultsText();
+      return;
+    }
+
+    // Handle LQ survival grouped (dose-point specific comparisons)
+    if (chartType === "lq_survival_grouped") {
+      await getLQSurvivalStatisticalResultsText();
       return;
     }
 
@@ -9939,7 +10984,7 @@ async function exportStatisticalResults() {
       "bar_error_dot", "bar_grouped_error_dot",
       "box", "box_dot", "box_grouped", "box_grouped_dot",
       "violin_dot", "violin_grouped", "violin_grouped_dot",
-      "line_grouped_error_raw"
+      "line_grouped_error_raw", "lq_survival_grouped"
     ];
 
     if (!STATS_SUPPORTED_CHART_TYPES.includes(chartType)) {
@@ -9947,9 +10992,11 @@ async function exportStatisticalResults() {
       return;
     }
 
-    if (chartType === "line_grouped_error_raw") {
-      // For line plots, get the detailed statistical results text
-      const lineStatResults = await getLineStatisticalResultsText();
+    if (chartType === "line_grouped_error_raw" || chartType === "lq_survival_grouped") {
+      // For line/LQ plots, get the detailed statistical results text
+      const lineStatResults = chartType === "lq_survival_grouped"
+        ? await getLQSurvivalStatisticalResultsText()
+        : await getLineStatisticalResultsText();
 
       if (!lineStatResults || lineStatResults.includes("No statistical") || lineStatResults.includes("ERROR") || lineStatResults.includes("DEBUG")) {
         setStatus(`Statistical results not found: ${lineStatResults ? lineStatResults.substring(0, 100) : "null"}`);
@@ -10022,6 +11069,7 @@ async function exportStatisticalResults() {
     const pairedSamples = document.getElementById("pairedSamples")?.checked ||
                           document.getElementById("pairedSamplesDataTab")?.checked || false;
     const subjectColumn = document.getElementById("subjectColumn")?.value || "";
+    const pairedPostHocCorrection = document.getElementById("pairedPostHocCorrection")?.value || "holm";
 
     // Get selected columns from UI
     const selectedXColumn = document.getElementById("xColumn")?.value || "";
@@ -11061,7 +12109,7 @@ async function exportStatisticalResultsToNewSheet() {
       "bar_error_dot", "bar_grouped_error_dot",
       "box", "box_dot", "box_grouped", "box_grouped_dot",
       "violin_dot", "violin_grouped", "violin_grouped_dot",
-      "line_grouped_error_raw"
+      "line_grouped_error_raw", "lq_survival_grouped"
     ];
 
     if (!STATS_SUPPORTED_CHART_TYPES.includes(chartType)) {
@@ -11074,6 +12122,8 @@ async function exportStatisticalResultsToNewSheet() {
     // Get statistical results based on chart type
     if (chartType === "line_grouped_error_raw") {
       statResults = await getLineStatisticalResultsText();
+    } else if (chartType === "lq_survival_grouped") {
+      statResults = await getLQSurvivalStatisticalResultsText();
     } else if (chartType === "bar_grouped" || chartType === "bar_grouped_error" || chartType === "bar_grouped_error_dot" || chartType === "box_grouped" || chartType === "box_grouped_dot" || chartType === "violin_grouped" || chartType === "violin_grouped_dot") {
       statResults = await getGroupedBarStatisticalResultsText();
     } else {
@@ -11436,6 +12486,115 @@ async function exportIC50CurveDataToExcel() {
   } catch (error) {
     console.error("IC50 export error:", error);
     setStatus("❌ IC50 export error: " + (error?.message || error));
+  }
+}
+
+// ========= LQ Survival Results Export Function =========
+
+async function exportLQSurvivalResultsToExcel() {
+  try {
+    setStatus("Exporting LQ parameters...");
+    await initWebR();
+
+    const groupsR = await webR.evalR(`
+      if (exists("lq_survival_grouped_results") && !is.null(lq_survival_grouped_results)) {
+        as.character(lq_survival_grouped_results$Group)
+      } else { character(0) }
+    `);
+    const groups = await groupsR.toArray().catch(() => []);
+
+    if (!groups || groups.length === 0) {
+      setStatus("\u274c Please click Preview first before exporting LQ parameters.");
+      return;
+    }
+
+    const alphasR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Alpha)`);
+    const alphas = await alphasR.toArray().catch(() => []);
+    const betasR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Beta)`);
+    const betas = await betasR.toArray().catch(() => []);
+    const abR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Alpha_Beta)`);
+    const abs_vals = await abR.toArray().catch(() => []);
+    const sf2R = await webR.evalR(`as.numeric(lq_survival_grouped_results$SF2)`);
+    const sf2s = await sf2R.toArray().catch(() => []);
+    const d10R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D10)`);
+    const d10s = await d10R.toArray().catch(() => []);
+
+    // Fetch fitted curve data
+    const fitGroupsR = await webR.evalR(`
+      if (exists("lq_fit_data") && !is.null(lq_fit_data)) as.character(lq_fit_data$grp) else character(0)
+    `);
+    const fitGroups = await fitGroupsR.toArray().catch(() => []);
+    const fitDosesR = await webR.evalR(`
+      if (exists("lq_fit_data") && !is.null(lq_fit_data)) as.numeric(lq_fit_data$dose) else numeric(0)
+    `);
+    const fitDoses = await fitDosesR.toArray().catch(() => []);
+    const fitSFR = await webR.evalR(`
+      if (exists("lq_fit_data") && !is.null(lq_fit_data)) as.numeric(lq_fit_data$sf_mean) else numeric(0)
+    `);
+    const fitSF = await fitSFR.toArray().catch(() => []);
+
+    await Excel.run(async (context) => {
+      const sheets = context.workbook.worksheets;
+      const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+      const sheetName = `LQ_Results_${timestamp}`;
+      const newSheet = sheets.add(sheetName);
+      newSheet.activate();
+
+      // Section 1: LQ parameters table
+      const outputData = [
+        ["LQ Clonogenic Survival Analysis"],
+        ["Model: SF = exp(-alpha * Dose - beta * Dose^2)"],
+        [""],
+        ["Group", "alpha (Gy\u207b\u00b9)", "beta (Gy\u207b\u00b2)", "alpha/beta (Gy)", "SF2", "D10 (Gy)"]
+      ];
+
+      for (let i = 0; i < groups.length; i++) {
+        const abVal = abs_vals[i];
+        outputData.push([
+          groups[i],
+          isNaN(alphas[i]) ? "N/A" : alphas[i],
+          isNaN(betas[i]) ? "N/A" : betas[i],
+          (!abVal || abVal > 1e6) ? "Inf" : abVal,
+          isNaN(sf2s[i]) ? "N/A" : sf2s[i],
+          isNaN(d10s[i]) ? "N/A" : d10s[i]
+        ]);
+      }
+
+      const paramRows = outputData.length;
+      const range = newSheet.getRange(`A1:F${paramRows}`);
+      range.values = outputData.map(row => {
+        while (row.length < 6) row.push("");
+        return row.slice(0, 6);
+      });
+      newSheet.getRange("A1").format.font.bold = true;
+      newSheet.getRange("A1").format.font.size = 13;
+      newSheet.getRange("A4:F4").format.font.bold = true;
+
+      // Section 2: Fitted curve data (2 rows below parameters)
+      if (fitGroups.length > 0) {
+        const curveStartRow = paramRows + 2;
+        const curveHeader = [[`Fitted Curve Data (LQ model, ${fitGroups.length / Math.max(groups.length, 1)} points per group)`], ["Group", "Dose (Gy)", "Fitted SF"]];
+        const curveRows = fitGroups.map((g, i) => [g, fitDoses[i], fitSF[i]]);
+        const curveData = [...curveHeader, ...curveRows];
+
+        const curveRange = newSheet.getRange(`A${curveStartRow}:C${curveStartRow + curveData.length - 1}`);
+        curveRange.values = curveData.map(row => {
+          while (row.length < 3) row.push("");
+          return row.slice(0, 3);
+        });
+        newSheet.getRange(`A${curveStartRow}`).format.font.bold = true;
+        newSheet.getRange(`A${curveStartRow}`).format.font.size = 13;
+        newSheet.getRange(`A${curveStartRow + 1}:C${curveStartRow + 1}`).format.font.bold = true;
+      }
+
+      newSheet.getUsedRange().format.autofitColumns();
+      await context.sync();
+      setStatus(`\u2705 LQ parameters exported to sheet: "${sheetName}"`);
+    });
+
+  } catch (error) {
+    console.error("LQ export error:", error);
+    setStatus("\u274c Error exporting LQ parameters: " + (error?.message || error));
   }
 }
 
@@ -12006,7 +13165,7 @@ async function initWebR() {
       return("ns")
     }
     
-    sato_add_statistics_to_plot <- function(p, data, group_col, value_col, test_type="auto", symbol_size=15, show_main_symbol=TRUE, show_pairwise=TRUE, ggpubr_symbol_size=10, ggpubr_line_size=1.2, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3, comparison_mode="significant", custom_comparisons="[]", custom_positions="{}", posthoc_test="tukey", dunnett_control="", y_scale="linear", stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns", paired=FALSE, subject_col=NULL) {
+    sato_add_statistics_to_plot <- function(p, data, group_col, value_col, test_type="auto", symbol_size=15, show_main_symbol=TRUE, show_pairwise=TRUE, ggpubr_symbol_size=10, ggpubr_line_size=0.5, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3, comparison_mode="significant", custom_comparisons="[]", custom_positions="{}", posthoc_test="tukey", dunnett_control="", y_scale="linear", stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns", paired=FALSE, subject_col=NULL, paired_ph_correction="holm") {
       cat("\\n\\n🔥🔥🔥 STAT FUNCTION CALLED 🔥🔥🔥\\n")
       cat("🔥 show_pairwise parameter value:", show_pairwise, "\\n")
       cat("🔥 posthoc_test:", posthoc_test, "\\n")
@@ -12198,15 +13357,21 @@ async function initWebR() {
                       stat_data$subject <- factor(rep(seq_len(n_per_grp), length(unique(stat_data$group))))
                     }
 
-                    # Normality check per group
-                    is_normal_all <- all(sapply(unique(stat_data$group), function(grp) {
-                      d <- stat_data$value[stat_data$group == grp]
-                      if (length(d) < 3) return(TRUE)
-                      shapiro.test(d)$p.value >= 0.05
+                    # Normality check: test normality of pairwise differences (correct for paired data)
+                    groups_list_norm <- levels(factor(stat_data$group))
+                    pairs_norm <- combn(groups_list_norm, 2, simplify=FALSE)
+                    is_normal_all <- all(sapply(pairs_norm, function(pair) {
+                      g1_df <- stat_data[stat_data$group == pair[1], c("subject", "value")]
+                      g2_df <- stat_data[stat_data$group == pair[2], c("subject", "value")]
+                      merged <- merge(g1_df, g2_df, by="subject")
+                      diffs <- merged$value.x - merged$value.y
+                      if (length(diffs) < 3) return(TRUE)
+                      shapiro.test(diffs)$p.value >= 0.05
                     }))
 
                     use_rm_anova <- (test_type == "auto" && is_normal_all) || test_type == "parametric"
-                    cat("🔥 PAIRED 3+: is_normal_all=", is_normal_all, " use_rm_anova=", use_rm_anova, " 🔥\\n")
+                    ph_method <- paired_ph_correction
+                    cat("🔥 PAIRED 3+: differences_normal=", is_normal_all, " use_rm_anova=", use_rm_anova, " post-hoc correction=", ph_method, " 🔥\\n")
 
                     if (use_rm_anova) {
                       tryCatch({
@@ -12220,7 +13385,7 @@ async function initWebR() {
                         combinations <- combn(groups_list, 2, simplify=FALSE)
 
                         if (omnibus_p_value < 0.05) {
-                          ph_result <- pairwise.t.test(stat_data$value, stat_data$group, paired=TRUE, p.adjust.method="holm")
+                          ph_result <- pairwise.t.test(stat_data$value, stat_data$group, paired=TRUE, p.adjust.method=ph_method)
                           p_adj_vals <- c(); cmp_names <- c(); diff_vals <- c()
                           for (comp in combinations) {
                             g1 <- comp[1]; g2 <- comp[2]
@@ -12259,20 +13424,20 @@ async function initWebR() {
                         combinations <- combn(unique(stat_data$group), 2, simplify=FALSE)
 
                         if (omnibus_p_value < 0.05) {
-                          if (!require("PMCMRplus", quietly=TRUE)) webr::install("PMCMRplus")
-                          library(PMCMRplus)
-                          conover_res <- frdAllPairsConoverTest(y=stat_data$value, groups=stat_data$group, blocks=stat_data$subject, p.adjust.method="holm")
-                          p_adj_vals <- c(); cmp_names <- c()
+                          # Post-hoc: pairwise Wilcoxon signed-rank with Holm/Bonferroni correction
+                          p_raw_vals <- c(); cmp_names <- c()
                           for (comp in combinations) {
-                            g1 <- comp[1]; g2 <- comp[2]
-                            if (g2 %in% rownames(conover_res$p.value) && g1 %in% colnames(conover_res$p.value)) {
-                              pv <- conover_res$p.value[g2, g1]
-                            } else if (g1 %in% rownames(conover_res$p.value) && g2 %in% colnames(conover_res$p.value)) {
-                              pv <- conover_res$p.value[g1, g2]
-                            } else { pv <- NA }
-                            cmp_names <- c(cmp_names, paste(g2, g1, sep="-"))
-                            p_adj_vals <- c(p_adj_vals, pv)
+                            g1_df <- stat_data[stat_data$group == comp[1], c("subject", "value")]
+                            g2_df <- stat_data[stat_data$group == comp[2], c("subject", "value")]
+                            merged_ph <- merge(g1_df, g2_df, by="subject")
+                            pv_raw <- tryCatch(
+                              wilcox.test(merged_ph$value.x, merged_ph$value.y, paired=TRUE)$p.value,
+                              error=function(e) NA
+                            )
+                            p_raw_vals <- c(p_raw_vals, pv_raw)
+                            cmp_names <- c(cmp_names, paste(comp[2], comp[1], sep="-"))
                           }
+                          p_adj_vals <- p.adjust(p_raw_vals, method=ph_method)
                           posthoc_summary <- data.frame(diff=rep(NA,length(p_adj_vals)), lwr=rep(NA,length(p_adj_vals)), upr=rep(NA,length(p_adj_vals)), "p adj"=p_adj_vals, row.names=cmp_names, check.names=FALSE)
                           real_p_values <- p_adj_vals
                           real_p_symbols <- sapply(p_adj_vals, get_sig_symbol)
@@ -13186,7 +14351,7 @@ async function initWebR() {
               p <- p + stat_pvalue_manual(asterisk_data,
                                          label = "p.signif",
                                          size = bracket_size,
-                                         size.line = line_size,
+                                         bracket.size = line_size,
                                          tip.length = tip_length,
                                          vjust = v_just,
                                          hjust = 0.5,
@@ -13204,7 +14369,7 @@ async function initWebR() {
               p <- p + stat_pvalue_manual(ns_data,
                                          label = "p.signif",
                                          size = smaller_size,
-                                         size.line = line_size,
+                                         bracket.size = line_size,
                                          tip.length = tip_length,
                                          vjust = ns_vjust,
                                          hjust = 0.5,
@@ -13949,7 +15114,7 @@ async function initWebR() {
 
         # Add statistical analysis if requested and we have multiple groups
         if (add_statistics && length(unique(plot_data$group)) > 1) {
-          p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
+          p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'}, paired_ph_correction="${pairedPostHocCorrection}")
         }
       }
 
@@ -14395,12 +15560,15 @@ async function initWebR() {
                                             add_statistics=FALSE, statistical_test="auto", variance_test="levene", post_hoc_test="tukey", dunnett_control="", stat_symbol_size=7,
                                             comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
                                             stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
+                                            paired_samples=FALSE, subject_col=NULL,
                                             vbracket_timepoint="", vbracket_position="topleft", vbracket_x=0.08, vbracket_y=0.92,
                                             vbracket_text_size=14, vbracket_sig_size=14, vbracket_margin=0.03, vbracket_line_width=0.5,
                                             vbracket_legend_line_length=NULL, vbracket_legend_line_width=NULL, vbracket_item_spacing=NULL,
                                             vbracket_bracket_layer_spacing=NULL,
                                             output_width=6, output_height=4,
                                             x_breaks_mode="auto") {
+
+      paired <- paired_samples
 
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
@@ -14462,6 +15630,7 @@ async function initWebR() {
         group = as.character(dat[[group_col]]),
         x = dat[[x_col]],
         value = dat[[y_col]],
+        subject_id = if (!is.null(subject_col) && nchar(subject_col) > 0 && subject_col %in% names(dat)) as.character(dat[[subject_col]]) else as.character(seq_len(nrow(dat))),
         stringsAsFactors = FALSE
       )
 
@@ -14666,86 +15835,97 @@ async function initWebR() {
             }
 
             if (n_groups_at_x == 2) {
-              # TWO GROUPS: Use t-test or Wilcoxon
-              group1_data <- data_at_x[data_at_x$group == groups_with_data[1], "value"]
-              group2_data <- data_at_x[data_at_x$group == groups_with_data[2], "value"]
+              # TWO GROUPS: Use t-test or Wilcoxon (paired-aware)
+              if (paired) {
+                g1_df <- data_at_x[data_at_x$group == groups_with_data[1], c("subject_id", "value")]
+                g2_df <- data_at_x[data_at_x$group == groups_with_data[2], c("subject_id", "value")]
+                paired_df <- merge(g1_df, g2_df, by = "subject_id")
+                group1_data <- paired_df$value.x
+                group2_data <- paired_df$value.y
+              } else {
+                group1_data <- data_at_x[data_at_x$group == groups_with_data[1], "value"]
+                group2_data <- data_at_x[data_at_x$group == groups_with_data[2], "value"]
+              }
 
               # Only test if both groups have data
               if (length(group1_data) > 0 && length(group2_data) > 0) {
-                # Perform normality test for both groups
+                # Perform normality test
                 normality_text <- c()
-                is_group1_normal <- TRUE  # default assumption
-                is_group2_normal <- TRUE
                 both_normal <- TRUE
 
-                if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
-                  shapiro_result1 <- tryCatch(
-                    shapiro.test(group1_data),
-                    error = function(e) NULL
-                  )
-                  if (!is.null(shapiro_result1)) {
-                    is_group1_normal <- shapiro_result1$p.value >= 0.05
-                    norm_status <- if (is_group1_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
-                    cat(sprintf("    %s: Shapiro-Wilk p=%.4f (%s)\\n", groups_with_data[1], shapiro_result1$p.value, norm_status))
+                if (paired) {
+                  # For paired: test normality of differences
+                  diffs_2 <- group1_data - group2_data
+                  if (length(diffs_2) >= 3 && length(diffs_2) <= 5000) {
+                    shapiro_diffs <- tryCatch(shapiro.test(diffs_2), error = function(e) NULL)
+                    if (!is.null(shapiro_diffs)) {
+                      both_normal <- shapiro_diffs$p.value >= 0.05
+                      diff_status <- if (both_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
+                      cat(sprintf("    Differences: Shapiro-Wilk p=%.4f (%s)\\n", shapiro_diffs$p.value, diff_status))
+                    }
                   }
-                }
-
-                if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
-                  shapiro_result2 <- tryCatch(
-                    shapiro.test(group2_data),
-                    error = function(e) NULL
-                  )
-                  if (!is.null(shapiro_result2)) {
-                    is_group2_normal <- shapiro_result2$p.value >= 0.05
-                    norm_status <- if (is_group2_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
-                    cat(sprintf("    %s: Shapiro-Wilk p=%.4f (%s)\\n", groups_with_data[2], shapiro_result2$p.value, norm_status))
+                } else {
+                  is_group1_normal <- TRUE
+                  is_group2_normal <- TRUE
+                  if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
+                    shapiro_result1 <- tryCatch(shapiro.test(group1_data), error = function(e) NULL)
+                    if (!is.null(shapiro_result1)) {
+                      is_group1_normal <- shapiro_result1$p.value >= 0.05
+                      norm_status <- if (is_group1_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
+                      cat(sprintf("    %s: Shapiro-Wilk p=%.4f (%s)\\n", groups_with_data[1], shapiro_result1$p.value, norm_status))
+                    }
                   }
+                  if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
+                    shapiro_result2 <- tryCatch(shapiro.test(group2_data), error = function(e) NULL)
+                    if (!is.null(shapiro_result2)) {
+                      is_group2_normal <- shapiro_result2$p.value >= 0.05
+                      norm_status <- if (is_group2_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
+                      cat(sprintf("    %s: Shapiro-Wilk p=%.4f (%s)\\n", groups_with_data[2], shapiro_result2$p.value, norm_status))
+                    }
+                  }
+                  both_normal <- is_group1_normal && is_group2_normal
                 }
-
-                both_normal <- is_group1_normal && is_group2_normal
 
                 # Select test based on mode
                 test_to_use <- statistical_test
                 if (statistical_test == "auto") {
                   if (both_normal) {
                     test_to_use <- "t-test"
-                    cat("  Auto-selected: t-test (both groups normal)\\n")
+                    cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
                   } else {
                     test_to_use <- "wilcoxon"
-                    cat("  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
+                    cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
                   }
                 } else if (statistical_test == "parametric") {
                   test_to_use <- "t-test"
-                  cat("  Manual mode: parametric t-test\\n")
+                  cat(if (paired) "  Manual mode: Paired t-test (parametric)\\n" else "  Manual mode: parametric t-test\\n")
                 } else if (statistical_test == "nonparametric") {
                   test_to_use <- "wilcoxon"
-                  cat("  Manual mode: non-parametric Wilcoxon test\\n")
+                  cat(if (paired) "  Manual mode: Paired Wilcoxon (non-parametric)\\n" else "  Manual mode: non-parametric Wilcoxon test\\n")
                 }
 
-                # Perform variance test (only for parametric tests)
+                # Perform variance test (only for unpaired parametric tests)
                 variance_text <- ""
                 equal_variances <- TRUE  # default
-                if (test_to_use != "wilcoxon") {
+                if (test_to_use != "wilcoxon" && !paired) {
                   if (variance_test == "levene") {
-                    # Levene test for equality of variances
                     combined_data <- data.frame(
                       values = c(group1_data, group2_data),
                       group = factor(c(rep(groups_with_data[1], length(group1_data)),
                                       rep(groups_with_data[2], length(group2_data))))
                     )
-
-                    # Calculate Levene test manually
                     group_means <- tapply(combined_data$values, combined_data$group, mean)
                     abs_deviations <- abs(combined_data$values - group_means[combined_data$group])
                     levene_result <- tryCatch(
                       anova(lm(abs_deviations ~ combined_data$group)),
                       error = function(e) NULL
                     )
-
                     if (!is.null(levene_result)) {
                       levene_p <- levene_result$\`Pr(>F)\`[1]
                       equal_variances <- levene_p > 0.05
@@ -14754,12 +15934,7 @@ async function initWebR() {
                       cat(sprintf("    Levene test: p=%.4f (%s)\\n", levene_p, variance_status))
                     }
                   } else {
-                    # F-test for equality of variances
-                    var_test <- tryCatch(
-                      var.test(group1_data, group2_data),
-                      error = function(e) NULL
-                    )
-
+                    var_test <- tryCatch(var.test(group1_data, group2_data), error = function(e) NULL)
                     if (!is.null(var_test)) {
                       equal_variances <- var_test$p.value > 0.05
                       variance_status <- if (equal_variances) "equal variances" else "unequal variances"
@@ -14769,15 +15944,28 @@ async function initWebR() {
                   }
                 }
 
-                # Perform statistical test based on auto-selection
-                if (test_to_use == "wilcoxon") {
+                # Perform statistical test
+                if (paired) {
+                  if (test_to_use == "wilcoxon") {
+                    test_result <- tryCatch(
+                      wilcox.test(group1_data, group2_data, paired = TRUE),
+                      error = function(e) NULL
+                    )
+                    test_name <- "Paired Wilcoxon"
+                  } else {
+                    test_result <- tryCatch(
+                      t.test(group1_data, group2_data, paired = TRUE),
+                      error = function(e) NULL
+                    )
+                    test_name <- "Paired t-test"
+                  }
+                } else if (test_to_use == "wilcoxon") {
                   test_result <- tryCatch(
                     wilcox.test(group1_data, group2_data),
                     error = function(e) NULL
                   )
                   test_name <- "Wilcoxon"
                 } else {
-                  # Use appropriate t-test based on variance equality
                   test_result <- tryCatch(
                     t.test(group1_data, group2_data, var.equal = equal_variances),
                     error = function(e) NULL
@@ -14826,10 +16014,127 @@ async function initWebR() {
               }
 
             } else if (n_groups_at_x >= 3) {
-              # THREE OR MORE GROUPS: ANOVA or Kruskal-Wallis based on user selection
+              # THREE OR MORE GROUPS
               cat("  Performing statistical test for 3+ groups at this time point...\\n")
 
-              # Prepare data
+              result_text <- sprintf(">> X-axis value: %g\\nTime point %.1f:", x_val, x_val)
+              if (length(desc_lines) > 0) {
+                result_text <- paste0(result_text,
+                  sprintf("\\nSummary (mean +/- %s):\\n", error_label),
+                  paste(desc_lines, collapse="\\n"))
+              }
+
+              if (paired) {
+                # PAIRED 3+ GROUPS: RM-ANOVA or Friedman per time point
+                cat("  Paired mode: using RM-ANOVA / Friedman\\n")
+                anova_data <- data.frame(
+                  group = factor(as.character(data_at_x$group)),
+                  value = as.numeric(data_at_x$value),
+                  subject_id = factor(as.character(data_at_x$subject_id))
+                )
+                anova_data <- anova_data[complete.cases(anova_data), ]
+                anova_data$group <- droplevels(anova_data$group)
+
+                # Normality: test pairwise differences
+                normality_text <- c()
+                all_normal <- TRUE
+                groups_list_norm <- levels(anova_data$group)
+                pairs_norm <- combn(groups_list_norm, 2, simplify = FALSE)
+                for (pair_n in pairs_norm) {
+                  g1_df_n <- anova_data[anova_data$group == pair_n[1], c("subject_id", "value")]
+                  g2_df_n <- anova_data[anova_data$group == pair_n[2], c("subject_id", "value")]
+                  merged_n <- merge(g1_df_n, g2_df_n, by = "subject_id")
+                  diffs_n <- merged_n$value.x - merged_n$value.y
+                  if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
+                    shapiro_n <- tryCatch(shapiro.test(diffs_n), error = function(e) NULL)
+                    if (!is.null(shapiro_n)) {
+                      is_norm_n <- shapiro_n$p.value >= 0.05
+                      norm_status_n <- if (is_norm_n) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], shapiro_n$p.value, norm_status_n))
+                      if (!is_norm_n) all_normal <- FALSE
+                    }
+                  }
+                }
+                if (length(normality_text) > 0) {
+                  result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n",
+                                        paste(normality_text, collapse = "\\n"))
+                }
+
+                # Choose test
+                test_to_use_p <- statistical_test
+                if (statistical_test == "auto") {
+                  test_to_use_p <- if (all_normal) "rm_anova" else "friedman"
+                  cat("  Auto-selected:", test_to_use_p, "\\n")
+                } else if (statistical_test == "parametric") {
+                  test_to_use_p <- "rm_anova"
+                  cat("  Manual: RM-ANOVA\\n")
+                } else {
+                  test_to_use_p <- "friedman"
+                  cat("  Manual: Friedman\\n")
+                }
+
+                omnibus_p <- NA
+                test_name_p <- ""
+                if (test_to_use_p == "rm_anova") {
+                  rm_result <- tryCatch(
+                    summary(aov(value ~ group + Error(subject_id/group), data = anova_data)),
+                    error = function(e) { cat("  RM-ANOVA error:", e$message, "\\n"); NULL }
+                  )
+                  if (!is.null(rm_result)) {
+                    omnibus_p <- tryCatch(rm_result[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1], error = function(e) NA)
+                    if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
+                    test_name_p <- "RM-ANOVA"
+                  }
+                } else {
+                  friedman_r <- tryCatch(
+                    friedman.test(value ~ group | subject_id, data = anova_data),
+                    error = function(e) { cat("  Friedman error:", e$message, "\\n"); NULL }
+                  )
+                  if (!is.null(friedman_r)) {
+                    omnibus_p <- friedman_r$p.value
+                    test_name_p <- "Friedman"
+                  }
+                }
+
+                if (!is.na(omnibus_p) && !is.null(omnibus_p)) {
+                  omnibus_sig <- get_sig_symbol(omnibus_p)
+                  result_text <- paste0(result_text,
+                    sprintf("\\nOverall test: %s, p=%.4f (%s)", test_name_p, omnibus_p, omnibus_sig))
+                  cat(sprintf("  %s p=%.4f\\n", test_name_p, omnibus_p))
+
+                  if (!is.na(omnibus_p) && omnibus_p < 0.05) {
+                    # Post-hoc: pairwise paired tests with adjustment
+                    ph_method <- if (post_hoc_test %in% c("bonferroni", "holm")) post_hoc_test else "holm"
+                    ph_label <- if (ph_method == "bonferroni") "Bonferroni" else "Holm"
+                    ph_func <- if (test_to_use_p == "rm_anova") pairwise.t.test else pairwise.wilcox.test
+                    ph_result <- tryCatch(
+                      ph_func(anova_data$value, anova_data$group, p.adjust.method = ph_method, paired = TRUE),
+                      error = function(e) { cat("  Post-hoc error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(ph_result)) {
+                      ph_test_name <- if (test_to_use_p == "rm_anova") "Pairwise paired t-test" else "Pairwise paired Wilcoxon"
+                      result_text <- paste0(result_text,
+                        sprintf("\\nPost-hoc (%s, %s):", ph_test_name, ph_label))
+                      p_mat <- ph_result$p.value
+                      for (r in rownames(p_mat)) {
+                        for (c in colnames(p_mat)) {
+                          p_adj <- p_mat[r, c]
+                          if (!is.na(p_adj)) {
+                            sig_label <- get_sig_symbol(p_adj)
+                            result_text <- paste0(result_text,
+                              sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, sig_label))
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                stat_text_results <- c(stat_text_results, result_text)
+                next  # skip the unpaired block below
+              }
+
+              # UNPAIRED 3+ GROUPS: ANOVA or Kruskal-Wallis
               anova_data <- data.frame(
                 group = factor(data_at_x$group),
                 value = as.numeric(data_at_x$value)
@@ -14854,16 +16159,9 @@ async function initWebR() {
               }
 
               # Decide parametric vs non-parametric
-              # auto: normality test decides; parametric: always ANOVA; nonparametric: always Kruskal-Wallis
               use_nonparametric <- (statistical_test == "nonparametric") ||
                                    (statistical_test == "auto" && !all_normal)
 
-              result_text <- sprintf(">> X-axis value: %g\\nTime point %.1f:", x_val, x_val)
-              if (length(desc_lines) > 0) {
-                result_text <- paste0(result_text,
-                  sprintf("\\nSummary (mean +/- %s):\\n", error_label),
-                  paste(desc_lines, collapse="\\n"))
-              }
               if (length(normality_text) > 0) {
                 result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n",
                                       paste(normality_text, collapse="\\n"))
@@ -15125,17 +16423,14 @@ async function initWebR() {
               labels <- c()
 
               if (length(stat_text_results) > 0) {
-                # Filter stat_text_results by selected timepoint
-                filtered_results <- stat_text_results
-                if (nchar(vbracket_timepoint) > 0) {
-                  # Create pattern to match "Time point X:" or "Time point X.0:" where X is the selected timepoint
-                  # Handle both integer and decimal formats (e.g., "4" should match "4.0")
+                if (nchar(vbracket_timepoint) == 0) {
+                  cat("⚠️ No X-axis value selected for the statistical legend. Please select a time point from the Statistics tab.\\n")
+                } else {
+                  # Filter stat_text_results by selected timepoint
+                  filtered_results <- stat_text_results
                   timepoint_num <- as.numeric(vbracket_timepoint)
-                  # Create regex pattern that matches "Time point 4:" or "Time point 4.0:"
                   timepoint_pattern <- sprintf("Time point %s(\\\\.0)?:", gsub("\\\\.", "\\\\\\\\.", vbracket_timepoint))
                   cat(sprintf("Filtering statistical results for timepoint: %s (pattern: %s)\\n", vbracket_timepoint, timepoint_pattern))
-
-                  # Keep only results that start with the selected timepoint
                   filtered_results <- stat_text_results[grepl(timepoint_pattern, stat_text_results)]
 
                   if (length(filtered_results) == 0) {
@@ -15144,67 +16439,51 @@ async function initWebR() {
                   } else {
                     cat(sprintf("Found %d result(s) for timepoint %s\\n", length(filtered_results), vbracket_timepoint))
                   }
-                }
 
-                for (result_text in filtered_results) {
-                  cat(sprintf("DEBUG: Processing result_text: %s\\n", substr(result_text, 1, 200)))
+                  for (result_text in filtered_results) {
+                    cat(sprintf("DEBUG: Processing result_text: %s\\n", substr(result_text, 1, 200)))
 
-                  # Split by newline to get individual comparisons
-                  lines <- strsplit(result_text, "\\\\n")[[1]]
-                  cat(sprintf("DEBUG: Found %d lines\\n", length(lines)))
+                    # Split by newline to get individual comparisons
+                    lines <- strsplit(result_text, "\n")[[1]]
+                    cat(sprintf("DEBUG: Found %d lines\\n", length(lines)))
 
-                  for (line in lines) {
-                    cat(sprintf("DEBUG: Checking line: %s\\n", line))
+                    for (line in lines) {
+                      cat(sprintf("DEBUG: Checking line: %s\\n", line))
 
-                    # Look for comparison lines with significance symbol in parentheses
-                    # Matches any symbol type: (*), (**), (***), (A), (B), (C), (ns), (p=0.023)
-                    if (grepl("-", line) && grepl("\\\\([^)]+\\\\)$", line)) {
-                      cat(sprintf("DEBUG: Line has comparison with significance!\\n"))
+                      # Look for comparison lines with significance symbol in parentheses
+                      if (grepl("-", line) && grepl("\\\\([^)]+\\\\)$", line)) {
+                        cat(sprintf("DEBUG: Line has comparison with significance!\\n"))
 
-                      # Extract groups: "Group1-Group2: diff=..."
-                      match <- regmatches(line, regexpr("^[^:]+(?=:)", line, perl=TRUE))
-                      if (length(match) > 0) {
-                        groups_str <- gsub("^\\\\s+", "", match[1])  # Trim leading space
-                        cat(sprintf("DEBUG: Extracted groups string: '%s'\\n", groups_str))
+                        match <- regmatches(line, regexpr("^[^:]+(?=:)", line, perl=TRUE))
+                        if (length(match) > 0) {
+                          groups_str <- gsub("^\\\\s+", "", match[1])
+                          group_pair <- strsplit(groups_str, "-")[[1]]
+                          sig_match <- regmatches(line, regexpr("\\\\([^)]+\\\\)$", line))
+                          sig_label <- if (length(sig_match) > 0) gsub("[()]", "", sig_match[1]) else "*"
 
-                        group_pair <- strsplit(groups_str, "-")[[1]]
-                        cat(sprintf("DEBUG: Split into %d parts\\n", length(group_pair)))
-
-                        # Extract significance symbol (anything in parentheses at end of line)
-                        sig_match <- regmatches(line, regexpr("\\\\([^)]+\\\\)$", line))
-                        sig_label <- if (length(sig_match) > 0) gsub("[()]", "", sig_match[1]) else "*"
-                        cat(sprintf("DEBUG: Extracted sig label: '%s'\\n", sig_label))
-
-                        if (length(group_pair) == 2) {
-                          # Apply comparison_mode filtering
-                          should_add <- FALSE
-
-                          if (comparison_mode == "significant") {
-                            # Only add if significant (not "ns")
-                            should_add <- (sig_label != "ns" && sig_label != "")
-                          } else if (comparison_mode == "all") {
-                            # Add all comparisons
-                            should_add <- TRUE
-                          } else if (comparison_mode == "custom") {
-                            # Only add if in custom_comparisons list
-                            comparison_name <- paste0(group_pair[1], "-", group_pair[2])
-                            should_add <- comparison_name %in% custom_comparisons_vec
-                          }
-
-                          if (should_add) {
-                            groups1 <- c(groups1, group_pair[1])
-                            groups2 <- c(groups2, group_pair[2])
-                            labels <- c(labels, sig_label)
-                            cat(sprintf("DEBUG: Added comparison: %s -> %s (%s)\\n", group_pair[1], group_pair[2], sig_label))
-                          } else {
-                            cat(sprintf("DEBUG: Skipped comparison (mode=%s): %s -> %s (%s)\\n", comparison_mode, group_pair[1], group_pair[2], sig_label))
+                          if (length(group_pair) == 2) {
+                            should_add <- FALSE
+                            if (comparison_mode == "significant") {
+                              should_add <- (sig_label != "ns" && sig_label != "")
+                            } else if (comparison_mode == "all") {
+                              should_add <- TRUE
+                            } else if (comparison_mode == "custom") {
+                              comparison_name <- paste0(group_pair[1], "-", group_pair[2])
+                              should_add <- comparison_name %in% custom_comparisons_vec
+                            }
+                            if (should_add) {
+                              groups1 <- c(groups1, group_pair[1])
+                              groups2 <- c(groups2, group_pair[2])
+                              labels <- c(labels, sig_label)
+                              cat(sprintf("DEBUG: Added comparison: %s -> %s (%s)\\n", group_pair[1], group_pair[2], sig_label))
+                            }
                           }
                         }
                       }
                     }
                   }
-                }
-              }
+                } # end else (timepoint selected)
+              } # end if stat_text_results
 
               # Summary of filtering
               cat(sprintf("VBracket filtering complete: %d comparisons selected (mode: %s)\\n", length(groups1), comparison_mode))
@@ -15241,7 +16520,7 @@ async function initWebR() {
                   sig_size = vbracket_sig_size,
                   bracket_margin = vbracket_margin,
                   line_length = vbracket_legend_line_length,
-                  line_width = vbracket_legend_line_width,
+                  line_width = vbracket_line_width,
                   item_spacing = vbracket_item_spacing,
                   bracket_layer_spacing = vbracket_bracket_layer_spacing,
                   output_width = output_width,
@@ -15463,7 +16742,7 @@ async function initWebR() {
       
       if (add_statistics && length(unique(df$category)) > 1) {
         cat("🔥🔥🔥 CALLING STATISTICAL ANALYSIS FUNCTION FROM BAR_ERROR_DOT 🔥🔥🔥\\n")
-        p <- sato_add_statistics_to_plot(p, df, "category", "value", statistical_test, sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
+        p <- sato_add_statistics_to_plot(p, df, "category", "value", statistical_test, sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'}, paired_ph_correction="${pairedPostHocCorrection}")
       } else {
         if (!add_statistics) {
           cat("🔥🔥🔥 STATISTICAL ANALYSIS IS DISABLED IN BAR_ERROR_DOT 🔥🔥🔥\\n")
@@ -15542,7 +16821,7 @@ async function initWebR() {
 
       # Add statistical analysis if requested and we have multiple groups
       if (add_statistics && length(unique(df$category)) > 1) {
-        p <- sato_add_statistics_to_plot(p, df, "category", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
+        p <- sato_add_statistics_to_plot(p, df, "category", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'}, paired_ph_correction="${pairedPostHocCorrection}")
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -15664,7 +16943,7 @@ async function initWebR() {
       
       # Add statistical analysis if requested
       if (add_statistics && ncol(dat) >= 3) {
-        p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
+        p <- sato_add_statistics_to_plot(p, plot_data, "group", "value", statistical_test, sato_symbol_size, posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale=y_scale, stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'}, paired_ph_correction="${pairedPostHocCorrection}")
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -15772,9 +17051,10 @@ async function initWebR() {
                                           x_axis_hjust=0.5, x_axis_vjust=0.5,
                                           y_axis_hjust=0.5, y_axis_vjust=0.5,
                                           add_statistics=FALSE, statistical_test="auto", variance_test="levene", symbol_size=8,
-                                          ggpubr_line_size=1.0, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
+                                          ggpubr_line_size=0.5, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
                                           comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
-                                          stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns") {
+                                          stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
+                                          paired=FALSE, subject_col=NULL) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -15812,9 +17092,10 @@ async function initWebR() {
       plot_data <- data.frame(
         group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
         category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
-        value = as.numeric(dat[[y_col]])
+        value = as.numeric(dat[[y_col]]),
+        subject_id = if (!is.null(subject_col) && nchar(subject_col) > 0 && subject_col %in% names(dat)) as.character(dat[[subject_col]]) else as.character(seq_len(nrow(dat)))
       )
-      plot_data <- plot_data[complete.cases(plot_data), ]
+      plot_data <- plot_data[complete.cases(plot_data[, c("group", "category", "value")]), ]
       
       if ("Normal" %in% unique(as.character(plot_data$group)) && "Tumor" %in% unique(as.character(plot_data$group))) {
         plot_data$group <- factor(plot_data$group, levels = c("Normal", "Tumor"))
@@ -15948,66 +17229,94 @@ async function initWebR() {
 
             if (n_groups_at_cat == 2) {
               # TWO GROUPS: Use t-test or Wilcoxon
-              group1_data <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
-              group2_data <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              if (paired) {
+                g1_df <- data_at_cat[data_at_cat$group == groups_with_data[1], c("subject_id", "value")]
+                g2_df <- data_at_cat[data_at_cat$group == groups_with_data[2], c("subject_id", "value")]
+                paired_df_cat <- merge(g1_df, g2_df, by = "subject_id")
+                group1_data <- paired_df_cat$value.x
+                group2_data <- paired_df_cat$value.y
+              } else {
+                group1_data <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
+                group2_data <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              }
 
               # Only test if both groups have data
               if (length(group1_data) > 0 && length(group2_data) > 0) {
-                # Perform normality test for both groups
+                # Perform normality test
                 normality_text <- c()
-                is_group1_normal <- TRUE
-                is_group2_normal <- TRUE
+                both_normal <- TRUE
 
-                if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
-                  shapiro_result1 <- tryCatch(
-                    shapiro.test(group1_data),
-                    error = function(e) NULL
-                  )
-                  if (!is.null(shapiro_result1)) {
-                    is_group1_normal <- shapiro_result1$p.value >= 0.05
-                    norm_status <- if (is_group1_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
+                if (paired) {
+                  # For paired tests: test normality of differences (statistically correct)
+                  diffs_paired <- group1_data - group2_data
+                  if (length(diffs_paired) >= 3 && length(diffs_paired) <= 5000) {
+                    shapiro_diffs <- tryCatch(
+                      shapiro.test(diffs_paired),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(shapiro_diffs)) {
+                      both_normal <- shapiro_diffs$p.value >= 0.05
+                      diff_status <- if (both_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
+                    }
                   }
-                }
+                } else {
+                  # For unpaired tests: test normality of individual groups
+                  is_group1_normal <- TRUE
+                  is_group2_normal <- TRUE
 
-                if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
-                  shapiro_result2 <- tryCatch(
-                    shapiro.test(group2_data),
-                    error = function(e) NULL
-                  )
-                  if (!is.null(shapiro_result2)) {
-                    is_group2_normal <- shapiro_result2$p.value >= 0.05
-                    norm_status <- if (is_group2_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
+                  if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
+                    shapiro_result1 <- tryCatch(
+                      shapiro.test(group1_data),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(shapiro_result1)) {
+                      is_group1_normal <- shapiro_result1$p.value >= 0.05
+                      norm_status <- if (is_group1_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
+                    }
                   }
-                }
 
-                both_normal <- is_group1_normal && is_group2_normal
+                  if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
+                    shapiro_result2 <- tryCatch(
+                      shapiro.test(group2_data),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(shapiro_result2)) {
+                      is_group2_normal <- shapiro_result2$p.value >= 0.05
+                      norm_status <- if (is_group2_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
+                    }
+                  }
+
+                  both_normal <- is_group1_normal && is_group2_normal
+                }
 
                 # Select test based on mode
                 test_to_use <- statistical_test
                 if (statistical_test == "auto") {
                   if (both_normal) {
                     test_to_use <- "t-test"
-                    cat("  Auto-selected: t-test (both groups normal)\\n")
+                    cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
                   } else {
                     test_to_use <- "wilcoxon"
-                    cat("  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
+                    cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
                   }
                 } else if (statistical_test == "parametric") {
                   test_to_use <- "t-test"
-                  cat("  Manual mode: parametric t-test\\n")
+                  cat(if (paired) "  Manual mode: Paired t-test (parametric)\\n" else "  Manual mode: parametric t-test\\n")
                 } else if (statistical_test == "nonparametric") {
                   test_to_use <- "wilcoxon"
-                  cat("  Manual mode: non-parametric Wilcoxon test\\n")
+                  cat(if (paired) "  Manual mode: Paired Wilcoxon (non-parametric)\\n" else "  Manual mode: non-parametric Wilcoxon test\\n")
                 }
 
                 # Perform variance test (only for parametric tests)
                 variance_text <- ""
                 equal_variances <- TRUE
-                if (test_to_use != "wilcoxon") {
+                if (test_to_use != "wilcoxon" && !paired) {
                   if (variance_test == "levene") {
                     # Levene test for equality of variances
                     combined_data <- data.frame(
@@ -16048,7 +17357,21 @@ async function initWebR() {
                 }
 
                 # Perform statistical test based on auto-selection
-                if (test_to_use == "wilcoxon") {
+                if (paired) {
+                  if (test_to_use == "wilcoxon") {
+                    test_result <- tryCatch(
+                      wilcox.test(group1_data, group2_data, paired = TRUE),
+                      error = function(e) NULL
+                    )
+                    test_name <- "Paired Wilcoxon"
+                  } else {
+                    test_result <- tryCatch(
+                      t.test(group1_data, group2_data, paired = TRUE),
+                      error = function(e) NULL
+                    )
+                    test_name <- "Paired t-test"
+                  }
+                } else if (test_to_use == "wilcoxon") {
                   test_result <- tryCatch(
                     wilcox.test(group1_data, group2_data),
                     error = function(e) NULL
@@ -16171,11 +17494,208 @@ async function initWebR() {
                 }
               }
             } else if (n_groups_at_cat >= 3) {
-              # THREE OR MORE GROUPS: Use ANOVA/Kruskal-Wallis + post-hoc tests
-              cat("  Performing ANOVA/Kruskal-Wallis for", n_groups_at_cat, "groups at category", cat_val, "\\n")
-
-              # Calculate x position (find position in all unique_categories, not just selected ones)
+              # Calculate x position (shared by paired and unpaired paths)
               cat_index <- which(unique_categories == cat_val)
+
+              if (paired) {
+                # PAIRED 3+ GROUPS: RM-ANOVA or Friedman
+                cat("  Performing RM-ANOVA/Friedman for", n_groups_at_cat, "paired groups at category", cat_val, "\\n")
+
+                anova_data_p <- data.frame(
+                  value = as.numeric(data_at_cat$value),
+                  group = factor(as.character(data_at_cat$group)),
+                  subject_id = factor(data_at_cat$subject_id)
+                )
+                anova_data_p <- anova_data_p[complete.cases(anova_data_p), ]
+                anova_data_p$group <- droplevels(anova_data_p$group)
+
+                if (nrow(anova_data_p) >= 3) {
+                  # Normality: test pairwise differences
+                  normality_text <- c()
+                  all_normal <- TRUE
+                  groups_list_norm <- levels(factor(anova_data_p$group))
+                  pairs_norm <- combn(groups_list_norm, 2, simplify=FALSE)
+                  for (pair_n in pairs_norm) {
+                    g1_df_n <- anova_data_p[anova_data_p$group == pair_n[1], c("subject_id", "value")]
+                    g2_df_n <- anova_data_p[anova_data_p$group == pair_n[2], c("subject_id", "value")]
+                    merged_n <- merge(g1_df_n, g2_df_n, by="subject_id")
+                    diffs_n <- merged_n$value.x - merged_n$value.y
+                    if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
+                      shapiro_n <- tryCatch(shapiro.test(diffs_n), error=function(e) NULL)
+                      if (!is.null(shapiro_n)) {
+                        is_norm_n <- shapiro_n$p.value >= 0.05
+                        norm_status_n <- if (is_norm_n) "normal" else "non-normal"
+                        normality_text <- c(normality_text,
+                          sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], shapiro_n$p.value, norm_status_n))
+                        if (!is_norm_n) all_normal <- FALSE
+                      }
+                    }
+                  }
+                  # Auto-select test
+                  test_to_use_p <- statistical_test
+                  if (statistical_test == "auto") {
+                    test_to_use_p <- if (all_normal) "rm_anova" else "friedman"
+                    cat("  Auto-selected:", test_to_use_p, "(all diffs normal:", all_normal, ")\\n")
+                  } else if (statistical_test == "parametric") {
+                    test_to_use_p <- "rm_anova"
+                    cat("  Manual mode: RM-ANOVA\\n")
+                  } else {
+                    test_to_use_p <- "friedman"
+                    cat("  Manual mode: Friedman\\n")
+                  }
+                  # Omnibus test
+                  omnibus_p <- NA
+                  test_name <- ""
+                  if (test_to_use_p == "rm_anova") {
+                    rm_result <- tryCatch(
+                      summary(aov(value ~ group + Error(subject_id/group), data=anova_data_p)),
+                      error = function(e) { cat("  RM-ANOVA error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(rm_result)) {
+                      omnibus_p <- rm_result[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1]
+                      if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
+                      test_name <- "RM-ANOVA"
+                    }
+                  } else {
+                    friedman_r <- tryCatch(
+                      friedman.test(value ~ group | subject_id, data=anova_data_p),
+                      error = function(e) { cat("  Friedman error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(friedman_r)) {
+                      omnibus_p <- friedman_r$p.value
+                      test_name <- "Friedman"
+                    }
+                  }
+                  cat("  ", test_name, "p-value:", omnibus_p, "\\n")
+                  # Build result text
+                  result_text <- sprintf("Category %s:", cat_val)
+                  .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
+                  for (g in groups_with_data) {
+                    g_data <- anova_data_p$value[anova_data_p$group == g]
+                    g_data <- g_data[!is.na(g_data)]
+                    n_g3 <- length(g_data)
+                    if (n_g3 > 0) {
+                      mean_g3 <- mean(g_data)
+                      if (n_g3 > 1) {
+                        sd_g3 <- sd(g_data)
+                        err_g3 <- if (error_type == "se") sd_g3/sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1)*sd_g3/sqrt(n_g3) else sd_g3
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
+                      } else {
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
+                      }
+                    }
+                  }
+                  if (length(normality_text) > 0) {
+                    result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
+                  }
+                  anova_sig_label <- if (!is.na(omnibus_p)) {
+                    if (omnibus_p < 0.001) "***" else if (omnibus_p < 0.01) "**" else if (omnibus_p < 0.05) "*" else "ns"
+                  } else "ns"
+                  result_text <- paste0(result_text, "\\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", anova_sig_label, ")")
+                  # Post-hoc if omnibus significant
+                  if (!is.na(omnibus_p) && omnibus_p < 0.05) {
+                    cat("  Omnibus significant, performing paired post-hoc tests\\n")
+                    posthoc_text <- c()
+                    ph_method_p <- paired_ph_correction
+                    if (test_to_use_p == "rm_anova") {
+                      cat(sprintf("  Pairwise paired t-test (%s correction)...\\n", ph_method_p))
+                      pt_result_p <- tryCatch(
+                        pairwise.t.test(anova_data_p$value, anova_data_p$group,
+                                        paired=TRUE, p.adjust.method=ph_method_p),
+                        error = function(e) { cat("  pairwise.t.test error:", e$message, "\\n"); NULL }
+                      )
+                      if (!is.null(pt_result_p)) {
+                        groups_pt <- levels(factor(anova_data_p$group))
+                        comps_pt <- combn(groups_pt, 2, simplify=FALSE)
+                        for (comp_pt in comps_pt) {
+                          g1_pt <- comp_pt[1]; g2_pt <- comp_pt[2]
+                          r_idx <- which(rownames(pt_result_p$p.value) == g2_pt)
+                          c_idx <- which(colnames(pt_result_p$p.value) == g1_pt)
+                          p_val_pt <- if (length(r_idx)>0 && length(c_idx)>0) pt_result_p$p.value[r_idx, c_idx] else NA
+                          if (is.na(p_val_pt)) {
+                            r_idx2 <- which(rownames(pt_result_p$p.value) == g1_pt)
+                            c_idx2 <- which(colnames(pt_result_p$p.value) == g2_pt)
+                            p_val_pt <- if (length(r_idx2)>0 && length(c_idx2)>0) pt_result_p$p.value[r_idx2, c_idx2] else NA
+                          }
+                          sig_lbl_pt <- if (!is.na(p_val_pt)) get_sig_symbol(p_val_pt) else "ns"
+                          cmp_str_pt <- paste0(g2_pt, "-", g1_pt)
+                          cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
+                          posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
+                          should_add_pt <- FALSE
+                          if (comparison_mode == "significant") should_add_pt <- (sig_lbl_pt != "ns")
+                          else if (comparison_mode == "all") should_add_pt <- TRUE
+                          else if (comparison_mode == "custom") {
+                            ck1 <- paste0(g1_pt, "-", g2_pt, "@", cat_val)
+                            ck2 <- paste0(g2_pt, "-", g1_pt, "@", cat_val)
+                            should_add_pt <- (ck1 %in% custom_comps) || (ck2 %in% custom_comps)
+                          }
+                          if (should_add_pt) {
+                            bracket_data <- rbind(bracket_data, data.frame(
+                              group1=g2_pt, group2=g1_pt,
+                              p.signif=sig_lbl_pt, x.position=cat_index, y.position=NA,
+                              stringsAsFactors=FALSE
+                            ))
+                          }
+                        }
+                      }
+                      ph_header_p <- sprintf("Post-hoc (Paired t-test, %s):", toupper(ph_method_p))
+                    } else {
+                      cat(sprintf("  Pairwise paired Wilcoxon (%s correction)...\\n", ph_method_p))
+                      groups_fw <- levels(factor(anova_data_p$group))
+                      comps_fw <- combn(groups_fw, 2, simplify=FALSE)
+                      p_raw_fw <- c(); cmp_names_fw <- c()
+                      for (comp_fw in comps_fw) {
+                        g1_fw_df <- anova_data_p[anova_data_p$group == comp_fw[1], c("subject_id", "value")]
+                        g2_fw_df <- anova_data_p[anova_data_p$group == comp_fw[2], c("subject_id", "value")]
+                        merged_fw <- merge(g1_fw_df, g2_fw_df, by="subject_id")
+                        pv_fw <- tryCatch(
+                          wilcox.test(merged_fw$value.x, merged_fw$value.y, paired=TRUE)$p.value,
+                          error = function(e) NA
+                        )
+                        p_raw_fw <- c(p_raw_fw, pv_fw)
+                        cmp_names_fw <- c(cmp_names_fw, paste0(comp_fw[2], "-", comp_fw[1]))
+                      }
+                      p_adj_fw <- p.adjust(p_raw_fw, method=ph_method_p)
+                      for (i in seq_along(cmp_names_fw)) {
+                        cmp_fw_str <- cmp_names_fw[i]
+                        p_adj_fw_i <- p_adj_fw[i]
+                        sig_lbl_fw <- if (!is.na(p_adj_fw_i)) get_sig_symbol(p_adj_fw_i) else "ns"
+                        cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
+                        posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
+                        should_add_fw <- FALSE
+                        if (comparison_mode == "significant") should_add_fw <- (sig_lbl_fw != "ns")
+                        else if (comparison_mode == "all") should_add_fw <- TRUE
+                        else if (comparison_mode == "custom") {
+                          comp_parts_fw_temp <- strsplit(cmp_fw_str, "-")[[1]]
+                          if (length(comp_parts_fw_temp) == 2) {
+                            ck1_fw <- paste0(comp_parts_fw_temp[1], "-", comp_parts_fw_temp[2], "@", cat_val)
+                            ck2_fw <- paste0(comp_parts_fw_temp[2], "-", comp_parts_fw_temp[1], "@", cat_val)
+                            should_add_fw <- (ck1_fw %in% custom_comps) || (ck2_fw %in% custom_comps)
+                          }
+                        }
+                        if (should_add_fw) {
+                          comp_parts_fw2 <- strsplit(cmp_fw_str, "-")[[1]]
+                          if (length(comp_parts_fw2) == 2) {
+                            bracket_data <- rbind(bracket_data, data.frame(
+                              group1=comp_parts_fw2[1], group2=comp_parts_fw2[2],
+                              p.signif=sig_lbl_fw, x.position=cat_index, y.position=NA,
+                              stringsAsFactors=FALSE
+                            ))
+                          }
+                        }
+                      }
+                      ph_header_p <- sprintf("Post-hoc (Paired Wilcoxon, %s):", toupper(ph_method_p))
+                    }
+                    if (length(posthoc_text) > 0) {
+                      result_text <- paste0(result_text, "\\n", ph_header_p, "\\n", paste(posthoc_text, collapse="\\n"))
+                    }
+                  }
+                  stat_text_results <- c(stat_text_results, result_text)
+                }
+              } else {
+              # THREE OR MORE GROUPS (unpaired): Use ANOVA/Kruskal-Wallis + post-hoc tests
+              cat("  Performing ANOVA/Kruskal-Wallis for", n_groups_at_cat, "groups at category", cat_val, "\\n")
 
               # Prepare data for ANOVA
               anova_data <- data.frame(
@@ -16555,6 +18075,7 @@ async function initWebR() {
                   stat_text_results <- c(stat_text_results, result_text)
                 }
               }
+              }
             }
           }
         }
@@ -16703,7 +18224,7 @@ async function initWebR() {
                                          xmax = "xmax",
                                          y.position = "y.position",
                                          size = bracket_size,
-                                         size.line = line_size,
+                                         bracket.size = line_size,
                                          tip.length = tip_length,
                                          vjust = v_just,
                                          hjust = 0.5,
@@ -16721,7 +18242,7 @@ async function initWebR() {
                                          xmax = "xmax",
                                          y.position = "y.position",
                                          size = smaller_size,
-                                         size.line = line_size,
+                                         bracket.size = line_size,
                                          tip.length = tip_length,
                                          vjust = ns_vjust,
                                          hjust = 0.5,
@@ -16786,7 +18307,7 @@ async function initWebR() {
                                 x_axis_hjust=0.5, x_axis_vjust=0.5,
                                 y_axis_hjust=0.5, y_axis_vjust=0.5,
                                 add_statistics=FALSE, statistical_test="auto", variance_test="levene", symbol_size=8,
-                                ggpubr_line_size=1.0, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
+                                ggpubr_line_size=0.5, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
                                 comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
                                 selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7,
                                 stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
@@ -17070,9 +18591,9 @@ async function initWebR() {
             ns_data <- bracket_data[bracket_data$p.signif == "ns", ]
             if (show_brackets) {
               if (nrow(asterisk_data) > 0)
-                p <- p + stat_pvalue_manual(asterisk_data, label="p.signif", xmin="xmin", xmax="xmax", y.position="y.position", size=sato_symbol_size, size.line=ggpubr_line_size, tip.length=ggpubr_tip_length, vjust=v_just, hjust=0.5, step.increase=0, bracket.nudge.y=0, bracket.shorten=0, remove.bracket=FALSE)
+                p <- p + stat_pvalue_manual(asterisk_data, label="p.signif", xmin="xmin", xmax="xmax", y.position="y.position", size=sato_symbol_size, bracket.size=ggpubr_line_size, tip.length=ggpubr_tip_length, vjust=v_just, hjust=0.5, step.increase=0, bracket.nudge.y=0, bracket.shorten=0, remove.bracket=FALSE)
               if (nrow(ns_data) > 0)
-                p <- p + stat_pvalue_manual(ns_data, label="p.signif", xmin="xmin", xmax="xmax", y.position="y.position", size=sato_symbol_size*0.7, size.line=ggpubr_line_size, tip.length=ggpubr_tip_length, vjust=v_just-0.5, hjust=0.5, step.increase=0, bracket.nudge.y=0, bracket.shorten=0, remove.bracket=FALSE)
+                p <- p + stat_pvalue_manual(ns_data, label="p.signif", xmin="xmin", xmax="xmax", y.position="y.position", size=sato_symbol_size*0.7, bracket.size=ggpubr_line_size, tip.length=ggpubr_tip_length, vjust=v_just-0.5, hjust=0.5, step.increase=0, bracket.nudge.y=0, bracket.shorten=0, remove.bracket=FALSE)
             } else {
               for (i in seq_len(nrow(bracket_data))) {
                 if (!is.na(bracket_data$xmin[i]) && !is.na(bracket_data$xmax[i])) {
@@ -17120,11 +18641,12 @@ async function initWebR() {
                                     x_axis_hjust=0.5, x_axis_vjust=0.5,
                                     y_axis_hjust=0.5, y_axis_vjust=0.5,
                                     add_statistics=FALSE, statistical_test="auto", variance_test="levene", symbol_size=8,
-                                    ggpubr_line_size=1.0, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
+                                    ggpubr_line_size=0.5, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
                                     comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
                                     selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7,
                                     stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
-                                    error_type="sd") {
+                                    error_type="sd",
+                                    paired=FALSE, subject_col=NULL) {
 
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
@@ -17162,22 +18684,23 @@ async function initWebR() {
       plot_data <- data.frame(
         group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
         category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
-        value = as.numeric(dat[[y_col]])
+        value = as.numeric(dat[[y_col]]),
+        subject_id = if (!is.null(subject_col) && nchar(subject_col) > 0 && subject_col %in% names(dat)) as.character(dat[[subject_col]]) else as.character(seq_len(nrow(dat)))
       )
-      plot_data <- plot_data[complete.cases(plot_data), ]
-      
+      plot_data <- plot_data[complete.cases(plot_data[, c("group", "category", "value")]), ]
+
       if ("Normal" %in% unique(as.character(plot_data$group)) && "Tumor" %in% unique(as.character(plot_data$group))) {
         plot_data$group <- factor(plot_data$group, levels = c("Normal", "Tumor"))
       }
-      
+
       # グループ数に応じて色を設定
       n_groups <- length(levels(plot_data$group))
       group_levels <- levels(plot_data$group)
-      
+
       if (length(fill_colors) < n_groups) {
         fill_colors <- rep(fill_colors, length.out = n_groups)
       }
-      
+
       # グループ化されたボックスプロット + dots作成
       p <- ggplot(plot_data, aes(x = category, y = value, fill = group)) +
            geom_boxplot(position = position_dodge(width = dodge_width),
@@ -17282,66 +18805,94 @@ async function initWebR() {
 
             if (n_groups_at_cat == 2) {
               # TWO GROUPS: Use t-test or Wilcoxon
-              group1_data <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
-              group2_data <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              if (paired) {
+                g1_df <- data_at_cat[data_at_cat$group == groups_with_data[1], c("subject_id", "value")]
+                g2_df <- data_at_cat[data_at_cat$group == groups_with_data[2], c("subject_id", "value")]
+                paired_df_cat <- merge(g1_df, g2_df, by = "subject_id")
+                group1_data <- paired_df_cat$value.x
+                group2_data <- paired_df_cat$value.y
+              } else {
+                group1_data <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
+                group2_data <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              }
 
               # Only test if both groups have data
               if (length(group1_data) > 0 && length(group2_data) > 0) {
-                # Perform normality test for both groups
+                # Perform normality test
                 normality_text <- c()
-                is_group1_normal <- TRUE
-                is_group2_normal <- TRUE
+                both_normal <- TRUE
 
-                if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
-                  shapiro_result1 <- tryCatch(
-                    shapiro.test(group1_data),
-                    error = function(e) NULL
-                  )
-                  if (!is.null(shapiro_result1)) {
-                    is_group1_normal <- shapiro_result1$p.value >= 0.05
-                    norm_status <- if (is_group1_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
+                if (paired) {
+                  # For paired tests: test normality of differences (statistically correct)
+                  diffs_paired <- group1_data - group2_data
+                  if (length(diffs_paired) >= 3 && length(diffs_paired) <= 5000) {
+                    shapiro_diffs <- tryCatch(
+                      shapiro.test(diffs_paired),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(shapiro_diffs)) {
+                      both_normal <- shapiro_diffs$p.value >= 0.05
+                      diff_status <- if (both_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
+                    }
                   }
-                }
+                } else {
+                  # For unpaired tests: test normality of individual groups
+                  is_group1_normal <- TRUE
+                  is_group2_normal <- TRUE
 
-                if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
-                  shapiro_result2 <- tryCatch(
-                    shapiro.test(group2_data),
-                    error = function(e) NULL
-                  )
-                  if (!is.null(shapiro_result2)) {
-                    is_group2_normal <- shapiro_result2$p.value >= 0.05
-                    norm_status <- if (is_group2_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
+                  if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
+                    shapiro_result1 <- tryCatch(
+                      shapiro.test(group1_data),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(shapiro_result1)) {
+                      is_group1_normal <- shapiro_result1$p.value >= 0.05
+                      norm_status <- if (is_group1_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
+                    }
                   }
-                }
 
-                both_normal <- is_group1_normal && is_group2_normal
+                  if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
+                    shapiro_result2 <- tryCatch(
+                      shapiro.test(group2_data),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(shapiro_result2)) {
+                      is_group2_normal <- shapiro_result2$p.value >= 0.05
+                      norm_status <- if (is_group2_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
+                    }
+                  }
+
+                  both_normal <- is_group1_normal && is_group2_normal
+                }
 
                 # Select test based on mode
                 test_to_use <- statistical_test
                 if (statistical_test == "auto") {
                   if (both_normal) {
                     test_to_use <- "t-test"
-                    cat("  Auto-selected: t-test (both groups normal)\\n")
+                    cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
                   } else {
                     test_to_use <- "wilcoxon"
-                    cat("  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
+                    cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
                   }
                 } else if (statistical_test == "parametric") {
                   test_to_use <- "t-test"
-                  cat("  Manual mode: parametric t-test\\n")
+                  cat(if (paired) "  Manual mode: Paired t-test (parametric)\\n" else "  Manual mode: parametric t-test\\n")
                 } else if (statistical_test == "nonparametric") {
                   test_to_use <- "wilcoxon"
-                  cat("  Manual mode: non-parametric Wilcoxon test\\n")
+                  cat(if (paired) "  Manual mode: Paired Wilcoxon (non-parametric)\\n" else "  Manual mode: non-parametric Wilcoxon test\\n")
                 }
 
                 # Perform variance test (only for parametric tests)
                 variance_text <- ""
                 equal_variances <- TRUE
-                if (test_to_use != "wilcoxon") {
+                if (test_to_use != "wilcoxon" && !paired) {
                   if (variance_test == "levene") {
                     # Levene test for equality of variances
                     combined_data <- data.frame(
@@ -17382,7 +18933,21 @@ async function initWebR() {
                 }
 
                 # Perform statistical test based on auto-selection
-                if (test_to_use == "wilcoxon") {
+                if (paired) {
+                  if (test_to_use == "wilcoxon") {
+                    test_result <- tryCatch(
+                      wilcox.test(group1_data, group2_data, paired = TRUE),
+                      error = function(e) NULL
+                    )
+                    test_name <- "Paired Wilcoxon"
+                  } else {
+                    test_result <- tryCatch(
+                      t.test(group1_data, group2_data, paired = TRUE),
+                      error = function(e) NULL
+                    )
+                    test_name <- "Paired t-test"
+                  }
+                } else if (test_to_use == "wilcoxon") {
                   test_result <- tryCatch(
                     wilcox.test(group1_data, group2_data),
                     error = function(e) NULL
@@ -17504,11 +19069,208 @@ async function initWebR() {
                 }
               }
             } else if (n_groups_at_cat >= 3) {
-              # THREE OR MORE GROUPS: Use ANOVA/Kruskal-Wallis + post-hoc tests
-              cat("  Performing ANOVA/Kruskal-Wallis for", n_groups_at_cat, "groups at category", cat_val, "\\n")
-
-              # Calculate x position (find position in all unique_categories, not just selected ones)
+              # Calculate x position (shared by paired and unpaired paths)
               cat_index <- which(unique_categories == cat_val)
+
+              if (paired) {
+                # PAIRED 3+ GROUPS: RM-ANOVA or Friedman
+                cat("  Performing RM-ANOVA/Friedman for", n_groups_at_cat, "paired groups at category", cat_val, "\\n")
+
+                anova_data_p <- data.frame(
+                  value = as.numeric(data_at_cat$value),
+                  group = factor(as.character(data_at_cat$group)),
+                  subject_id = factor(data_at_cat$subject_id)
+                )
+                anova_data_p <- anova_data_p[complete.cases(anova_data_p), ]
+                anova_data_p$group <- droplevels(anova_data_p$group)
+
+                if (nrow(anova_data_p) >= 3) {
+                  # Normality: test pairwise differences
+                  normality_text <- c()
+                  all_normal <- TRUE
+                  groups_list_norm <- levels(factor(anova_data_p$group))
+                  pairs_norm <- combn(groups_list_norm, 2, simplify=FALSE)
+                  for (pair_n in pairs_norm) {
+                    g1_df_n <- anova_data_p[anova_data_p$group == pair_n[1], c("subject_id", "value")]
+                    g2_df_n <- anova_data_p[anova_data_p$group == pair_n[2], c("subject_id", "value")]
+                    merged_n <- merge(g1_df_n, g2_df_n, by="subject_id")
+                    diffs_n <- merged_n$value.x - merged_n$value.y
+                    if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
+                      shapiro_n <- tryCatch(shapiro.test(diffs_n), error=function(e) NULL)
+                      if (!is.null(shapiro_n)) {
+                        is_norm_n <- shapiro_n$p.value >= 0.05
+                        norm_status_n <- if (is_norm_n) "normal" else "non-normal"
+                        normality_text <- c(normality_text,
+                          sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], shapiro_n$p.value, norm_status_n))
+                        if (!is_norm_n) all_normal <- FALSE
+                      }
+                    }
+                  }
+                  # Auto-select test
+                  test_to_use_p <- statistical_test
+                  if (statistical_test == "auto") {
+                    test_to_use_p <- if (all_normal) "rm_anova" else "friedman"
+                    cat("  Auto-selected:", test_to_use_p, "(all diffs normal:", all_normal, ")\\n")
+                  } else if (statistical_test == "parametric") {
+                    test_to_use_p <- "rm_anova"
+                    cat("  Manual mode: RM-ANOVA\\n")
+                  } else {
+                    test_to_use_p <- "friedman"
+                    cat("  Manual mode: Friedman\\n")
+                  }
+                  # Omnibus test
+                  omnibus_p <- NA
+                  test_name <- ""
+                  if (test_to_use_p == "rm_anova") {
+                    rm_result <- tryCatch(
+                      summary(aov(value ~ group + Error(subject_id/group), data=anova_data_p)),
+                      error = function(e) { cat("  RM-ANOVA error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(rm_result)) {
+                      omnibus_p <- rm_result[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1]
+                      if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
+                      test_name <- "RM-ANOVA"
+                    }
+                  } else {
+                    friedman_r <- tryCatch(
+                      friedman.test(value ~ group | subject_id, data=anova_data_p),
+                      error = function(e) { cat("  Friedman error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(friedman_r)) {
+                      omnibus_p <- friedman_r$p.value
+                      test_name <- "Friedman"
+                    }
+                  }
+                  cat("  ", test_name, "p-value:", omnibus_p, "\\n")
+                  # Build result text
+                  result_text <- sprintf("Category %s:", cat_val)
+                  .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
+                  for (g in groups_with_data) {
+                    g_data <- anova_data_p$value[anova_data_p$group == g]
+                    g_data <- g_data[!is.na(g_data)]
+                    n_g3 <- length(g_data)
+                    if (n_g3 > 0) {
+                      mean_g3 <- mean(g_data)
+                      if (n_g3 > 1) {
+                        sd_g3 <- sd(g_data)
+                        err_g3 <- if (error_type == "se") sd_g3/sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1)*sd_g3/sqrt(n_g3) else sd_g3
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
+                      } else {
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
+                      }
+                    }
+                  }
+                  if (length(normality_text) > 0) {
+                    result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
+                  }
+                  anova_sig_label <- if (!is.na(omnibus_p)) {
+                    if (omnibus_p < 0.001) "***" else if (omnibus_p < 0.01) "**" else if (omnibus_p < 0.05) "*" else "ns"
+                  } else "ns"
+                  result_text <- paste0(result_text, "\\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", anova_sig_label, ")")
+                  # Post-hoc if omnibus significant
+                  if (!is.na(omnibus_p) && omnibus_p < 0.05) {
+                    cat("  Omnibus significant, performing paired post-hoc tests\\n")
+                    posthoc_text <- c()
+                    ph_method_p <- paired_ph_correction
+                    if (test_to_use_p == "rm_anova") {
+                      cat(sprintf("  Pairwise paired t-test (%s correction)...\\n", ph_method_p))
+                      pt_result_p <- tryCatch(
+                        pairwise.t.test(anova_data_p$value, anova_data_p$group,
+                                        paired=TRUE, p.adjust.method=ph_method_p),
+                        error = function(e) { cat("  pairwise.t.test error:", e$message, "\\n"); NULL }
+                      )
+                      if (!is.null(pt_result_p)) {
+                        groups_pt <- levels(factor(anova_data_p$group))
+                        comps_pt <- combn(groups_pt, 2, simplify=FALSE)
+                        for (comp_pt in comps_pt) {
+                          g1_pt <- comp_pt[1]; g2_pt <- comp_pt[2]
+                          r_idx <- which(rownames(pt_result_p$p.value) == g2_pt)
+                          c_idx <- which(colnames(pt_result_p$p.value) == g1_pt)
+                          p_val_pt <- if (length(r_idx)>0 && length(c_idx)>0) pt_result_p$p.value[r_idx, c_idx] else NA
+                          if (is.na(p_val_pt)) {
+                            r_idx2 <- which(rownames(pt_result_p$p.value) == g1_pt)
+                            c_idx2 <- which(colnames(pt_result_p$p.value) == g2_pt)
+                            p_val_pt <- if (length(r_idx2)>0 && length(c_idx2)>0) pt_result_p$p.value[r_idx2, c_idx2] else NA
+                          }
+                          sig_lbl_pt <- if (!is.na(p_val_pt)) get_sig_symbol(p_val_pt) else "ns"
+                          cmp_str_pt <- paste0(g2_pt, "-", g1_pt)
+                          cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
+                          posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
+                          should_add_pt <- FALSE
+                          if (comparison_mode == "significant") should_add_pt <- (sig_lbl_pt != "ns")
+                          else if (comparison_mode == "all") should_add_pt <- TRUE
+                          else if (comparison_mode == "custom") {
+                            ck1 <- paste0(g1_pt, "-", g2_pt, "@", cat_val)
+                            ck2 <- paste0(g2_pt, "-", g1_pt, "@", cat_val)
+                            should_add_pt <- (ck1 %in% custom_comps) || (ck2 %in% custom_comps)
+                          }
+                          if (should_add_pt) {
+                            bracket_data <- rbind(bracket_data, data.frame(
+                              group1=g2_pt, group2=g1_pt,
+                              p.signif=sig_lbl_pt, x.position=cat_index, y.position=NA,
+                              stringsAsFactors=FALSE
+                            ))
+                          }
+                        }
+                      }
+                      ph_header_p <- sprintf("Post-hoc (Paired t-test, %s):", toupper(ph_method_p))
+                    } else {
+                      cat(sprintf("  Pairwise paired Wilcoxon (%s correction)...\\n", ph_method_p))
+                      groups_fw <- levels(factor(anova_data_p$group))
+                      comps_fw <- combn(groups_fw, 2, simplify=FALSE)
+                      p_raw_fw <- c(); cmp_names_fw <- c()
+                      for (comp_fw in comps_fw) {
+                        g1_fw_df <- anova_data_p[anova_data_p$group == comp_fw[1], c("subject_id", "value")]
+                        g2_fw_df <- anova_data_p[anova_data_p$group == comp_fw[2], c("subject_id", "value")]
+                        merged_fw <- merge(g1_fw_df, g2_fw_df, by="subject_id")
+                        pv_fw <- tryCatch(
+                          wilcox.test(merged_fw$value.x, merged_fw$value.y, paired=TRUE)$p.value,
+                          error = function(e) NA
+                        )
+                        p_raw_fw <- c(p_raw_fw, pv_fw)
+                        cmp_names_fw <- c(cmp_names_fw, paste0(comp_fw[2], "-", comp_fw[1]))
+                      }
+                      p_adj_fw <- p.adjust(p_raw_fw, method=ph_method_p)
+                      for (i in seq_along(cmp_names_fw)) {
+                        cmp_fw_str <- cmp_names_fw[i]
+                        p_adj_fw_i <- p_adj_fw[i]
+                        sig_lbl_fw <- if (!is.na(p_adj_fw_i)) get_sig_symbol(p_adj_fw_i) else "ns"
+                        cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
+                        posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
+                        should_add_fw <- FALSE
+                        if (comparison_mode == "significant") should_add_fw <- (sig_lbl_fw != "ns")
+                        else if (comparison_mode == "all") should_add_fw <- TRUE
+                        else if (comparison_mode == "custom") {
+                          comp_parts_fw_temp <- strsplit(cmp_fw_str, "-")[[1]]
+                          if (length(comp_parts_fw_temp) == 2) {
+                            ck1_fw <- paste0(comp_parts_fw_temp[1], "-", comp_parts_fw_temp[2], "@", cat_val)
+                            ck2_fw <- paste0(comp_parts_fw_temp[2], "-", comp_parts_fw_temp[1], "@", cat_val)
+                            should_add_fw <- (ck1_fw %in% custom_comps) || (ck2_fw %in% custom_comps)
+                          }
+                        }
+                        if (should_add_fw) {
+                          comp_parts_fw2 <- strsplit(cmp_fw_str, "-")[[1]]
+                          if (length(comp_parts_fw2) == 2) {
+                            bracket_data <- rbind(bracket_data, data.frame(
+                              group1=comp_parts_fw2[1], group2=comp_parts_fw2[2],
+                              p.signif=sig_lbl_fw, x.position=cat_index, y.position=NA,
+                              stringsAsFactors=FALSE
+                            ))
+                          }
+                        }
+                      }
+                      ph_header_p <- sprintf("Post-hoc (Paired Wilcoxon, %s):", toupper(ph_method_p))
+                    }
+                    if (length(posthoc_text) > 0) {
+                      result_text <- paste0(result_text, "\\n", ph_header_p, "\\n", paste(posthoc_text, collapse="\\n"))
+                    }
+                  }
+                  stat_text_results <- c(stat_text_results, result_text)
+                }
+              } else {
+              # THREE OR MORE GROUPS (unpaired): Use ANOVA/Kruskal-Wallis + post-hoc tests
+              cat("  Performing ANOVA/Kruskal-Wallis for", n_groups_at_cat, "groups at category", cat_val, "\\n")
 
               # Prepare data for ANOVA
               anova_data <- data.frame(
@@ -17888,6 +19650,7 @@ async function initWebR() {
                   stat_text_results <- c(stat_text_results, result_text)
                 }
               }
+              }
             }
           }
         }
@@ -18036,7 +19799,7 @@ async function initWebR() {
                                          xmax = "xmax",
                                          y.position = "y.position",
                                          size = bracket_size,
-                                         size.line = line_size,
+                                         bracket.size = line_size,
                                          tip.length = tip_length,
                                          vjust = v_just,
                                          hjust = 0.5,
@@ -18054,7 +19817,7 @@ async function initWebR() {
                                          xmax = "xmax",
                                          y.position = "y.position",
                                          size = smaller_size,
-                                         size.line = line_size,
+                                         bracket.size = line_size,
                                          tip.length = tip_length,
                                          vjust = ns_vjust,
                                          hjust = 0.5,
@@ -18210,7 +19973,7 @@ async function initWebR() {
                                    x_axis_hjust=0.5, x_axis_vjust=0.5,
                                    y_axis_hjust=0.5, y_axis_vjust=0.5,
                                    add_statistics=FALSE, statistical_test="auto", variance_test="levene", symbol_size=8,
-                                   ggpubr_line_size=1.0, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
+                                   ggpubr_line_size=0.5, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
                                    comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
                                    selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7,
                                    stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
@@ -18388,8 +20151,8 @@ async function initWebR() {
             bracket_export_data<<-bracket_data; v_just<-ggpubr_vjust-symbol_gap+1.2
             asterisk_data<-bracket_data[bracket_data$p.signif!="ns",]; ns_data<-bracket_data[bracket_data$p.signif=="ns",]
             if (show_brackets) {
-              if(nrow(asterisk_data)>0) p<-p+stat_pvalue_manual(asterisk_data,label="p.signif",xmin="xmin",xmax="xmax",y.position="y.position",size=sato_symbol_size,size.line=ggpubr_line_size,tip.length=ggpubr_tip_length,vjust=v_just,hjust=0.5,step.increase=0,bracket.nudge.y=0,bracket.shorten=0,remove.bracket=FALSE)
-              if(nrow(ns_data)>0) p<-p+stat_pvalue_manual(ns_data,label="p.signif",xmin="xmin",xmax="xmax",y.position="y.position",size=sato_symbol_size*0.7,size.line=ggpubr_line_size,tip.length=ggpubr_tip_length,vjust=v_just-0.5,hjust=0.5,step.increase=0,bracket.nudge.y=0,bracket.shorten=0,remove.bracket=FALSE)
+              if(nrow(asterisk_data)>0) p<-p+stat_pvalue_manual(asterisk_data,label="p.signif",xmin="xmin",xmax="xmax",y.position="y.position",size=sato_symbol_size,bracket.size=ggpubr_line_size,tip.length=ggpubr_tip_length,vjust=v_just,hjust=0.5,step.increase=0,bracket.nudge.y=0,bracket.shorten=0,remove.bracket=FALSE)
+              if(nrow(ns_data)>0) p<-p+stat_pvalue_manual(ns_data,label="p.signif",xmin="xmin",xmax="xmax",y.position="y.position",size=sato_symbol_size*0.7,bracket.size=ggpubr_line_size,tip.length=ggpubr_tip_length,vjust=v_just-0.5,hjust=0.5,step.increase=0,bracket.nudge.y=0,bracket.shorten=0,remove.bracket=FALSE)
             } else {
               for(i in seq_len(nrow(bracket_data))){if(!is.na(bracket_data$xmin[i])&&!is.na(bracket_data$xmax[i])){x_mid<-(bracket_data$xmin[i]+bracket_data$xmax[i])/2;sym<-bracket_data$p.signif[i];is_ns<-sym=="ns";sz<-if(is_ns)sato_symbol_size*0.7 else sato_symbol_size;vj<-if(is_ns)v_just-0.5 else v_just;p<-p+annotate("text",x=x_mid,y=bracket_data$y.position[i],label=sym,size=sz,vjust=vj,hjust=0.5)}}
             }
@@ -18426,11 +20189,12 @@ async function initWebR() {
                                        x_axis_hjust=0.5, x_axis_vjust=0.5,
                                        y_axis_hjust=0.5, y_axis_vjust=0.5,
                                        add_statistics=FALSE, statistical_test="auto", variance_test="levene", symbol_size=8,
-                                       ggpubr_line_size=1.0, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
+                                       ggpubr_line_size=0.5, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3,
                                        comparison_mode="all", custom_comparisons="[]", custom_positions="{}",
                                        selected_posthoc_test="tukey", dunnett_control="", sato_symbol_size=7,
                                        stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
-                                       error_type="sd") {
+                                       error_type="sd",
+                                       paired=FALSE, subject_col=NULL) {
 
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
@@ -18468,22 +20232,23 @@ async function initWebR() {
       plot_data <- data.frame(
         group = if(is.factor(dat[[group_col]])) dat[[group_col]] else factor(dat[[group_col]]),
         category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
-        value = as.numeric(dat[[y_col]])
+        value = as.numeric(dat[[y_col]]),
+        subject_id = if (!is.null(subject_col) && nchar(subject_col) > 0 && subject_col %in% names(dat)) as.character(dat[[subject_col]]) else as.character(seq_len(nrow(dat)))
       )
-      plot_data <- plot_data[complete.cases(plot_data), ]
-      
+      plot_data <- plot_data[complete.cases(plot_data[, c("group", "category", "value")]), ]
+
       if ("Normal" %in% unique(as.character(plot_data$group)) && "Tumor" %in% unique(as.character(plot_data$group))) {
         plot_data$group <- factor(plot_data$group, levels = c("Normal", "Tumor"))
       }
-      
+
       # グループ数に応じて色を設定
       n_groups <- length(levels(plot_data$group))
       group_levels <- levels(plot_data$group)
-      
+
       if (length(fill_colors) < n_groups) {
         fill_colors <- rep(fill_colors, length.out = n_groups)
       }
-      
+
       # グループ化されたバイオリンプロット + dots作成
       p <- ggplot(plot_data, aes(x = category, y = value, fill = group)) +
            geom_violin(position = position_dodge(width = dodge_width),
@@ -18587,66 +20352,94 @@ async function initWebR() {
 
             if (n_groups_at_cat == 2) {
               # TWO GROUPS: Use t-test or Wilcoxon
-              group1_data <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
-              group2_data <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              if (paired) {
+                g1_df <- data_at_cat[data_at_cat$group == groups_with_data[1], c("subject_id", "value")]
+                g2_df <- data_at_cat[data_at_cat$group == groups_with_data[2], c("subject_id", "value")]
+                paired_df_cat <- merge(g1_df, g2_df, by = "subject_id")
+                group1_data <- paired_df_cat$value.x
+                group2_data <- paired_df_cat$value.y
+              } else {
+                group1_data <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
+                group2_data <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              }
 
               # Only test if both groups have data
               if (length(group1_data) > 0 && length(group2_data) > 0) {
-                # Perform normality test for both groups
+                # Perform normality test
                 normality_text <- c()
-                is_group1_normal <- TRUE
-                is_group2_normal <- TRUE
+                both_normal <- TRUE
 
-                if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
-                  shapiro_result1 <- tryCatch(
-                    shapiro.test(group1_data),
-                    error = function(e) NULL
-                  )
-                  if (!is.null(shapiro_result1)) {
-                    is_group1_normal <- shapiro_result1$p.value >= 0.05
-                    norm_status <- if (is_group1_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
+                if (paired) {
+                  # For paired tests: test normality of differences (statistically correct)
+                  diffs_paired <- group1_data - group2_data
+                  if (length(diffs_paired) >= 3 && length(diffs_paired) <= 5000) {
+                    shapiro_diffs <- tryCatch(
+                      shapiro.test(diffs_paired),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(shapiro_diffs)) {
+                      both_normal <- shapiro_diffs$p.value >= 0.05
+                      diff_status <- if (both_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
+                    }
                   }
-                }
+                } else {
+                  # For unpaired tests: test normality of individual groups
+                  is_group1_normal <- TRUE
+                  is_group2_normal <- TRUE
 
-                if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
-                  shapiro_result2 <- tryCatch(
-                    shapiro.test(group2_data),
-                    error = function(e) NULL
-                  )
-                  if (!is.null(shapiro_result2)) {
-                    is_group2_normal <- shapiro_result2$p.value >= 0.05
-                    norm_status <- if (is_group2_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
+                  if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
+                    shapiro_result1 <- tryCatch(
+                      shapiro.test(group1_data),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(shapiro_result1)) {
+                      is_group1_normal <- shapiro_result1$p.value >= 0.05
+                      norm_status <- if (is_group1_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
+                    }
                   }
-                }
 
-                both_normal <- is_group1_normal && is_group2_normal
+                  if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
+                    shapiro_result2 <- tryCatch(
+                      shapiro.test(group2_data),
+                      error = function(e) NULL
+                    )
+                    if (!is.null(shapiro_result2)) {
+                      is_group2_normal <- shapiro_result2$p.value >= 0.05
+                      norm_status <- if (is_group2_normal) "normal" else "non-normal"
+                      normality_text <- c(normality_text,
+                        sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
+                    }
+                  }
+
+                  both_normal <- is_group1_normal && is_group2_normal
+                }
 
                 # Select test based on mode
                 test_to_use <- statistical_test
                 if (statistical_test == "auto") {
                   if (both_normal) {
                     test_to_use <- "t-test"
-                    cat("  Auto-selected: t-test (both groups normal)\\n")
+                    cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
                   } else {
                     test_to_use <- "wilcoxon"
-                    cat("  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
+                    cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
                   }
                 } else if (statistical_test == "parametric") {
                   test_to_use <- "t-test"
-                  cat("  Manual mode: parametric t-test\\n")
+                  cat(if (paired) "  Manual mode: Paired t-test (parametric)\\n" else "  Manual mode: parametric t-test\\n")
                 } else if (statistical_test == "nonparametric") {
                   test_to_use <- "wilcoxon"
-                  cat("  Manual mode: non-parametric Wilcoxon test\\n")
+                  cat(if (paired) "  Manual mode: Paired Wilcoxon (non-parametric)\\n" else "  Manual mode: non-parametric Wilcoxon test\\n")
                 }
 
                 # Perform variance test (only for parametric tests)
                 variance_text <- ""
                 equal_variances <- TRUE
-                if (test_to_use != "wilcoxon") {
+                if (test_to_use != "wilcoxon" && !paired) {
                   if (variance_test == "levene") {
                     # Levene test for equality of variances
                     combined_data <- data.frame(
@@ -18687,7 +20480,21 @@ async function initWebR() {
                 }
 
                 # Perform statistical test based on auto-selection
-                if (test_to_use == "wilcoxon") {
+                if (paired) {
+                  if (test_to_use == "wilcoxon") {
+                    test_result <- tryCatch(
+                      wilcox.test(group1_data, group2_data, paired = TRUE),
+                      error = function(e) NULL
+                    )
+                    test_name <- "Paired Wilcoxon"
+                  } else {
+                    test_result <- tryCatch(
+                      t.test(group1_data, group2_data, paired = TRUE),
+                      error = function(e) NULL
+                    )
+                    test_name <- "Paired t-test"
+                  }
+                } else if (test_to_use == "wilcoxon") {
                   test_result <- tryCatch(
                     wilcox.test(group1_data, group2_data),
                     error = function(e) NULL
@@ -18809,11 +20616,208 @@ async function initWebR() {
                 }
               }
             } else if (n_groups_at_cat >= 3) {
-              # THREE OR MORE GROUPS: Use ANOVA/Kruskal-Wallis + post-hoc tests
-              cat("  Performing ANOVA/Kruskal-Wallis for", n_groups_at_cat, "groups at category", cat_val, "\\n")
-
-              # Calculate x position (find position in all unique_categories, not just selected ones)
+              # Calculate x position (shared by paired and unpaired paths)
               cat_index <- which(unique_categories == cat_val)
+
+              if (paired) {
+                # PAIRED 3+ GROUPS: RM-ANOVA or Friedman
+                cat("  Performing RM-ANOVA/Friedman for", n_groups_at_cat, "paired groups at category", cat_val, "\\n")
+
+                anova_data_p <- data.frame(
+                  value = as.numeric(data_at_cat$value),
+                  group = factor(as.character(data_at_cat$group)),
+                  subject_id = factor(data_at_cat$subject_id)
+                )
+                anova_data_p <- anova_data_p[complete.cases(anova_data_p), ]
+                anova_data_p$group <- droplevels(anova_data_p$group)
+
+                if (nrow(anova_data_p) >= 3) {
+                  # Normality: test pairwise differences
+                  normality_text <- c()
+                  all_normal <- TRUE
+                  groups_list_norm <- levels(factor(anova_data_p$group))
+                  pairs_norm <- combn(groups_list_norm, 2, simplify=FALSE)
+                  for (pair_n in pairs_norm) {
+                    g1_df_n <- anova_data_p[anova_data_p$group == pair_n[1], c("subject_id", "value")]
+                    g2_df_n <- anova_data_p[anova_data_p$group == pair_n[2], c("subject_id", "value")]
+                    merged_n <- merge(g1_df_n, g2_df_n, by="subject_id")
+                    diffs_n <- merged_n$value.x - merged_n$value.y
+                    if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
+                      shapiro_n <- tryCatch(shapiro.test(diffs_n), error=function(e) NULL)
+                      if (!is.null(shapiro_n)) {
+                        is_norm_n <- shapiro_n$p.value >= 0.05
+                        norm_status_n <- if (is_norm_n) "normal" else "non-normal"
+                        normality_text <- c(normality_text,
+                          sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], shapiro_n$p.value, norm_status_n))
+                        if (!is_norm_n) all_normal <- FALSE
+                      }
+                    }
+                  }
+                  # Auto-select test
+                  test_to_use_p <- statistical_test
+                  if (statistical_test == "auto") {
+                    test_to_use_p <- if (all_normal) "rm_anova" else "friedman"
+                    cat("  Auto-selected:", test_to_use_p, "(all diffs normal:", all_normal, ")\\n")
+                  } else if (statistical_test == "parametric") {
+                    test_to_use_p <- "rm_anova"
+                    cat("  Manual mode: RM-ANOVA\\n")
+                  } else {
+                    test_to_use_p <- "friedman"
+                    cat("  Manual mode: Friedman\\n")
+                  }
+                  # Omnibus test
+                  omnibus_p <- NA
+                  test_name <- ""
+                  if (test_to_use_p == "rm_anova") {
+                    rm_result <- tryCatch(
+                      summary(aov(value ~ group + Error(subject_id/group), data=anova_data_p)),
+                      error = function(e) { cat("  RM-ANOVA error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(rm_result)) {
+                      omnibus_p <- rm_result[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1]
+                      if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
+                      test_name <- "RM-ANOVA"
+                    }
+                  } else {
+                    friedman_r <- tryCatch(
+                      friedman.test(value ~ group | subject_id, data=anova_data_p),
+                      error = function(e) { cat("  Friedman error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(friedman_r)) {
+                      omnibus_p <- friedman_r$p.value
+                      test_name <- "Friedman"
+                    }
+                  }
+                  cat("  ", test_name, "p-value:", omnibus_p, "\\n")
+                  # Build result text
+                  result_text <- sprintf("Category %s:", cat_val)
+                  .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
+                  for (g in groups_with_data) {
+                    g_data <- anova_data_p$value[anova_data_p$group == g]
+                    g_data <- g_data[!is.na(g_data)]
+                    n_g3 <- length(g_data)
+                    if (n_g3 > 0) {
+                      mean_g3 <- mean(g_data)
+                      if (n_g3 > 1) {
+                        sd_g3 <- sd(g_data)
+                        err_g3 <- if (error_type == "se") sd_g3/sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1)*sd_g3/sqrt(n_g3) else sd_g3
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
+                      } else {
+                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
+                      }
+                    }
+                  }
+                  if (length(normality_text) > 0) {
+                    result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
+                  }
+                  anova_sig_label <- if (!is.na(omnibus_p)) {
+                    if (omnibus_p < 0.001) "***" else if (omnibus_p < 0.01) "**" else if (omnibus_p < 0.05) "*" else "ns"
+                  } else "ns"
+                  result_text <- paste0(result_text, "\\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", anova_sig_label, ")")
+                  # Post-hoc if omnibus significant
+                  if (!is.na(omnibus_p) && omnibus_p < 0.05) {
+                    cat("  Omnibus significant, performing paired post-hoc tests\\n")
+                    posthoc_text <- c()
+                    ph_method_p <- paired_ph_correction
+                    if (test_to_use_p == "rm_anova") {
+                      cat(sprintf("  Pairwise paired t-test (%s correction)...\\n", ph_method_p))
+                      pt_result_p <- tryCatch(
+                        pairwise.t.test(anova_data_p$value, anova_data_p$group,
+                                        paired=TRUE, p.adjust.method=ph_method_p),
+                        error = function(e) { cat("  pairwise.t.test error:", e$message, "\\n"); NULL }
+                      )
+                      if (!is.null(pt_result_p)) {
+                        groups_pt <- levels(factor(anova_data_p$group))
+                        comps_pt <- combn(groups_pt, 2, simplify=FALSE)
+                        for (comp_pt in comps_pt) {
+                          g1_pt <- comp_pt[1]; g2_pt <- comp_pt[2]
+                          r_idx <- which(rownames(pt_result_p$p.value) == g2_pt)
+                          c_idx <- which(colnames(pt_result_p$p.value) == g1_pt)
+                          p_val_pt <- if (length(r_idx)>0 && length(c_idx)>0) pt_result_p$p.value[r_idx, c_idx] else NA
+                          if (is.na(p_val_pt)) {
+                            r_idx2 <- which(rownames(pt_result_p$p.value) == g1_pt)
+                            c_idx2 <- which(colnames(pt_result_p$p.value) == g2_pt)
+                            p_val_pt <- if (length(r_idx2)>0 && length(c_idx2)>0) pt_result_p$p.value[r_idx2, c_idx2] else NA
+                          }
+                          sig_lbl_pt <- if (!is.na(p_val_pt)) get_sig_symbol(p_val_pt) else "ns"
+                          cmp_str_pt <- paste0(g2_pt, "-", g1_pt)
+                          cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
+                          posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
+                          should_add_pt <- FALSE
+                          if (comparison_mode == "significant") should_add_pt <- (sig_lbl_pt != "ns")
+                          else if (comparison_mode == "all") should_add_pt <- TRUE
+                          else if (comparison_mode == "custom") {
+                            ck1 <- paste0(g1_pt, "-", g2_pt, "@", cat_val)
+                            ck2 <- paste0(g2_pt, "-", g1_pt, "@", cat_val)
+                            should_add_pt <- (ck1 %in% custom_comps) || (ck2 %in% custom_comps)
+                          }
+                          if (should_add_pt) {
+                            bracket_data <- rbind(bracket_data, data.frame(
+                              group1=g2_pt, group2=g1_pt,
+                              p.signif=sig_lbl_pt, x.position=cat_index, y.position=NA,
+                              stringsAsFactors=FALSE
+                            ))
+                          }
+                        }
+                      }
+                      ph_header_p <- sprintf("Post-hoc (Paired t-test, %s):", toupper(ph_method_p))
+                    } else {
+                      cat(sprintf("  Pairwise paired Wilcoxon (%s correction)...\\n", ph_method_p))
+                      groups_fw <- levels(factor(anova_data_p$group))
+                      comps_fw <- combn(groups_fw, 2, simplify=FALSE)
+                      p_raw_fw <- c(); cmp_names_fw <- c()
+                      for (comp_fw in comps_fw) {
+                        g1_fw_df <- anova_data_p[anova_data_p$group == comp_fw[1], c("subject_id", "value")]
+                        g2_fw_df <- anova_data_p[anova_data_p$group == comp_fw[2], c("subject_id", "value")]
+                        merged_fw <- merge(g1_fw_df, g2_fw_df, by="subject_id")
+                        pv_fw <- tryCatch(
+                          wilcox.test(merged_fw$value.x, merged_fw$value.y, paired=TRUE)$p.value,
+                          error = function(e) NA
+                        )
+                        p_raw_fw <- c(p_raw_fw, pv_fw)
+                        cmp_names_fw <- c(cmp_names_fw, paste0(comp_fw[2], "-", comp_fw[1]))
+                      }
+                      p_adj_fw <- p.adjust(p_raw_fw, method=ph_method_p)
+                      for (i in seq_along(cmp_names_fw)) {
+                        cmp_fw_str <- cmp_names_fw[i]
+                        p_adj_fw_i <- p_adj_fw[i]
+                        sig_lbl_fw <- if (!is.na(p_adj_fw_i)) get_sig_symbol(p_adj_fw_i) else "ns"
+                        cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
+                        posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
+                        should_add_fw <- FALSE
+                        if (comparison_mode == "significant") should_add_fw <- (sig_lbl_fw != "ns")
+                        else if (comparison_mode == "all") should_add_fw <- TRUE
+                        else if (comparison_mode == "custom") {
+                          comp_parts_fw_temp <- strsplit(cmp_fw_str, "-")[[1]]
+                          if (length(comp_parts_fw_temp) == 2) {
+                            ck1_fw <- paste0(comp_parts_fw_temp[1], "-", comp_parts_fw_temp[2], "@", cat_val)
+                            ck2_fw <- paste0(comp_parts_fw_temp[2], "-", comp_parts_fw_temp[1], "@", cat_val)
+                            should_add_fw <- (ck1_fw %in% custom_comps) || (ck2_fw %in% custom_comps)
+                          }
+                        }
+                        if (should_add_fw) {
+                          comp_parts_fw2 <- strsplit(cmp_fw_str, "-")[[1]]
+                          if (length(comp_parts_fw2) == 2) {
+                            bracket_data <- rbind(bracket_data, data.frame(
+                              group1=comp_parts_fw2[1], group2=comp_parts_fw2[2],
+                              p.signif=sig_lbl_fw, x.position=cat_index, y.position=NA,
+                              stringsAsFactors=FALSE
+                            ))
+                          }
+                        }
+                      }
+                      ph_header_p <- sprintf("Post-hoc (Paired Wilcoxon, %s):", toupper(ph_method_p))
+                    }
+                    if (length(posthoc_text) > 0) {
+                      result_text <- paste0(result_text, "\\n", ph_header_p, "\\n", paste(posthoc_text, collapse="\\n"))
+                    }
+                  }
+                  stat_text_results <- c(stat_text_results, result_text)
+                }
+              } else {
+              # THREE OR MORE GROUPS (unpaired): Use ANOVA/Kruskal-Wallis + post-hoc tests
+              cat("  Performing ANOVA/Kruskal-Wallis for", n_groups_at_cat, "groups at category", cat_val, "\\n")
 
               # Prepare data for ANOVA
               anova_data <- data.frame(
@@ -19193,6 +21197,7 @@ async function initWebR() {
                   stat_text_results <- c(stat_text_results, result_text)
                 }
               }
+              }
             }
           }
         }
@@ -19341,7 +21346,7 @@ async function initWebR() {
                                          xmax = "xmax",
                                          y.position = "y.position",
                                          size = bracket_size,
-                                         size.line = line_size,
+                                         bracket.size = line_size,
                                          tip.length = tip_length,
                                          vjust = v_just,
                                          hjust = 0.5,
@@ -19359,7 +21364,7 @@ async function initWebR() {
                                          xmax = "xmax",
                                          y.position = "y.position",
                                          size = smaller_size,
-                                         size.line = line_size,
+                                         bracket.size = line_size,
                                          tip.length = tip_length,
                                          vjust = ns_vjust,
                                          hjust = 0.5,
@@ -20295,6 +22300,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       case 'line': return 'Line Plot';
       case 'ic50_dose_response': return 'Dose-Response Curve';
       case 'ic50_grouped_dose_response': return 'Grouped Dose-Response';
+      case 'lq_survival_grouped': return 'Grouped LQ Survival Curve';
       default: return 'Chart';
     }
   };
@@ -20315,7 +22321,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   // Calculate column indices for ALL charts (not just grouped)
   // The CSV data contains all columns in their original Excel order
   // We need to find which column index corresponds to each selection
-  let groupColIndex = 1, xColIndex = 1, yColIndex = 2, errorColIndex = 4;
+  let groupColIndex = 1, xColIndex = 1, yColIndex = 2, errorColIndex = 4, subjectColIndex = 0;
 
   console.log("🔍 Column index calculation:");
   console.log("  chartType:", chartType);
@@ -20333,6 +22339,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     const xIdx = headers.findIndex(h => h === selectedXColumn);
     const yIdx = headers.findIndex(h => h === selectedYColumn);
     const errorIdx = headers.findIndex(h => h === selectedErrorColumn);
+    const subjIdx = headers.findIndex(h => h === subjectColumn);
 
     console.log("  Found indices (0-based) - Group:", groupIdx, "X:", xIdx, "Y:", yIdx, "Error:", errorIdx);
 
@@ -20340,8 +22347,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     if (xIdx >= 0) xColIndex = xIdx + 1;
     if (yIdx >= 0) yColIndex = yIdx + 1;
     if (errorIdx >= 0) errorColIndex = errorIdx + 1;
+    if (subjIdx >= 0) subjectColIndex = subjIdx + 1;
 
-    console.log(`  ✅ Final indices (1-based for R): group=${groupColIndex}, x=${xColIndex}, y=${yColIndex}, error=${errorColIndex}`);
+    console.log(`  ✅ Final indices (1-based for R): group=${groupColIndex}, x=${xColIndex}, y=${yColIndex}, error=${errorColIndex}, subject=${subjectColIndex}`);
   } else {
     console.log("  ⚠️ Using default indices because lastProcessedData not available");
   }
@@ -20435,6 +22443,8 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const dotColor = o.dotColor || '#333333';
   const dotShape = o.dotShape || '16';
   const dotAlpha = o.dotAlpha || 1.0;
+  const lqShowPoints = o.lqShowPoints || 'se';
+  const lqDotSize = o.lqDotSize || 2;
   const titleSize = o.titleSize || 24;
   const xAxisTitleSize = o.xAxisTitleSize || 20;
   const yAxisTitleSize = o.yAxisTitleSize || 20;
@@ -20487,6 +22497,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const varianceTest = o.varianceTest || 'levene';
   const postHocTest = o.postHocTest || 'tukey';
   const dunnettControl = o.dunnettControl || '';
+  const pairedPostHocCorrection = o.pairedPostHocCorrection || document.getElementById("pairedPostHocCorrection")?.value || "holm";
   const statSymbolType = o.statSymbolType || 'stars';
   const customSymbol05 = o.customSymbol05 || '*';
   const customSymbol01 = o.customSymbol01 || '**';
@@ -20513,7 +22524,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   console.log("Final statSymbolSize after validation:", statSymbolSize, "type:", typeof statSymbolSize);
 
   // ggpubr statistical bracket parameters (Symbol size uses existing statSymbolSize)
-  const statLineSize = Number(o.statLineSize) || 1.0;
+  const statLineSize = Number(o.statLineSize) || 0.5;
   const statTipLength = Number(o.statTipLength) || 0.04;
   const symbolGap = (o.symbolGap !== undefined && o.symbolGap !== null) ? Number(o.symbolGap) : 0.6;
   const bracketSpacing = (o.bracketSpacing !== undefined && o.bracketSpacing !== null) ? Number(o.bracketSpacing) : 1.0;
@@ -20575,6 +22586,14 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const ic50DecimalLabels = document.getElementById("ic50DecimalLabels")?.checked ?? true;
   console.log("IC50 settings:", { enableIC50Analysis, showIC50Value, showIC50Line, showConfidenceBand, ic50CurveColor, ic50CurveWidth, ic50LineColor, ic50PointSize, ic50PointColor, ic50PointAlpha, ic50DataDisplay, ic50FittingMethod, ic50XisLog10 });
 
+  // LQ shape settings
+  const lqCurvePoints = Math.max(20, Math.min(1000, Number(document.getElementById("lqCurvePoints")?.value) || 200));
+  const lqPointShape = Number(document.getElementById("lqPointShape")?.value) || 1;
+  const lqPerGroupShape = document.getElementById("lqPerGroupShape")?.checked || false;
+  const lqShapesVec = lqPerGroupShape
+    ? [1,2,3,4,5,6].map((i, idx) => Number(document.getElementById(`lqGroupShape${i}`)?.value) || [1,2,0,5,3,4][idx])
+    : Array(6).fill(lqPointShape);
+
   // Convert to JSON strings for R
   const customComparisonsJSON = JSON.stringify(customComparisons);
   const customPositionsJSON = JSON.stringify(customPositions);
@@ -20610,7 +22629,13 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   } else {
     console.log("*** JAVASCRIPT: Statistical analysis is DISABLED ***");
   }
-  
+
+  // Validation: paired samples require a Subject ID column
+  if (addStatistics && pairedSamples && !subjectColumn) {
+    setStatus("❌ Please select a Subject ID column for paired analysis.");
+    return null;
+  }
+
   // Create R vector string for colors
   const rColorVector = `c("${groupColors.slice(0, numGroups).join('", "')}")`;
   
@@ -20681,8 +22706,10 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     # Set post-hoc test and control group for statistics
     selected_posthoc_test <- "${postHocTest}"
     dunnett_control <- "${dunnettControl}"
+    paired_ph_correction <- "${pairedPostHocCorrection}"
     cat("JS Post-hoc test:", selected_posthoc_test, "\\n")
     cat("JS Dunnett control:", dunnett_control, "\\n")
+    cat("JS Paired post-hoc correction:", paired_ph_correction, "\\n")
     
     # データ確認
     if (!exists("dat") || !is.data.frame(dat) || nrow(dat) == 0) {
@@ -20872,6 +22899,667 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       cat("systemfonts package not available, using system default\\n")
     }
     
+    # LQ Clonogenic Survival Curve function (Linear-Quadratic model)
+    # Accepts raw replicate data — calculates mean +/- SE internally
+    sato_lq_survival_grouped <- function(
+      dat, group_col=1, x_col=2, y_col=3,
+      line_colors=c("#333333", "#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#B07AA1"),
+      shapes_vec=c(16, 17, 15, 18, 1, 2),
+      linewidth=1.5, dot_size=2, alpha=0.6, error_bar_width=0.3,
+      show_points="se", curve_points=200,
+      target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
+      title_size=14, x_axis_title_size=12, y_axis_title_size=12,
+      x_axis_text_size=10, y_axis_text_size=10, legend_text_size=10,
+      title_text="Clonogenic Survival", x_text="Dose (Gy)", y_text="Surviving Fraction",
+      show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
+      theme_name="classic",
+      x_axis_rotation=0, y_axis_rotation=0,
+      x_axis_hjust=0.5, x_axis_vjust=0.5,
+      y_axis_hjust=0.5, y_axis_vjust=0.5,
+      add_statistics=FALSE, statistical_test="auto",
+      paired_samples=FALSE, subject_col=0,
+      variance_test="levene", stat_symbol_type="stars",
+      stat_symbol_size=5, comparison_mode="significant",
+      post_hoc_test="tukey", custom_comparisons="[]",
+      vbracket_timepoint="", vbracket_x=0.85, vbracket_y=0.85,
+      vbracket_text_size=10, vbracket_sig_size=14,
+      vbracket_margin=0.06, vbracket_line_width=3,
+      vbracket_legend_line_length=0.05, vbracket_legend_line_width=2,
+      vbracket_item_spacing=0.1, vbracket_bracket_layer_spacing=NULL,
+      output_width=6, output_height=4
+    ) {
+      library(ggplot2)
+
+      # Rename columns to standard names
+      colnames(dat)[group_col] <- "grp"
+      colnames(dat)[x_col]     <- "dose"
+      colnames(dat)[y_col]     <- "sf"
+
+      dat$dose <- suppressWarnings(as.numeric(as.character(dat$dose)))
+      dat$sf   <- suppressWarnings(as.numeric(as.character(dat$sf)))
+      dat <- dat[!is.na(dat$dose) & !is.na(dat$sf), ]
+
+      groups   <- unique(dat$grp)
+      n_groups <- length(groups)
+      dose_seq <- seq(0, max(dat$dose, na.rm=TRUE), length.out=curve_points)
+
+      # Calculate mean +/- SE per group x dose from raw replicates
+      summary_data <- do.call(rbind, lapply(groups, function(g) {
+        gd <- dat[dat$grp == g, ]
+        do.call(rbind, lapply(unique(gd$dose), function(d) {
+          vals <- gd$sf[gd$dose == d]
+          vals <- vals[!is.na(vals)]
+          n    <- length(vals)
+          data.frame(grp=g, dose=d,
+                     sf_mean=mean(vals),
+                     sf_se=if(n>1) sd(vals)/sqrt(n) else 0,
+                     stringsAsFactors=FALSE)
+        }))
+      }))
+
+      fit_data    <- data.frame()
+      params_list <- list()
+
+      for (g in groups) {
+        gdat <- summary_data[summary_data$grp == g, ]
+
+        fit <- tryCatch(
+          nls(sf_mean ~ exp(-a * dose - b * dose^2),
+              data  = gdat,
+              start = list(a=0.3, b=0.02),
+              algorithm = "port",
+              lower = c(a=1e-6, b=0),
+              control = nls.control(maxiter=200, tol=1e-6)),
+          error = function(e) {
+            tryCatch(
+              nls(sf_mean ~ exp(-a * dose),
+                  data  = gdat,
+                  start = list(a=0.3),
+                  algorithm = "port",
+                  lower = c(a=1e-6),
+                  control = nls.control(maxiter=200)),
+              error = function(e2) {
+                cat(sprintf("Group '%s': model fit failed: %s\\n", g, e2$message))
+                NULL
+              }
+            )
+          }
+        )
+
+        if (!is.null(fit)) {
+          coefs <- coef(fit)
+          alpha_val <- as.numeric(coefs["a"])
+          beta_val  <- if ("b" %in% names(coefs)) as.numeric(coefs["b"]) else 0
+
+          alpha_beta <- if (beta_val > 1e-8) alpha_val / beta_val else Inf
+          sf2        <- exp(-alpha_val * 2 - beta_val * 4)
+          d10        <- if (beta_val > 1e-8) {
+            disc <- alpha_val^2 + 4 * beta_val * log(10)
+            if (disc >= 0) (-alpha_val + sqrt(disc)) / (2 * beta_val) else NA_real_
+          } else {
+            log(10) / alpha_val
+          }
+
+          params_list[[as.character(g)]] <- list(
+            alpha=alpha_val, beta=beta_val, alpha_beta=alpha_beta, sf2=sf2, d10=d10
+          )
+
+          sf_pred <- pmax(exp(-alpha_val * dose_seq - beta_val * dose_seq^2), 1e-10)
+          fit_data <- rbind(fit_data, data.frame(grp=g, dose=dose_seq, sf_mean=sf_pred))
+        }
+      }
+
+      # Print fitted parameters
+      cat("\\n===== LQ Model Parameters =====\\n")
+      for (g in groups) {
+        g_key <- as.character(g)
+        if (!is.null(params_list[[g_key]])) {
+          pr <- params_list[[g_key]]
+          ab_str <- if (is.infinite(pr$alpha_beta)) "Inf (beta~0)" else sprintf("%.2f", pr$alpha_beta)
+          cat(sprintf("Group: %s\\n", g))
+          cat(sprintf("  alpha (Gy-1):   %.4f\\n", pr$alpha))
+          cat(sprintf("  beta  (Gy-2):   %.4f\\n", pr$beta))
+          cat(sprintf("  alpha/beta:     %s Gy\\n", ab_str))
+          cat(sprintf("  SF2:            %.4f\\n", pr$sf2))
+          cat(sprintf("  D10 (Gy):       %.2f\\n", pr$d10))
+          cat("\\n")
+        }
+      }
+
+      # Store fitted curve data globally for export
+      lq_fit_data <<- if (nrow(fit_data) > 0) fit_data else NULL
+
+      # Store results globally for export
+      lq_survival_grouped_results <<- tryCatch({
+        data.frame(
+          Group      = groups,
+          Alpha      = sapply(groups, function(g) { p2 <- params_list[[as.character(g)]]; if (!is.null(p2)) p2$alpha else NA }),
+          Beta       = sapply(groups, function(g) { p2 <- params_list[[as.character(g)]]; if (!is.null(p2)) p2$beta else NA }),
+          Alpha_Beta = sapply(groups, function(g) { p2 <- params_list[[as.character(g)]]; if (!is.null(p2)) p2$alpha_beta else NA }),
+          SF2        = sapply(groups, function(g) { p2 <- params_list[[as.character(g)]]; if (!is.null(p2)) p2$sf2 else NA }),
+          D10        = sapply(groups, function(g) { p2 <- params_list[[as.character(g)]]; if (!is.null(p2)) p2$d10 else NA }),
+          stringsAsFactors = FALSE
+        )
+      }, error = function(e) NULL)
+
+      # Build ggplot
+      # Compute error based on show_points mode
+      if (show_points == "sd") {
+        summary_data$sf_err <- sapply(seq_len(nrow(summary_data)), function(i) {
+          g <- summary_data$grp[i]; d <- summary_data$dose[i]
+          vals <- dat$sf[dat$grp == g & dat$dose == d]; vals <- vals[!is.na(vals)]
+          if (length(vals) > 1) sd(vals) else 0
+        })
+      } else {
+        summary_data$sf_err <- summary_data$sf_se
+      }
+
+      p <- ggplot(summary_data, aes(x=dose, y=sf_mean, color=grp, shape=grp)) +
+        { if (show_points == "raw")
+            geom_point(data=dat[dat$sf > 0 & !is.na(dat$sf), ],
+                       aes(x=dose, y=sf, color=grp),
+                       size=dot_size, alpha=alpha, shape=16, inherit.aes=FALSE)
+          else
+            NULL } +
+        # Error bars (mean +/- SD or SE)
+        geom_errorbar(aes(ymin=pmax(sf_mean - sf_err, 1e-10),
+                          ymax=sf_mean + sf_err),
+                      width=error_bar_width, linewidth=linewidth*0.5,
+                      show.legend=FALSE) +
+        # Mean points on top
+        geom_point(size=dot_size*1.4, alpha=0.95)
+
+      if (nrow(fit_data) > 0) {
+        p <- p + geom_line(data=fit_data, aes(x=dose, y=sf_mean, color=grp),
+                           linewidth=linewidth, inherit.aes=FALSE)
+      }
+
+      p <- p +
+        scale_y_log10(labels = function(x) {
+          ifelse(x >= 0.1, formatC(x, format="g", digits=2),
+                 formatC(x, format="e", digits=0))
+        }) +
+        scale_color_manual(values=line_colors[1:n_groups]) +
+        scale_shape_manual(values=shapes_vec[1:n_groups]) +
+        labs(
+          title = if (show_title)  title_text else NULL,
+          x     = if (show_x_label) x_text else NULL,
+          y     = if (show_y_label) y_text else NULL,
+          color = NULL, shape = NULL
+        )
+
+      theme_func <- switch(theme_name,
+        "gray"    = theme_gray,
+        "grey"    = theme_gray,
+        "bw"      = theme_bw,
+        "minimal" = theme_minimal,
+        "void"    = theme_void,
+        "light"   = theme_light,
+        theme_classic
+      )
+
+      p <- p + theme_func(base_family=target_font) +
+        theme(
+          plot.background  = element_rect(fill="white", color=NA),
+          panel.background = element_rect(fill="white", color=NA),
+          plot.title       = element_text(size=title_size, face=title_weight, hjust=0.5),
+          axis.title.x     = element_text(size=x_axis_title_size, face=axis_title_weight),
+          axis.title.y     = element_text(size=y_axis_title_size, face=axis_title_weight),
+          axis.text.x      = element_text(size=x_axis_text_size, color="black", face=axis_text_weight,
+                                           angle=x_axis_rotation, hjust=x_axis_hjust, vjust=x_axis_vjust),
+          axis.text.y      = element_text(size=y_axis_text_size, color="black", face=axis_text_weight,
+                                           angle=y_axis_rotation, hjust=y_axis_hjust, vjust=y_axis_vjust),
+          legend.text      = element_text(size=legend_text_size),
+          legend.title     = element_text(size=legend_text_size)
+        )
+
+      # ============================================================
+      # STATISTICAL ANALYSIS (mirrors sato_line_grouped_error_raw)
+      # ============================================================
+      if (add_statistics && n_groups >= 2) {
+
+        get_sig_symbol <- function(p_val) {
+          if (stat_symbol_type == "pvalue") return(sprintf("p=%.3f", p_val))
+          if (p_val < 0.001) return("***")
+          else if (p_val < 0.01) return("**")
+          else if (p_val < 0.05) return("*")
+          else return("ns")
+        }
+
+        unique_dose <- sort(unique(dat$dose))
+        stat_text_results <- c()
+        stat_results <- data.frame(x=numeric(0), label=character(0), stringsAsFactors=FALSE)
+
+        for (d_val in unique_dose) {
+          data_at_d <- dat[dat$dose == d_val, ]
+          groups_at_d <- unique(data_at_d$grp[!is.na(data_at_d$sf)])
+          n_grp_d <- length(groups_at_d)
+          cat(sprintf("\\nDose=%.2f: %d groups\\n", d_val, n_grp_d))
+
+          if (n_grp_d == 2) {
+            group1_data <- data_at_d$sf[data_at_d$grp == groups_at_d[1]]
+            group2_data <- data_at_d$sf[data_at_d$grp == groups_at_d[2]]
+            group1_data <- group1_data[!is.na(group1_data)]
+            group2_data <- group2_data[!is.na(group2_data)]
+
+            if (length(group1_data) > 0 && length(group2_data) > 0) {
+              # Summary stats
+              desc_lines <- c(
+                sprintf("  %s: n=%d, mean=%.4g, SD=%.4g",
+                  groups_at_d[1], length(group1_data), mean(group1_data),
+                  if(length(group1_data)>1) sd(group1_data) else 0),
+                sprintf("  %s: n=%d, mean=%.4g, SD=%.4g",
+                  groups_at_d[2], length(group2_data), mean(group2_data),
+                  if(length(group2_data)>1) sd(group2_data) else 0)
+              )
+
+              # Paired test: match by subject column if available
+              paired <- paired_samples && subject_col > 0 && subject_col <= ncol(dat)
+              if (paired) {
+                subj_col_data <- dat[[subject_col]]
+                g1_df <- data.frame(subject_id=subj_col_data[data_at_d$grp == groups_at_d[1]],
+                                    value=group1_data, stringsAsFactors=FALSE)
+                g2_df <- data.frame(subject_id=subj_col_data[data_at_d$grp == groups_at_d[2]],
+                                    value=group2_data, stringsAsFactors=FALSE)
+                paired_df <- merge(g1_df, g2_df, by="subject_id")
+                if (nrow(paired_df) >= 2) {
+                  group1_data <- paired_df$value.x
+                  group2_data <- paired_df$value.y
+                } else {
+                  paired <- FALSE
+                }
+              }
+
+              # Normality test (same as standard charts)
+              normality_text <- c()
+              both_normal <- TRUE
+              if (paired) {
+                diffs_2 <- group1_data - group2_data
+                if (length(diffs_2) >= 3 && length(diffs_2) <= 5000) {
+                  shapiro_diffs <- tryCatch(shapiro.test(diffs_2), error=function(e) NULL)
+                  if (!is.null(shapiro_diffs)) {
+                    both_normal <- shapiro_diffs$p.value >= 0.05
+                    diff_status <- if (both_normal) "normal" else "non-normal"
+                    normality_text <- c(normality_text,
+                      sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
+                  }
+                }
+              } else {
+                is_group1_normal <- TRUE
+                is_group2_normal <- TRUE
+                if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
+                  shapiro_result1 <- tryCatch(shapiro.test(group1_data), error=function(e) NULL)
+                  if (!is.null(shapiro_result1)) {
+                    is_group1_normal <- shapiro_result1$p.value >= 0.05
+                    norm_status <- if (is_group1_normal) "normal" else "non-normal"
+                    normality_text <- c(normality_text,
+                      sprintf("  %s: p=%.4f (%s)", groups_at_d[1], shapiro_result1$p.value, norm_status))
+                  }
+                }
+                if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
+                  shapiro_result2 <- tryCatch(shapiro.test(group2_data), error=function(e) NULL)
+                  if (!is.null(shapiro_result2)) {
+                    is_group2_normal <- shapiro_result2$p.value >= 0.05
+                    norm_status <- if (is_group2_normal) "normal" else "non-normal"
+                    normality_text <- c(normality_text,
+                      sprintf("  %s: p=%.4f (%s)", groups_at_d[2], shapiro_result2$p.value, norm_status))
+                  }
+                }
+                both_normal <- is_group1_normal && is_group2_normal
+              }
+
+              # Select test based on mode (same as standard charts)
+              test_to_use <- statistical_test
+              if (statistical_test == "auto") {
+                if (both_normal) {
+                  test_to_use <- "t-test"
+                  cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
+                } else {
+                  test_to_use <- "wilcoxon"
+                  cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
+                }
+              } else if (statistical_test == "parametric") {
+                test_to_use <- "t-test"
+              } else if (statistical_test == "nonparametric") {
+                test_to_use <- "wilcoxon"
+              }
+
+              # Variance test (only for unpaired parametric, same as standard charts)
+              variance_text <- ""
+              equal_variances <- TRUE
+              if (test_to_use != "wilcoxon" && !paired) {
+                if (variance_test == "levene") {
+                  combined_data <- data.frame(
+                    values = c(group1_data, group2_data),
+                    group = factor(c(rep(groups_at_d[1], length(group1_data)),
+                                     rep(groups_at_d[2], length(group2_data))))
+                  )
+                  group_means <- tapply(combined_data$values, combined_data$group, mean)
+                  abs_deviations <- abs(combined_data$values - group_means[combined_data$group])
+                  levene_result <- tryCatch(
+                    anova(lm(abs_deviations ~ combined_data$group)),
+                    error=function(e) NULL
+                  )
+                  if (!is.null(levene_result)) {
+                    levene_p <- levene_result$\`Pr(>F)\`[1]
+                    equal_variances <- levene_p > 0.05
+                    variance_status <- if (equal_variances) "equal variances" else "unequal variances"
+                    variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", levene_p, variance_status)
+                    cat(sprintf("    Levene test: p=%.4f (%s)\\n", levene_p, variance_status))
+                  }
+                } else {
+                  var_test <- tryCatch(var.test(group1_data, group2_data), error=function(e) NULL)
+                  if (!is.null(var_test)) {
+                    equal_variances <- var_test$p.value > 0.05
+                    variance_status <- if (equal_variances) "equal variances" else "unequal variances"
+                    variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", var_test$p.value, variance_status)
+                    cat(sprintf("    F-test: p=%.4f (%s)\\n", var_test$p.value, variance_status))
+                  }
+                }
+              }
+
+              # Run test (same as standard charts)
+              test_result <- NULL; test_name <- ""
+              if (paired) {
+                if (test_to_use == "wilcoxon") {
+                  test_result <- tryCatch(wilcox.test(group1_data, group2_data, paired=TRUE), error=function(e) NULL)
+                  test_name <- "Paired Wilcoxon"
+                } else {
+                  test_result <- tryCatch(t.test(group1_data, group2_data, paired=TRUE), error=function(e) NULL)
+                  test_name <- "Paired t-test"
+                }
+              } else if (test_to_use == "wilcoxon") {
+                test_result <- tryCatch(wilcox.test(group1_data, group2_data), error=function(e) NULL)
+                test_name <- "Wilcoxon"
+              } else {
+                test_result <- tryCatch(t.test(group1_data, group2_data, var.equal=equal_variances), error=function(e) NULL)
+                test_name <- if (equal_variances) "Student's t-test" else "Welch's t-test"
+              }
+
+              if (!is.null(test_result)) {
+                p_val <- test_result$p.value
+                cat(sprintf("  2-group test: %s vs %s, %s p=%.4f\\n",
+                            groups_at_d[1], groups_at_d[2], test_name, p_val))
+                sig_label <- get_sig_symbol(p_val)
+
+                result_text <- sprintf(">> X-axis value: %g\\nGroups: %s vs %s",
+                                       d_val, groups_at_d[1], groups_at_d[2])
+                if (length(desc_lines) > 0) {
+                  result_text <- paste0(result_text, "\\nSummary (mean +/- SD):\\n", paste(desc_lines, collapse="\\n"))
+                }
+                if (length(normality_text) > 0) {
+                  result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
+                } else {
+                  result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
+                }
+                if (nchar(variance_text) > 0) {
+                  result_text <- paste0(result_text, "\\n", variance_text)
+                }
+                result_text <- paste0(result_text,
+                  sprintf("\\nTest: %s, p=%.4f (%s)", test_name, p_val, sig_label))
+                stat_text_results <- c(stat_text_results, result_text)
+
+                if (sig_label != "" && sig_label != "ns") {
+                  stat_results <- rbind(stat_results,
+                    data.frame(x=d_val, label=sig_label, stringsAsFactors=FALSE))
+                }
+              }
+            }
+
+          } else if (n_grp_d >= 3) {
+            anova_data <- data.frame(
+              group = factor(as.character(data_at_d$grp)),
+              value = as.numeric(data_at_d$sf)
+            )
+            anova_data <- anova_data[complete.cases(anova_data), ]
+            anova_data$group <- droplevels(anova_data$group)
+
+            # Summary stats
+            desc_lines <- sapply(levels(anova_data$group), function(g) {
+              gv <- anova_data$value[anova_data$group == g]
+              sprintf("  %s: n=%d, mean=%.4g, SD=%.4g", g, length(gv), mean(gv), if(length(gv)>1) sd(gv) else 0)
+            })
+
+            result_text <- sprintf(">> X-axis value: %g\\nTime point %.1f:", d_val, d_val)
+            if (length(desc_lines) > 0) {
+              result_text <- paste0(result_text, "\\nSummary (mean +/- SD):\\n", paste(desc_lines, collapse="\\n"))
+            }
+
+            # Normality testing for each group (same as standard charts)
+            normality_text <- c()
+            all_normal <- TRUE
+            for (grp in levels(anova_data$group)) {
+              grp_data <- anova_data$value[anova_data$group == grp]
+              if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
+                shapiro_result <- tryCatch(shapiro.test(grp_data), error=function(e) NULL)
+                if (!is.null(shapiro_result)) {
+                  norm_status <- if (shapiro_result$p.value >= 0.05) "normal" else "non-normal"
+                  if (shapiro_result$p.value < 0.05) all_normal <- FALSE
+                  normality_text <- c(normality_text,
+                    sprintf("  %s: p=%.4f (%s)", grp, shapiro_result$p.value, norm_status))
+                }
+              }
+            }
+            if (length(normality_text) > 0) {
+              result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
+            } else {
+              result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
+            }
+
+            # Decide parametric vs non-parametric (same as standard charts)
+            use_nonparametric <- (statistical_test == "nonparametric") ||
+                                 (statistical_test == "auto" && !all_normal)
+
+            if (use_nonparametric) {
+              # Non-parametric: Kruskal-Wallis + Dunn post-hoc (same as standard charts)
+              kw_result <- tryCatch(
+                kruskal.test(value ~ group, data=anova_data),
+                error=function(e) { cat("  Kruskal-Wallis error:", e$message, "\\n"); NULL }
+              )
+              if (!is.null(kw_result)) {
+                kw_p <- kw_result$p.value
+                kw_sig <- get_sig_symbol(kw_p)
+                cat(sprintf("  Kruskal-Wallis p=%.4f\\n", kw_p))
+                result_text <- paste0(result_text, sprintf("\\nOverall test: Kruskal-Wallis, p=%.4f (%s)", kw_p, kw_sig))
+
+                if (!is.na(kw_p) && kw_p < 0.05) {
+                  dunn_method <- if (post_hoc_test == "dunn_holm") "holm" else "bonferroni"
+                  dunn_method_label <- if (dunn_method == "holm") "Holm" else "Bonferroni"
+                  dunn_available <- tryCatch({
+                    if (!requireNamespace("dunn.test", quietly=TRUE)) webr::install("dunn.test")
+                    library(dunn.test)
+                    TRUE
+                  }, error=function(e) { cat("  dunn.test could not be loaded:", e$message, "\\n"); FALSE })
+                  if (dunn_available) {
+                    dunn_result <- tryCatch(
+                      dunn.test(anova_data$value, anova_data$group, method=dunn_method),
+                      error=function(e) { cat("  Dunn test error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(dunn_result)) {
+                      result_text <- paste0(result_text, sprintf("\\nPost-hoc (Dunn test with %s):", dunn_method_label))
+                      for (i in seq_along(dunn_result$comparisons)) {
+                        comp_clean <- gsub(" - ", "-", dunn_result$comparisons[i])
+                        p_adj <- dunn_result$P.adjusted[i]
+                        sig_label <- get_sig_symbol(p_adj)
+                        result_text <- paste0(result_text,
+                          sprintf("\\n  %s: p=%.4f (%s)", comp_clean, p_adj, sig_label))
+                      }
+                    }
+                  } else {
+                    result_text <- paste0(result_text,
+                      "\\n[ERROR] Dunn test requires the dunn.test package which could not be loaded.",
+                      "\\nPlease contact us for support: https://h20gg702.github.io/figra-pages/support")
+                  }
+                }
+              }
+            } else {
+              # Parametric: ANOVA + user-selected post-hoc (same as standard charts)
+              anova_result <- tryCatch(
+                aov(value ~ group, data=anova_data),
+                error=function(e) { cat("  ANOVA error:", e$message, "\\n"); NULL }
+              )
+              if (!is.null(anova_result)) {
+                anova_summary <- summary(anova_result)
+                anova_p <- anova_summary[[1]][["Pr(>F)"]][1]
+                anova_sig <- if (!is.na(anova_p)) get_sig_symbol(anova_p) else ""
+                cat(sprintf("  ANOVA p=%.4f\\n", anova_p))
+                result_text <- paste0(result_text, sprintf("\\nOverall test: ANOVA, p=%.4f (%s)", anova_p, anova_sig))
+
+                if (!is.na(anova_p) && anova_p < 0.05) {
+                  if (post_hoc_test == "bonferroni" || post_hoc_test == "holm") {
+                    cat(sprintf("  ANOVA significant - %s post-hoc...\\n", post_hoc_test))
+                    ph_result <- tryCatch(
+                      pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method=post_hoc_test),
+                      error=function(e) { cat("  Post-hoc error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(ph_result)) {
+                      ph_label <- if (post_hoc_test == "bonferroni") "Bonferroni" else "Holm"
+                      result_text <- paste0(result_text,
+                        sprintf("\\nPost-hoc (Pairwise t-test with %s):", ph_label))
+                      p_mat <- ph_result$p.value
+                      for (r in rownames(p_mat)) {
+                        for (c in colnames(p_mat)) {
+                          p_adj <- p_mat[r, c]
+                          if (!is.na(p_adj)) {
+                            sig_label <- get_sig_symbol(p_adj)
+                            result_text <- paste0(result_text,
+                              sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, sig_label))
+                          }
+                        }
+                      }
+                    }
+                  } else {
+                    cat("  ANOVA significant - performing Tukey HSD...\\n")
+                    tukey_result <- tryCatch(
+                      TukeyHSD(anova_result),
+                      error=function(e) { cat("  Tukey error:", e$message, "\\n"); NULL }
+                    )
+                    if (!is.null(tukey_result)) {
+                      tukey_summary <- tukey_result$group
+                      result_text <- paste0(result_text, "\\nPost-hoc (Tukey HSD):")
+                      for (i in 1:nrow(tukey_summary)) {
+                        comparison <- rownames(tukey_summary)[i]
+                        p_adj <- tukey_summary[i, "p adj"]
+                        diff <- tukey_summary[i, "diff"]
+                        sig_label <- if (!is.na(p_adj)) get_sig_symbol(p_adj) else "ns"
+                        result_text <- paste0(result_text,
+                          sprintf("\\n  %s: diff=%.2f, p=%.4f (%s)",
+                                  comparison, diff, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
+                      }
+                    }
+                  }
+                }
+              }
+            }
+
+            stat_text_results <- c(stat_text_results, result_text)
+          }
+        }
+
+        # ---- 2-group: add symbols below error bars on log10 scale ----
+        if (n_groups == 2 && nrow(stat_results) > 0) {
+          symbol_ys <- numeric(nrow(stat_results))
+          for (i in seq_len(nrow(stat_results))) {
+            d_val <- stat_results$x[i]
+            rows_at_d <- summary_data[summary_data$dose == d_val, ]
+            min_bottom <- min(pmax(rows_at_d$sf_mean - rows_at_d$sf_err, 1e-10), na.rm=TRUE)
+            symbol_ys[i] <- min_bottom * 0.45   # half-decade below on log scale
+          }
+          # Expand y-axis lower limit to ensure symbols are visible
+          y_axis_lower <- min(symbol_ys) * 0.5   # extra space below lowest symbol
+          p <- p + coord_cartesian(ylim = c(y_axis_lower, NA))
+          for (i in seq_len(nrow(stat_results))) {
+            p <- p + annotate("text", x=stat_results$x[i], y=symbol_ys[i],
+                              label=stat_results$label[i],
+                              size=stat_symbol_size, fontface="plain")
+          }
+          cat(sprintf("Added %d statistical annotations\\n", nrow(stat_results)))
+
+        # ---- 3+ groups: vbracket legend ----
+        } else if (n_groups >= 3) {
+          cat("LQ survival (3+ groups): Using vbracket for statistical legend\\n")
+
+          vbracket_loaded <- FALSE
+          tryCatch({
+            if (!require("vbracket", quietly=TRUE)) {
+              webr::install("vbracket",
+                repos = c("https://h20gg702.r-universe.dev", "https://repo.r-wasm.org"))
+            }
+            suppressPackageStartupMessages(library(vbracket))
+            vbracket_loaded <- TRUE
+            cat("✓ vbracket loaded\\n")
+          }, error=function(e) cat(sprintf("✗ vbracket failed: %s\\n", e$message)))
+
+          if (vbracket_loaded) {
+            tryCatch({
+              groups1 <- c(); groups2 <- c(); labels <- c()
+
+              if (length(stat_text_results) > 0) {
+                if (nchar(vbracket_timepoint) == 0) {
+                  cat("⚠️ No dose point selected for legend. Please select one from the Statistics tab.\\n")
+                } else {
+                  dose_pattern <- sprintf(">> X-axis value: %s", gsub("\\\\.", "\\\\\\\\.", vbracket_timepoint))
+                  filtered <- stat_text_results[grepl(dose_pattern, stat_text_results)]
+                  cat(sprintf("Filtering for dose %s: found %d result(s)\\n", vbracket_timepoint, length(filtered)))
+
+                  for (result_text in filtered) {
+                    lines <- strsplit(result_text, "\\n")[[1]]
+                    for (line in lines) {
+                      if (grepl("-", line) && grepl("\\\\([^)]+\\\\)$", line)) {
+                        match <- regmatches(line, regexpr("^[^:]+(?=:)", line, perl=TRUE))
+                        if (length(match) > 0) {
+                          gp <- strsplit(trimws(match[1]), "-")[[1]]
+                          sig_m <- regmatches(line, regexpr("\\\\([^)]+\\\\)$", line))
+                          sig_l <- if (length(sig_m) > 0) gsub("[()]", "", sig_m[1]) else "*"
+                          if (length(gp) == 2) {
+                            should_add <- if (comparison_mode == "significant") (sig_l != "ns" && sig_l != "") else TRUE
+                            if (should_add) {
+                              groups1 <- c(groups1, gp[1]); groups2 <- c(groups2, gp[2]); labels <- c(labels, sig_l)
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              if (length(groups1) > 0) {
+                comparisons_df <- data.frame(group1=groups1, group2=groups2, label=labels, stringsAsFactors=FALSE)
+                group_labels <- levels(factor(summary_data$grp, levels=groups))
+                legend_colors <- line_colors[seq_along(group_labels)]
+                p <- p + theme(legend.position="none")
+                p <- p + legend_bracket(
+                  labels=group_labels, colors=legend_colors,
+                  comparisons=comparisons_df,
+                  legend_x=vbracket_x, legend_y=vbracket_y,
+                  text_size=vbracket_text_size, sig_size=vbracket_sig_size,
+                  bracket_margin=vbracket_margin,
+                  line_length=vbracket_legend_line_length,
+                  line_width=vbracket_line_width,
+                  item_spacing=vbracket_item_spacing,
+                  bracket_layer_spacing=vbracket_bracket_layer_spacing,
+                  output_width=output_width, output_height=output_height,
+                  text_family=target_font
+                )
+                cat("✅ Vbracket legend added\\n")
+              } else {
+                cat("No comparisons to show for selected dose point\\n")
+              }
+            }, error=function(e) cat("Error in vbracket:", e$message, "\\n"))
+          }
+        }
+
+        # Store results for JS export tab
+        lq_stat_results <<- if (length(stat_text_results) > 0) paste(stat_text_results, collapse="\\n\\n") else ""
+        cat("\\n=== LQ STAT RESULTS ===\\n", lq_stat_results, "\\n")
+      } else {
+        lq_stat_results <<- ""
+      }
+
+      return(p)
+    }
+
     # チャートタイプに基づく分岐処理
     chart_type <- "${chartType}"
     cat("Creating", chart_type, "chart\\n")
@@ -20962,7 +23650,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # Add statistics if enabled by user
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'}, paired_ph_correction="${pairedPostHocCorrection}")
       }
     } else if (chart_type == "box_dot") {
       p <- sato_box_dot(
@@ -21004,7 +23692,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # Add statistics if enabled by user
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'}, paired_ph_correction="${pairedPostHocCorrection}")
       }
     } else if (chart_type == "violin") {
       p <- sato_violin(
@@ -21042,7 +23730,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # ADD STATISTICS FOR VIOLIN (only if enabled)
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'}, paired_ph_correction="${pairedPostHocCorrection}")
       }
     } else if (chart_type == "violin_dot") {
       p <- sato_violin_dot(
@@ -21084,7 +23772,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
       # ADD STATISTICS FOR VIOLIN_DOT (only if enabled)
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'}, paired_ph_correction="${pairedPostHocCorrection}")
       }
     } else if (chart_type == "violin_grouped") {
       # Grouped violin chart - requires 3 columns: Group, Category, Value
@@ -21204,7 +23892,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         custom_symbol_01 = "${customSymbol01}",
         custom_symbol_001 = "${customSymbol001}",
         custom_symbol_ns = "${customSymbolNS}",
-        error_type = "${errorBarType}"
+        error_type = "${errorBarType}",
+        paired = ${pairedSamples ? 'TRUE' : 'FALSE'},
+        subject_col = ${subjectColumn ? `"${subjectColumn}"` : 'NULL'}
       )
     } else if (chart_type == "dot") {
       p <- sato_dot(
@@ -21436,7 +24126,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       # Add statistics if enabled by user
       if (${addStatistics ? 'TRUE' : 'FALSE'}) {
         cat("\\n🔥 Adding statistics to bar_error_dot plot\\n")
-        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'})
+        p <- sato_add_statistics_to_plot(p, dat, ${xColIndex}, ${yColIndex}, '${statisticalTest}', sato_symbol_size, show_main_symbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, show_pairwise=${showPairwiseComparisons ? 'TRUE' : 'FALSE'}, ggpubr_symbol_size=${statSymbolSize}, ggpubr_line_size=${statLineSize}, ggpubr_tip_length=${statTipLength}, ggpubr_vjust=-0.3, comparison_mode="${comparisonMode}", custom_comparisons='${JSON.stringify(customComparisons).replace(/'/g, "\\'")}', custom_positions='${JSON.stringify(customPositions).replace(/'/g, "\\'")}', posthoc_test=selected_posthoc_test, dunnett_control=dunnett_control, y_scale="${yScale}", stat_symbol_type="${statSymbolType}", custom_symbol_05="${customSymbol05}", custom_symbol_01="${customSymbol01}", custom_symbol_001="${customSymbol001}", custom_symbol_ns="${customSymbolNS}", paired=${pairedSamples ? 'TRUE' : 'FALSE'}, subject_col=${subjectColumn ? `"${subjectColumn}"` : 'NULL'}, paired_ph_correction="${pairedPostHocCorrection}")
       }
     } else if (chart_type == "box_grouped") {
       # Grouped box chart - requires 3 columns: Group, Category, Value
@@ -21555,7 +24245,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         custom_symbol_05 = "${customSymbol05}",
         custom_symbol_01 = "${customSymbol01}",
         custom_symbol_001 = "${customSymbol001}",
-        custom_symbol_ns = "${customSymbolNS}"
+        custom_symbol_ns = "${customSymbolNS}",
+        paired = ${pairedSamples ? 'TRUE' : 'FALSE'},
+        subject_col = ${subjectColumn ? `"${subjectColumn}"` : 'NULL'}
       )
     } else if (chart_type == "line") {
       p <- sato_line(
@@ -21717,6 +24409,8 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         custom_symbol_01 = "${customSymbol01}",
         custom_symbol_001 = "${customSymbol001}",
         custom_symbol_ns = "${customSymbolNS}",
+        paired_samples = ${pairedSamples ? 'TRUE' : 'FALSE'},
+        subject_col = ${subjectColumn ? `"${subjectColumn}"` : 'NULL'},
         # VBracket legend settings (for 3+ groups)
         vbracket_timepoint = "${vbracketTimepoint}",
         vbracket_position = "${vbracketPosition}",
@@ -21880,7 +24574,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         custom_symbol_05 = "${customSymbol05}",
         custom_symbol_01 = "${customSymbol01}",
         custom_symbol_001 = "${customSymbol001}",
-        custom_symbol_ns = "${customSymbolNS}"
+        custom_symbol_ns = "${customSymbolNS}",
+        paired = ${pairedSamples ? 'TRUE' : 'FALSE'},
+        subject_col = ${subjectColumn ? `"${subjectColumn}"` : 'NULL'}
       )
     } else if (chart_type == "ic50_grouped_dose_response") {
       # Grouped IC50 Dose-Response: one 4PL curve per group
@@ -21979,10 +24675,69 @@ const fontStack = buildCompleteFontStack(effectiveFont);
         y_axis_hjust = ${yAxisHjust},
         y_axis_vjust = ${yAxisVjust}
       )
+    }  else if (chart_type == "lq_survival_grouped") {
+      # Grouped LQ Survival Curve: raw replicates, mean+/-SE calculated internally
+      p <- sato_lq_survival_grouped(
+        dat = dat,
+        group_col = ${groupColIndex},
+        x_col = ${xColIndex},
+        y_col = ${yColIndex},
+        line_colors = ${rColorVector},
+        shapes_vec = c(${lqShapesVec.join(', ')}),
+        linewidth = ${lineWidth},
+        dot_size = ${lqDotSize},
+        alpha = ${dotAlpha},
+        error_bar_width = 0.3,
+        show_points = "${lqShowPoints}",
+        curve_points = ${lqCurvePoints},
+        target_font = target_font,
+        title_weight = title_weight,
+        axis_title_weight = axis_title_weight,
+        axis_text_weight = axis_text_weight,
+        title_size = ${titleSize},
+        x_axis_title_size = ${xAxisTitleSize},
+        y_axis_title_size = ${yAxisTitleSize},
+        x_axis_text_size = ${xAxisTextSize},
+        y_axis_text_size = ${yAxisTextSize},
+        legend_text_size = ${legendTextSize},
+        show_title = ${showTitle},
+        show_x_label = ${showXLabel},
+        show_y_label = ${showYLabel},
+        theme_name = "${themeName}",
+        x_axis_rotation = ${xAxisRotation},
+        y_axis_rotation = ${yAxisRotation},
+        x_axis_hjust = ${xAxisHjust},
+        x_axis_vjust = ${xAxisVjust},
+        y_axis_hjust = ${yAxisHjust},
+        y_axis_vjust = ${yAxisVjust},
+        add_statistics = ${addStatistics ? 'TRUE' : 'FALSE'},
+        statistical_test = "${statisticalTest}",
+        paired_samples = ${pairedSamples ? 'TRUE' : 'FALSE'},
+        subject_col = ${subjectColIndex},
+        variance_test = "${varianceTest}",
+        stat_symbol_type = "${statSymbolType}",
+        stat_symbol_size = ${statSymbolSize},
+        comparison_mode = "${comparisonMode}",
+        post_hoc_test = "${postHocTest}",
+        custom_comparisons = '${JSON.stringify(customComparisons).replace(/'/g, "\\'")}',
+        vbracket_timepoint = "${vbracketTimepoint}",
+        vbracket_x = ${vbracketX},
+        vbracket_y = ${vbracketY},
+        vbracket_text_size = ${vbracketTextSize},
+        vbracket_sig_size = ${vbracketSigSize},
+        vbracket_margin = ${vbracketMargin},
+        vbracket_line_width = ${vbracketLineWidth},
+        vbracket_legend_line_length = ${vbracketLegendLineLength},
+        vbracket_legend_line_width = ${vbracketLegendLineWidth},
+        vbracket_item_spacing = ${vbracketItemSpacing},
+        vbracket_bracket_layer_spacing = ${vbracketBracketLayerSpacing !== null ? vbracketBracketLayerSpacing : 'NULL'},
+        output_width = ${wIn},
+        output_height = ${hIn}
+      )
     } else {
       stop("Unsupported chart type:", chart_type)
     }
-    
+
     # Apply formatted labels after plot creation
     if (${showTitle} == TRUE) {
       p <- p + ggtitle(${formattedTitle})
@@ -22077,7 +24832,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     xMin, xMax, yMin, yMax,
     xScale, yScale, xBreaksMode, showBrackets, rotation, tableStyleLabels, groupColIndex, xColIndex, yColIndex, errorColIndex,
     selectedGroupColumn, selectedXColumn, selectedYColumn, selectedErrorColumn,
-    addStatistics, pairedSamples, subjectColumn, errorBarType, statisticalTest, varianceTest, postHocTest,
+    addStatistics, pairedSamples, subjectColumn, pairedPostHocCorrection, errorBarType, statisticalTest, varianceTest, postHocTest,
     statSymbolType, customSymbol05, customSymbol01, customSymbol001, customSymbolNS,
     statSymbolSize, statLineSize, statTipLength, symbolGap, bracketSpacing,
     comparisonMode, customComparisons, customPositions,
@@ -22984,8 +25739,8 @@ async function loadHeadersFromSelection(){
       window.populateConversionColumns();
     }
 
-    setStatus(`Load complete: n=${rows.length}`);
-    setLoadStatus(`✅ Load complete: n=${rows.length}`);
+    setStatus(`✅ Data loaded — click Preview to generate chart and enable R code export`);
+    setLoadStatus(`✅ Load complete`);
   } catch (error) {
     setStatus(`Data load error: ${error.message}`);
     setLoadStatus(`❌ Load error: ${error.message}`);
@@ -23135,6 +25890,9 @@ function uiOpts(){
     dotColor:       (el("dotColor")?.value || el("dotColorPicker")?.value || "").trim() || "#333333",
     dotShape:       el("dotShape")?.value          || "16",
     dotAlpha:       (+el("dotAlpha")?.value)       || 1.0,
+    lqShowPoints:   el("lqShowPoints")?.value      || "se",
+    lqCurvePoints:  (+el("lqCurvePoints")?.value)  || 200,
+    lqDotSize:      (+el("lqDotSize")?.value)      || 2,
     
     titleSize:       (+el("titleSize")?.value)       || 24,
     xAxisTitleSize:  (+el("xAxisTitleSize")?.value)  || 20,
@@ -23216,7 +25974,7 @@ function uiOpts(){
     
     // Statistical analysis
     addStatistics: el("addStatistics")?.checked || false,
-    pairedSamples: el("pairedSamples")?.checked || false,
+    pairedSamples: el("pairedSamples")?.checked || el("pairedSamplesDataTab")?.checked || false,
     subjectColumn: el("subjectColumn")?.value || "",
     statisticalTestMode: el("statisticalTestMode")?.value || "auto",
     // When manual mode, use dataType to determine test; when auto, use "auto"
@@ -23237,7 +25995,7 @@ function uiOpts(){
     showPairwiseComparisons: el("showPairwiseComparisons")?.checked !== false, // Default to TRUE
 
     // ggpubr statistical bracket parameters (Symbol size uses existing statSymbolSize)
-    statLineSize: Number(el("statLineSize")?.value) || 1.0,
+    statLineSize: Number(el("statLineSize")?.value) || 0.5,
     statTipLength: Number(el("statTipLength")?.value) || 0.04,
     symbolGap: Number(el("symbolGap")?.value) ?? 0.6,
     bracketSpacing: Number(el("bracketSpacing")?.value) ?? 1.0,
@@ -23343,6 +26101,58 @@ async function previewPlotWithDebug() {
         }
       }, 300);
 
+      // Display LQ Survival parameters in Analysis tab after preview
+      setTimeout(async () => {
+        const chartType = document.getElementById("chartType")?.value || "";
+        if (chartType === "lq_survival_grouped") {
+          try {
+            // Retrieve parameters from R
+            const groupsR = await webR.evalR(`if (exists("lq_survival_grouped_results") && !is.null(lq_survival_grouped_results)) as.character(lq_survival_grouped_results$Group) else character(0)`);
+            const groups = await groupsR.toArray().catch(() => []);
+
+            if (groups && groups.length > 0) {
+              const alphasR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Alpha)`);
+              const alphas = await alphasR.toArray().catch(() => []);
+              const betasR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Beta)`);
+              const betas = await betasR.toArray().catch(() => []);
+              const abR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Alpha_Beta)`);
+              const abs_arr = await abR.toArray().catch(() => []);
+              const sf2R = await webR.evalR(`as.numeric(lq_survival_grouped_results$SF2)`);
+              const sf2s = await sf2R.toArray().catch(() => []);
+              const d10R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D10)`);
+              const d10s = await d10R.toArray().catch(() => []);
+
+              let resultText = "";
+              for (let i = 0; i < groups.length; i++) {
+                resultText += `Group: ${groups[i]}\n`;
+                resultText += `  alpha (Gy\u207b\u00b9):  ${isNaN(alphas[i]) ? "N/A" : alphas[i].toFixed(4)}\n`;
+                resultText += `  beta  (Gy\u207b\u00b2):  ${isNaN(betas[i]) ? "N/A" : betas[i].toFixed(4)}\n`;
+                const abVal = abs_arr[i];
+                resultText += `  alpha/beta:    ${(!abVal || abVal > 1e6) ? "\u221e (\u03b2\u22480)" : abVal.toFixed(2) + " Gy"}\n`;
+                resultText += `  SF2:           ${isNaN(sf2s[i]) ? "N/A" : sf2s[i].toFixed(4)}\n`;
+                resultText += `  D10 (Gy):      ${isNaN(d10s[i]) ? "N/A" : d10s[i].toFixed(2)}\n`;
+                if (i < groups.length - 1) resultText += "\n";
+              }
+
+              const lqResultDisplay = document.getElementById("lqResultDisplay");
+              const lqResultValue = document.getElementById("lqResultValue");
+              if (lqResultDisplay) lqResultDisplay.style.display = "block";
+              if (lqResultValue) lqResultValue.textContent = resultText;
+            }
+
+            // Export to sheet if checkbox is checked
+            const exportLQToSheet = document.getElementById("exportLQToSheet")?.checked;
+            if (exportLQToSheet) {
+              exportLQSurvivalResultsToExcel().catch(err => {
+                console.log("LQ export failed:", err.message || err);
+              });
+            }
+          } catch(e) {
+            console.log("LQ result display error:", e);
+          }
+        }
+      }, 400);
+
       // Auto-export IC50 curve data to new sheet for IC50 chart type (if enabled)
       setTimeout(() => {
         const chartType = document.getElementById("chartType")?.value || "";
@@ -23383,6 +26193,7 @@ async function insertIntoExcelFixed() {
 
     // 最新の設定で再レンダリング
     const renderResult = await renderPlotPngFromSelectionFixed();
+    if (!renderResult) return;  // Validation error already shown via setStatus
     const { b64, wPt, hPt, meta } = renderResult;
 
     // Convert base64 to blob
@@ -23418,7 +26229,7 @@ async function insertIntoExcelFixed() {
       "box", "box_dot", "violin", "violin_dot", "bar_error_dot",
       "bar_grouped_error_dot", "box_grouped", "box_grouped_dot",
       "violin_grouped", "violin_grouped_dot",
-      "line_grouped_error_raw"
+      "line_grouped_error_raw", "lq_survival_grouped"
     ];
 
     const chartType = document.getElementById("chartType")?.value || "";

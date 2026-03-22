@@ -528,6 +528,7 @@
         <option value="line_grouped_error_raw">Grouped line with error (raw data)</option>
         <option value="ic50_dose_response">IC50 Dose-Response</option>
         <option value="ic50_grouped_dose_response">Grouped IC50 Dose-Response</option>
+        <option value="lq_survival_grouped">Grouped LQ Survival Curve</option>
       </select>
       <!-- Custom dropdown with icons -->
       <div id="chartTypeDropdown" class="chart-dropdown">
@@ -550,6 +551,13 @@
       </div>
       <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:4px; padding:7px 10px; font-size:11px; color:#1e40af; margin-top:4px;">
         IC50 analysis settings (curve display, data points, export) are in the <strong>Analysis</strong> tab.
+      </div>
+    </div>
+
+    <!-- LQ Survival-specific note (shown only for lq_survival_grouped) -->
+    <div id="lqSurvivalDataOptions" style="display:none; margin: 4px 0 6px 0;">
+      <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:4px; padding:7px 10px; font-size:11px; color:#1e40af; margin-top:4px;">
+        LQ model fitting (α, β, α/β, SF2, D10) and export settings are in the <strong>Analysis</strong> tab.
       </div>
     </div>
 
@@ -817,6 +825,121 @@
               <option value="19">● Large circle</option>
               <option value="3">+ Plus</option>
               <option value="4">× Cross</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- LQ Survival: point shape section (shown only for lq_survival_grouped) -->
+      <div id="lqShapeSection" style="display:none; margin-top: 2px;">
+        <div class="row" id="lqPointShapeRow">
+          <label for="lqPointShape" style="font-size:12px;">Point shape</label>
+          <select id="lqPointShape" style="flex:1; font-size:12px;">
+            <option value="16">● Circle (filled)</option>
+            <option value="1" selected>○ Circle (open)</option>
+            <option value="15">■ Square (filled)</option>
+            <option value="0">□ Square (open)</option>
+            <option value="17">▲ Triangle (filled)</option>
+            <option value="2">△ Triangle (open)</option>
+            <option value="18">♦ Diamond (filled)</option>
+            <option value="5">◇ Diamond (open)</option>
+            <option value="3">+ Plus</option>
+            <option value="4">× Cross</option>
+          </select>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px; padding:2px 0 4px 0;">
+          <input type="checkbox" id="lqPerGroupShape" />
+          <label for="lqPerGroupShape" style="font-weight:600; font-size:14px; width:auto;">Per group shape</label>
+        </div>
+        <div id="lqGroupShapeSection" style="display:none; flex-direction:column; gap:4px; padding-left:4px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="lqGroupShapeLabel1" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">1st group</label>
+            <select id="lqGroupShape1" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1" selected>○ Circle (open)</option>
+              <option value="2">△ Triangle (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="lqGroupShapeLabel2" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">2nd group</label>
+            <select id="lqGroupShape2" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2" selected>△ Triangle (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="lqGroupShapeLabel3" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">3rd group</label>
+            <select id="lqGroupShape3" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2">△ Triangle (open)</option>
+              <option value="0" selected>□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="lqGroupShapeLabel4" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">4th group</label>
+            <select id="lqGroupShape4" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2">△ Triangle (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5" selected>◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="lqGroupShapeLabel5" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">5th group</label>
+            <select id="lqGroupShape5" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2">△ Triangle (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3" selected>+ Plus</option>
+              <option value="4">× Cross</option>
+            </select>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <label id="lqGroupShapeLabel6" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">6th group</label>
+            <select id="lqGroupShape6" style="flex:1; font-size:12px;">
+              <option value="16">● Circle (filled)</option>
+              <option value="17">▲ Triangle (filled)</option>
+              <option value="15">■ Square (filled)</option>
+              <option value="18">♦ Diamond (filled)</option>
+              <option value="1">○ Circle (open)</option>
+              <option value="2">△ Triangle (open)</option>
+              <option value="0">□ Square (open)</option>
+              <option value="5">◇ Diamond (open)</option>
+              <option value="3">+ Plus</option>
+              <option value="4" selected>× Cross</option>
             </select>
           </div>
         </div>
@@ -1595,7 +1718,7 @@
               <div>2. Selects appropriate paired test:</div>
               <div style="margin-left:12px;">
                 <div><b>Normal:</b> Paired t-test (2 groups) or RM-ANOVA (3+ groups)</div>
-                <div><b>Non-normal:</b> Wilcoxon signed-rank (2 groups) or Friedman + Conover (3+ groups)</div>
+                <div><b>Non-normal:</b> Wilcoxon signed-rank (2 groups) or Friedman + Wilcoxon signed-rank (3+ groups)</div>
               </div>
               <div style="margin-top:4px;">&#9888;&#65039; Requires a Subject ID column to link matched observations</div>
             </div>
@@ -1633,7 +1756,7 @@
               </div>
             </div>
 
-            <!-- Post-hoc Test Selection (for 3+ groups) -->
+            <!-- Post-hoc Test Selection (for 3+ groups) - unpaired -->
             <div id="postHocSection" style="margin-top:10px; padding-top:8px; border-top:1px solid #ddd;">
               <div style="font-size:11px; font-weight:bold; margin-bottom:5px;">Post-hoc Test (3+ groups):</div>
 
@@ -1653,6 +1776,22 @@
                   <option value="dunn" selected>Dunn (Bonferroni adj.)</option>
                   <option value="dunn_holm">Dunn (Holm adj.)</option>
                   <option value="steel">Steel (vs control only)</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Post-hoc info for paired tests (replaces dropdown) -->
+            <div id="pairedPostHocInfo" style="display:none; margin-top:10px; padding-top:8px; border-top:1px solid #ddd;">
+              <div style="font-size:11px; font-weight:bold; margin-bottom:5px;">Post-hoc Test (3+ groups):</div>
+              <div style="font-size:10px; color:#555; background:#f0f4ff; border:1px solid #c8d8f0; border-radius:4px; padding:6px 8px; line-height:1.6;">
+                <b>Parametric (RM-ANOVA):</b> Pairwise paired t-test<br>
+                <b>Non-parametric (Friedman):</b> Pairwise Wilcoxon signed-rank
+              </div>
+              <div style="display:flex; align-items:center; gap:8px; margin-top:6px;">
+                <label style="font-size:12px;">Correction:</label>
+                <select id="pairedPostHocCorrection" style="width:160px;">
+                  <option value="holm" selected>Holm (default)</option>
+                  <option value="bonferroni">Bonferroni</option>
                 </select>
               </div>
             </div>
@@ -1727,7 +1866,7 @@
               </svg>
 
               <label for="statLineSize" style="font-size:12px;">Line thickness:</label>
-              <input type="number" id="statLineSize" value="1.0" min="0.5" max="3.0" step="0.1" style="width:100%;"/>
+              <input type="number" id="statLineSize" value="0.5" min="0.1" max="3.0" step="0.1" style="width:100%;"/>
               <svg width="68" height="28" viewBox="0 0 68 28">
                 <line x1="3" y1="8" x2="25" y2="8" stroke="#555" stroke-width="1"/>
                 <line x1="3" y1="8" x2="3" y2="22" stroke="#555" stroke-width="1"/>
@@ -1764,6 +1903,7 @@
                 <line x1="36" y1="23" x2="36" y2="34" stroke="#444" stroke-width="1.5"/>
               </svg>
 
+              <div id="bracketSpacingRow" style="display:contents">
               <label for="bracketSpacing" style="font-size:12px;">Bracket spacing:</label>
               <input type="number" id="bracketSpacing" value="1.0" min="0.2" max="2.0" step="0.1" style="width:100%;"/>
               <svg width="68" height="46" viewBox="0 0 68 46">
@@ -1779,6 +1919,7 @@
                 <line x1="6" y1="37" x2="6" y2="46" stroke="#444" stroke-width="1.5"/>
                 <line x1="36" y1="37" x2="36" y2="46" stroke="#444" stroke-width="1.5"/>
               </svg>
+              </div>
 
             </div>
             <div style="margin-top:8px;">
@@ -1789,8 +1930,51 @@
       <!-- Custom Legend Settings (for 3+ groups line plots) -->
       <div id="vbracketControls" style="margin-top:16px; padding:10px; border:1px solid #ddd; border-radius:4px; background:#f9f9f9; display:none;">
         <div style="font-weight:bold; font-size:13px; margin-bottom:8px;">📊 Statistical Legend (3+ groups)</div>
-        <div style="font-size:11px; color:#666; margin-bottom:10px;">
+        <div style="font-size:11px; color:#666; margin-bottom:4px;">
           For line plots with 3+ groups, shows statistical comparisons in a custom legend
+        </div>
+        <div style="font-size:11px; color:#888; background:#fff3cd; border:1px solid #ffc107; border-radius:4px; padding:5px 8px; margin-bottom:8px;">
+          ℹ️ All X-axis values are tested, but the legend shows comparisons for <strong>one selected X-axis value</strong> only. Use the selector below to choose which one to display.
+        </div>
+
+        <!-- Diagram: what the legend looks like in the figure -->
+        <div style="background:#fff; border:1px solid #ddd; border-radius:4px; padding:8px 10px; margin-bottom:10px;">
+          <div style="font-size:10px; color:#888; margin-bottom:4px;">Example output in figure:</div>
+          <svg width="200" height="100" viewBox="0 0 200 100" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+            <!-- Line plot miniature (background suggestion) -->
+            <!-- Group A line + label -->
+            <line x1="8" y1="18" x2="32" y2="18" stroke="#4C78A8" stroke-width="3" stroke-linecap="round"/>
+            <text x="37" y="22" font-size="10" fill="#222" font-family="Arial">Group A</text>
+            <!-- Group B line + label -->
+            <line x1="8" y1="38" x2="32" y2="38" stroke="#E15759" stroke-width="3" stroke-linecap="round"/>
+            <text x="37" y="42" font-size="10" fill="#222" font-family="Arial">Group B</text>
+            <!-- Group C line + label -->
+            <line x1="8" y1="58" x2="32" y2="58" stroke="#76B7B2" stroke-width="3" stroke-linecap="round"/>
+            <text x="37" y="62" font-size="10" fill="#222" font-family="Arial">Group C</text>
+            <!-- Group D line + label -->
+            <line x1="8" y1="78" x2="32" y2="78" stroke="#F28E2B" stroke-width="3" stroke-linecap="round"/>
+            <text x="37" y="82" font-size="10" fill="#222" font-family="Arial">Group D</text>
+
+            <!-- Bracket: Group A vs Group C (significant) -->
+            <!-- Horizontal tick at Group A -->
+            <line x1="118" y1="18" x2="128" y2="18" stroke="#555" stroke-width="1.2"/>
+            <!-- Vertical bar -->
+            <line x1="128" y1="18" x2="128" y2="58" stroke="#555" stroke-width="1.2"/>
+            <!-- Horizontal tick at Group C -->
+            <line x1="118" y1="58" x2="128" y2="58" stroke="#555" stroke-width="1.2"/>
+            <!-- Significance label -->
+            <text x="132" y="42" font-size="11" fill="#222" font-family="Arial" font-weight="bold">**</text>
+
+            <!-- Bracket: Group A vs Group B (significant) -->
+            <line x1="108" y1="18" x2="116" y2="18" stroke="#555" stroke-width="1.2"/>
+            <line x1="116" y1="18" x2="116" y2="38" stroke="#555" stroke-width="1.2"/>
+            <line x1="108" y1="38" x2="116" y2="38" stroke="#555" stroke-width="1.2"/>
+            <text x="118" y="32" font-size="10" fill="#222" font-family="Arial" font-weight="bold">*</text>
+
+            <!-- Divider between legend items and brackets -->
+            <line x1="105" y1="10" x2="105" y2="90" stroke="#ddd" stroke-width="0.8" stroke-dasharray="3,2"/>
+            <text x="107" y="96" font-size="8" fill="#aaa" font-family="Arial">comparisons</text>
+          </svg>
         </div>
 
         <div style="display:flex; flex-direction:column; gap:8px;">
@@ -1804,36 +1988,90 @@
           <div style="display:flex; align-items:center; gap:10px;">
             <label for="vbracketX" style="font-size:12px; width:100px;">X position:</label>
             <input type="number" id="vbracketX" value="0.05" min="0" max="1" step="0.01" style="width:60px;" />
-            <span style="font-size:10px; color:#666;">0=left, 1=right</span>
+            <!-- X position: plot box with legend at left, arrow showing x direction -->
+            <svg width="68" height="30" viewBox="0 0 68 30" style="flex-shrink:0;">
+              <rect x="1" y="1" width="34" height="22" fill="#f8f9ff" stroke="#ccc" stroke-width="0.8" rx="1"/>
+              <rect x="2" y="3" width="9" height="7" fill="#ddeeff" stroke="#4C78A8" stroke-width="0.8" rx="0.5"/>
+              <text x="1" y="29" font-size="7" fill="#aaa" font-family="Arial">0</text>
+              <text x="31" y="29" font-size="7" fill="#aaa" font-family="Arial">1</text>
+              <line x1="40" y1="12" x2="63" y2="12" stroke="#aaa" stroke-width="1"/>
+              <polygon points="64,12 60,10.5 60,13.5" fill="#aaa"/>
+              <text x="40" y="9" font-size="7" fill="#aaa" font-family="Arial">x</text>
+            </svg>
           </div>
 
           <div style="display:flex; align-items:center; gap:10px;">
             <label for="vbracketY" style="font-size:12px; width:100px;">Y position:</label>
             <input type="number" id="vbracketY" value="0.99" min="0" max="1" step="0.01" style="width:60px;" />
-            <span style="font-size:10px; color:#666;">0=bottom, 1=top</span>
+            <!-- Y position: plot box with legend at top, arrow showing y direction -->
+            <svg width="68" height="30" viewBox="0 0 68 30" style="flex-shrink:0;">
+              <rect x="1" y="1" width="34" height="22" fill="#f8f9ff" stroke="#ccc" stroke-width="0.8" rx="1"/>
+              <rect x="2" y="2" width="9" height="7" fill="#ddeeff" stroke="#4C78A8" stroke-width="0.8" rx="0.5"/>
+              <text x="37" y="24" font-size="7" fill="#aaa" font-family="Arial">0</text>
+              <text x="37" y="8" font-size="7" fill="#aaa" font-family="Arial">1</text>
+              <line x1="55" y1="25" x2="55" y2="5" stroke="#aaa" stroke-width="1"/>
+              <polygon points="55,4 53,8 57,8" fill="#aaa"/>
+              <text x="58" y="12" font-size="7" fill="#aaa" font-family="Arial">y</text>
+            </svg>
           </div>
 
           <div style="display:flex; align-items:center; gap:10px;">
             <label for="vbracketTextSize" style="font-size:12px; width:100px;">Text size:</label>
             <input type="number" id="vbracketTextSize" value="14" min="6" max="20" step="1" style="width:60px;" />
+            <!-- Text size: group label at small vs large size -->
+            <svg width="68" height="28" viewBox="0 0 68 28" style="flex-shrink:0;">
+              <line x1="2" y1="9" x2="14" y2="9" stroke="#4C78A8" stroke-width="1.5" stroke-linecap="round"/>
+              <text x="17" y="12" font-size="8" fill="#444" font-family="Arial">Group A</text>
+              <line x1="2" y1="22" x2="14" y2="22" stroke="#E15759" stroke-width="1.5" stroke-linecap="round"/>
+              <text x="17" y="27" font-size="12" fill="#444" font-family="Arial">Group A</text>
+            </svg>
           </div>
 
           <div style="display:flex; align-items:center; gap:10px;">
             <label for="vbracketSigSize" style="font-size:12px; width:100px;">Symbol size:</label>
             <input type="number" id="vbracketSigSize" value="20" min="6" max="24" step="1" style="width:60px;" />
-            <span style="font-size:10px; color:#666;">*, **, *** size</span>
+            <!-- Symbol size: ** at small vs large -->
+            <svg width="68" height="28" viewBox="0 0 68 28" style="flex-shrink:0;">
+              <text x="3" y="14" font-size="9" fill="#333" font-family="Arial" font-weight="bold">**</text>
+              <text x="3" y="26" font-size="7" fill="#999" font-family="Arial">small</text>
+              <text x="30" y="18" font-size="16" fill="#333" font-family="Arial" font-weight="bold">**</text>
+              <text x="32" y="27" font-size="7" fill="#999" font-family="Arial">large</text>
+            </svg>
           </div>
 
           <div style="display:flex; align-items:center; gap:10px;">
             <label for="vbracketMargin" style="font-size:12px; width:100px;">Bracket spacing:</label>
             <input type="number" id="vbracketMargin" value="0.06" min="0.01" max="0.5" step="0.01" style="width:60px;" />
-            <span style="font-size:10px; color:#666;">Distance from text to brackets</span>
+            <!-- Bracket spacing: legend labels | gap | bracket -->
+            <svg width="68" height="30" viewBox="0 0 68 30" style="flex-shrink:0;">
+              <line x1="2" y1="8" x2="12" y2="8" stroke="#4C78A8" stroke-width="1.5"/>
+              <text x="14" y="11" font-size="8" fill="#444" font-family="Arial">A</text>
+              <line x1="2" y1="20" x2="12" y2="20" stroke="#E15759" stroke-width="1.5"/>
+              <text x="14" y="23" font-size="8" fill="#444" font-family="Arial">B</text>
+              <line x1="23" y1="14" x2="33" y2="14" stroke="#e55" stroke-width="0.9" stroke-dasharray="2,1"/>
+              <polygon points="23,14 26,12.5 26,15.5" fill="#e55"/>
+              <polygon points="33,14 30,12.5 30,15.5" fill="#e55"/>
+              <line x1="33" y1="8" x2="39" y2="8" stroke="#555" stroke-width="1.2"/>
+              <line x1="39" y1="8" x2="39" y2="20" stroke="#555" stroke-width="1.2"/>
+              <line x1="33" y1="20" x2="39" y2="20" stroke="#555" stroke-width="1.2"/>
+              <text x="42" y="16" font-size="9" fill="#333" font-family="Arial" font-weight="bold">*</text>
+            </svg>
           </div>
 
           <div style="display:flex; align-items:center; gap:10px;">
             <label for="vbracketLineWidth" style="font-size:12px; width:100px;">Line width:</label>
             <input type="number" id="vbracketLineWidth" value="3" min="0.1" max="5" step="0.1" style="width:60px;" />
-            <span style="font-size:10px; color:#666;">Bracket line thickness</span>
+            <!-- Line width: thin bracket vs thick bracket -->
+            <svg width="68" height="28" viewBox="0 0 68 28" style="flex-shrink:0;">
+              <line x1="2" y1="8" x2="8" y2="8" stroke="#555" stroke-width="0.8"/>
+              <line x1="8" y1="8" x2="8" y2="18" stroke="#555" stroke-width="0.8"/>
+              <line x1="2" y1="18" x2="8" y2="18" stroke="#555" stroke-width="0.8"/>
+              <text x="10" y="15" font-size="7" fill="#888" font-family="Arial">thin</text>
+              <line x1="36" y1="6" x2="44" y2="6" stroke="#555" stroke-width="2.5"/>
+              <line x1="44" y1="6" x2="44" y2="20" stroke="#555" stroke-width="2.5"/>
+              <line x1="36" y1="20" x2="44" y2="20" stroke="#555" stroke-width="2.5"/>
+              <text x="47" y="15" font-size="7" fill="#888" font-family="Arial">thick</text>
+            </svg>
           </div>
 
           <div style="margin-top:10px; padding-top:10px; border-top:1px dashed #ccc;">
@@ -1842,22 +2080,74 @@
             <div style="display:flex; align-items:center; gap:10px;">
               <label for="vbracketLegendLineLength" style="font-size:12px; width:100px;">Line length:</label>
               <input type="number" id="vbracketLegendLineLength" value="0.05" min="0.01" max="0.2" step="0.01" style="width:60px;" />
+              <!-- Line length: short line vs longer line for group label -->
+              <svg width="68" height="28" viewBox="0 0 68 28" style="flex-shrink:0;">
+                <line x1="2" y1="9" x2="8" y2="9" stroke="#4C78A8" stroke-width="2" stroke-linecap="round"/>
+                <text x="11" y="12" font-size="8" fill="#444" font-family="Arial">Group A</text>
+                <line x1="2" y1="21" x2="18" y2="21" stroke="#E15759" stroke-width="2" stroke-linecap="round"/>
+                <text x="21" y="24" font-size="8" fill="#444" font-family="Arial">Group A</text>
+              </svg>
             </div>
 
             <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
               <label for="vbracketLegendLineWidth" style="font-size:12px; width:100px;">Line thickness:</label>
               <input type="number" id="vbracketLegendLineWidth" value="2" min="1" max="10" step="0.5" style="width:60px;" />
+              <!-- Line thickness: thin line vs thick line for group label -->
+              <svg width="68" height="28" viewBox="0 0 68 28" style="flex-shrink:0;">
+                <line x1="2" y1="9" x2="18" y2="9" stroke="#4C78A8" stroke-width="1" stroke-linecap="round"/>
+                <text x="21" y="12" font-size="8" fill="#444" font-family="Arial">Group A</text>
+                <line x1="2" y1="21" x2="18" y2="21" stroke="#4C78A8" stroke-width="3.5" stroke-linecap="round"/>
+                <text x="21" y="24" font-size="8" fill="#444" font-family="Arial">Group A</text>
+              </svg>
             </div>
 
             <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
               <label for="vbracketItemSpacing" style="font-size:12px; width:100px;">Text spacing:</label>
               <input type="number" id="vbracketItemSpacing" value="0.1" min="0.03" max="0.2" step="0.01" style="width:60px;" />
+              <!-- Text spacing: tight vs wide vertical gap between group items -->
+              <svg width="68" height="38" viewBox="0 0 68 38" style="flex-shrink:0;">
+                <line x1="2" y1="7" x2="12" y2="7" stroke="#4C78A8" stroke-width="1.5"/>
+                <text x="14" y="10" font-size="7" fill="#444" font-family="Arial">A</text>
+                <line x1="2" y1="13" x2="12" y2="13" stroke="#E15759" stroke-width="1.5"/>
+                <text x="14" y="16" font-size="7" fill="#444" font-family="Arial">B</text>
+                <text x="3" y="28" font-size="6" fill="#999" font-family="Arial">tight</text>
+                <text x="26" y="21" font-size="12" fill="#ccc" font-family="Arial">→</text>
+                <line x1="40" y1="5" x2="50" y2="5" stroke="#4C78A8" stroke-width="1.5"/>
+                <text x="52" y="8" font-size="7" fill="#444" font-family="Arial">A</text>
+                <line x1="40" y1="18" x2="50" y2="18" stroke="#E15759" stroke-width="1.5"/>
+                <text x="52" y="21" font-size="7" fill="#444" font-family="Arial">B</text>
+                <line x1="45" y1="6" x2="45" y2="17" stroke="#e55" stroke-width="0.8"/>
+                <polygon points="45,6 43.5,9 46.5,9" fill="#e55"/>
+                <polygon points="45,17 43.5,14 46.5,14" fill="#e55"/>
+                <text x="40" y="34" font-size="6" fill="#999" font-family="Arial">wide</text>
+              </svg>
             </div>
 
             <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
               <label for="vbracketBracketLayerSpacing" style="font-size:12px; width:100px;">Bracket spacing:</label>
               <input type="number" id="vbracketBracketLayerSpacing" value="" placeholder="auto" min="0.02" max="0.3" step="0.01" style="width:60px;" />
-              <span style="font-size:10px; color:#666;">Between layers</span>
+              <!-- Bracket layer spacing: horizontal gap between nested bracket columns -->
+              <svg width="68" height="36" viewBox="0 0 68 36" style="flex-shrink:0;">
+                <line x1="4" y1="4" x2="10" y2="4" stroke="#555" stroke-width="1.2"/>
+                <line x1="10" y1="4" x2="10" y2="30" stroke="#555" stroke-width="1.2"/>
+                <line x1="4" y1="30" x2="10" y2="30" stroke="#555" stroke-width="1.2"/>
+                <text x="12" y="20" font-size="9" fill="#333" font-family="Arial" font-weight="bold">**</text>
+                <line x1="4" y1="9" x2="7" y2="9" stroke="#555" stroke-width="1.2"/>
+                <line x1="7" y1="9" x2="7" y2="20" stroke="#555" stroke-width="1.2"/>
+                <line x1="4" y1="20" x2="7" y2="20" stroke="#555" stroke-width="1.2"/>
+                <text x="12" y="32" font-size="8" fill="#888" font-family="Arial">*</text>
+                <line x1="24" y1="16" x2="34" y2="16" stroke="#e55" stroke-width="0.8"/>
+                <polygon points="24,16 27,14.5 27,17.5" fill="#e55"/>
+                <polygon points="34,16 31,14.5 31,17.5" fill="#e55"/>
+                <line x1="42" y1="4" x2="50" y2="4" stroke="#555" stroke-width="1.2"/>
+                <line x1="50" y1="4" x2="50" y2="30" stroke="#555" stroke-width="1.2"/>
+                <line x1="42" y1="30" x2="50" y2="30" stroke="#555" stroke-width="1.2"/>
+                <text x="52" y="20" font-size="9" fill="#333" font-family="Arial" font-weight="bold">**</text>
+                <line x1="42" y1="9" x2="46" y2="9" stroke="#555" stroke-width="1.2"/>
+                <line x1="46" y1="9" x2="46" y2="20" stroke="#555" stroke-width="1.2"/>
+                <line x1="42" y1="20" x2="46" y2="20" stroke="#555" stroke-width="1.2"/>
+                <text x="52" y="32" font-size="8" fill="#888" font-family="Arial">*</text>
+              </svg>
             </div>
           </div>
         </div>
@@ -2300,7 +2590,7 @@
 
       <!-- Message shown for non-IC50 chart types -->
       <div id="ic50UnsupportedMessage" style="display:none; color:#666; font-size:12px; padding:8px 0;">
-        Select <strong>IC50 Dose-Response</strong> or <strong>Grouped IC50 Dose-Response</strong> in the Data &amp; Chart tab.
+        Select <strong>IC50 Dose-Response</strong>, <strong>Grouped IC50 Dose-Response</strong>, or <strong>Grouped LQ Survival Curve</strong> in the Data &amp; Chart tab.
       </div>
 
       <!-- IC50 Analysis Section -->
@@ -2361,6 +2651,49 @@
         </div><!-- End ic50OptionsContainer -->
 
       </div><!-- End ic50AnalysisSection -->
+
+      <!-- LQ Survival Analysis Section -->
+      <div id="lqSurvivalAnalysisSection" style="display:none; padding-left:10px;">
+        <p style="font-size:11px; color:#666; margin-bottom:10px;">
+          LQ model: SF = e<sup>−αD − βD²</sup>. Fitted automatically when you click Preview.
+        </p>
+
+        <!-- Data display mode -->
+        <div class="row">
+          <label>Data display</label>
+          <select id="lqShowPoints" style="width:200px; font-size:12px;">
+            <option value="raw">All raw data points</option>
+            <option value="se" selected>Mean ± SE</option>
+            <option value="sd">Mean ± SD</option>
+          </select>
+        </div>
+
+        <!-- Point size -->
+        <div class="row">
+          <label for="lqDotSize">Point size</label>
+          <input id="lqDotSize" type="number" min="0.5" max="10" step="0.5" value="2" style="width:60px;" />
+        </div>
+
+        <!-- Curve resolution -->
+        <div class="row">
+          <label for="lqCurvePoints">Curve points</label>
+          <div style="display:flex; align-items:center; gap:8px; width:280px;">
+            <input id="lqCurvePoints" type="number" min="20" max="1000" step="10" value="200" style="width:80px;" />
+            <span style="font-size:11px; color:#666;">points used to draw the fitted curve (also exported)</span>
+          </div>
+        </div>
+
+        <div class="row">
+          <input type="checkbox" id="exportLQToSheet" checked />
+          <label for="exportLQToSheet" style="font-weight:normal;width:auto">Export LQ parameters to new sheet after Preview</label>
+        </div>
+
+        <!-- LQ Result Display -->
+        <div id="lqResultDisplay" style="background:#f0fdf4; border:1px solid #bbf7d0; padding:10px; border-radius:6px; margin-top:12px; display:none;">
+          <label style="font-weight:bold; font-size:12px;">LQ Parameters:</label>
+          <div id="lqResultValue" style="font-size:11px; margin-top:6px; white-space:pre; font-family:monospace; line-height:1.6;"></div>
+        </div>
+      </div><!-- End lqSurvivalAnalysisSection -->
 
     </div><!-- End Tab 6: Analysis -->
 
@@ -2504,7 +2837,8 @@
         line_grouped_error: `<svg viewBox="0 0 40 30"><polyline points="4,16 14,10 24,14 34,6" fill="none" stroke="#4C78A8" stroke-width="1.5"/><line x1="4" y1="12" x2="4" y2="20" stroke="#4C78A8" stroke-width="1"/><line x1="14" y1="6" x2="14" y2="14" stroke="#4C78A8" stroke-width="1"/><polyline points="4,24 14,20 24,22 34,18" fill="none" stroke="#E15759" stroke-width="1.5"/><line x1="4" y1="20" x2="4" y2="28" stroke="#E15759" stroke-width="1"/><line x1="14" y1="16" x2="14" y2="24" stroke="#E15759" stroke-width="1"/></svg>`,
         line_grouped_error_raw: `<svg viewBox="0 0 40 30"><polyline points="4,16 14,10 24,14 34,6" fill="none" stroke="#4C78A8" stroke-width="1.5"/><line x1="4" y1="12" x2="4" y2="20" stroke="#4C78A8" stroke-width="1"/><line x1="14" y1="6" x2="14" y2="14" stroke="#4C78A8" stroke-width="1"/><circle cx="4" cy="16" r="1.5" fill="#4C78A8"/><circle cx="14" cy="10" r="1.5" fill="#4C78A8"/><polyline points="4,24 14,20 24,22 34,18" fill="none" stroke="#E15759" stroke-width="1.5"/><line x1="4" y1="20" x2="4" y2="28" stroke="#E15759" stroke-width="1"/><circle cx="4" cy="24" r="1.5" fill="#E15759"/><circle cx="14" cy="20" r="1.5" fill="#E15759"/></svg>`,
         ic50_dose_response: `<svg viewBox="0 0 40 30"><path d="M4,26 Q10,26 16,24 Q22,20 28,10 Q32,4 38,4" fill="none" stroke="#4C78A8" stroke-width="2"/><line x1="20" y1="4" x2="20" y2="28" stroke="#dc2626" stroke-width="1" stroke-dasharray="2,2"/><circle cx="8" cy="25" r="1.5" fill="#333"/><circle cx="14" cy="24" r="1.5" fill="#333"/><circle cx="22" cy="16" r="1.5" fill="#333"/><circle cx="30" cy="6" r="1.5" fill="#333"/></svg>`,
-        ic50_grouped_dose_response: `<svg viewBox="0 0 40 30"><path d="M4,26 Q10,26 16,24 Q22,20 28,10 Q32,4 38,4" fill="none" stroke="#4C78A8" stroke-width="2"/><circle cx="8" cy="25" r="1.5" fill="#4C78A8"/><circle cx="16" cy="23" r="1.5" fill="#4C78A8"/><circle cx="26" cy="12" r="1.5" fill="#4C78A8"/><path d="M4,28 Q10,28 16,26 Q22,22 28,14 Q32,8 38,8" fill="none" stroke="#E15759" stroke-width="2"/><circle cx="8" cy="27" r="1.5" fill="#E15759"/><circle cx="16" cy="25" r="1.5" fill="#E15759"/><circle cx="26" cy="16" r="1.5" fill="#E15759"/></svg>`
+        ic50_grouped_dose_response: `<svg viewBox="0 0 40 30"><path d="M4,26 Q10,26 16,24 Q22,20 28,10 Q32,4 38,4" fill="none" stroke="#4C78A8" stroke-width="2"/><circle cx="8" cy="25" r="1.5" fill="#4C78A8"/><circle cx="16" cy="23" r="1.5" fill="#4C78A8"/><circle cx="26" cy="12" r="1.5" fill="#4C78A8"/><path d="M4,28 Q10,28 16,26 Q22,22 28,14 Q32,8 38,8" fill="none" stroke="#E15759" stroke-width="2"/><circle cx="8" cy="27" r="1.5" fill="#E15759"/><circle cx="16" cy="25" r="1.5" fill="#E15759"/><circle cx="26" cy="16" r="1.5" fill="#E15759"/></svg>`,
+        lq_survival_grouped: `<svg viewBox="0 0 40 30"><path d="M4,3 C16,3 30,16 36,22" fill="none" stroke="#333333" stroke-width="1.8"/><circle cx="4" cy="3" r="1.3" fill="#333333"/><line x1="15" y1="5" x2="15" y2="9" stroke="#333333" stroke-width="0.9"/><circle cx="15" cy="7" r="1.3" fill="#333333"/><circle cx="36" cy="22" r="1.3" fill="#333333"/><path d="M4,3 C14,4 28,20 36,26" fill="none" stroke="#4C78A8" stroke-width="1.8"/><circle cx="4" cy="3" r="1.3" fill="#4C78A8"/><line x1="15" y1="8" x2="15" y2="13" stroke="#4C78A8" stroke-width="0.9"/><circle cx="15" cy="10" r="1.3" fill="#4C78A8"/><circle cx="36" cy="26" r="1.3" fill="#4C78A8"/></svg>`
       };
 
       window.chartLabels = {
@@ -2530,7 +2864,8 @@
         line_grouped_error: 'Grouped line (mean±error)',
         line_grouped_error_raw: 'Grouped line with error (raw data)',
         ic50_dose_response: 'IC50 Dose-Response',
-        ic50_grouped_dose_response: 'Grouped IC50 Dose-Response'
+        ic50_grouped_dose_response: 'Grouped IC50 Dose-Response',
+        lq_survival_grouped: 'Grouped LQ Survival Curve'
       };
 
       const dropdown = document.getElementById('chartTypeDropdown');
