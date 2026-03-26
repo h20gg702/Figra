@@ -6279,7 +6279,11 @@ p <- ggplot(summary_data, aes(x = TimePoint_num, y = Mean, color = Group, group 
 
     code += `
 # ============ Statistical Analysis with vbracket ============
-# Install vbracket if needed: install.packages('vbracket', repos = 'https://h20gg702.r-universe.dev')
+# Install vbracket from r-universe if not present or version < 1.4.0
+if (!requireNamespace("vbracket", quietly = TRUE) ||
+    tryCatch(packageVersion("vbracket") < "1.4.0", error = function(e) TRUE)) {
+  install.packages("vbracket", repos = "https://h20gg702.r-universe.dev")
+}
 library(vbracket)
 cat(sprintf("vbracket version: %s\\n", packageVersion("vbracket")))
 ${isNonParametric && postHocTest === 'steel' ? `# Install and load kSamples for Steel test
@@ -16177,50 +16181,45 @@ async function initWebR() {
               legend_colors <- line_colors[1:length(group_labels)]
               cat(sprintf("Using vbracket position: x=%.2f, y=%.2f\\n", vbracket_x, vbracket_y))
 
-              if (length(groups1) > 0) {
-                comparisons_df <- data.frame(
-                  group1 = groups1,
-                  group2 = groups2,
-                  label = labels,
-                  stringsAsFactors = FALSE
-                )
-                cat(sprintf("Adding vbracket legend with %d comparisons\\n", nrow(comparisons_df)))
-                p <- p + legend_bracket(
-                  labels = group_labels,
-                  colors = legend_colors,
-                  comparisons = comparisons_df,
-                  x = vbracket_x,
-                  y = vbracket_y,
-                  text_size = vbracket_text_size,
-                  sig_size = vbracket_sig_size,
-                  bracket_margin = vbracket_margin,
-                  line_length = vbracket_legend_line_length,
-                  line_width = vbracket_line_width,
-                  item_spacing = vbracket_item_spacing,
-                  bracket_layer_spacing = vbracket_bracket_layer_spacing,
-                  output_width = output_width,
-                  output_height = output_height,
-                  text_family = target_font
-                )
-                cat("✅ Vbracket legend added with comparisons\\n")
-              } else {
-                # No comparisons — still show group color legend without brackets
-                cat("No comparisons found — showing group legend without brackets\\n")
-                p <- p + legend_bracket(
-                  labels = group_labels,
-                  colors = legend_colors,
-                  x = vbracket_x,
-                  y = vbracket_y,
-                  text_size = vbracket_text_size,
-                  line_length = vbracket_legend_line_length,
-                  line_width = vbracket_line_width,
-                  item_spacing = vbracket_item_spacing,
-                  output_width = output_width,
-                  output_height = output_height,
-                  text_family = target_font
-                )
-                cat("✅ Vbracket legend added (no comparisons)\\n")
-              }
+              # Use annotation_custom directly with explicit log scale detection.
+              # The vbracket package's internal has_log_y detection (s$trans$name) can
+              # fail in the webR/svglite environment, causing ymin=-Inf → log10(-Inf)=NaN
+              # → zero-height viewport → all items collapse (chunked legend).
+              # Fix: detect log scale from the known y_scale/x_scale parameters directly.
+              is_log_y_scale <- y_scale %in% c("log10", "log2", "log")
+              is_log_x_scale <- x_scale %in% c("log10", "log2", "log")
+              ymin_legend <- if (is_log_y_scale) 0 else -Inf
+              xmin_legend <- if (is_log_x_scale) 0 else -Inf
+              cat(sprintf("vbracket: y_scale=%s, ymin_legend=%s\\n", y_scale, ifelse(is_log_y_scale, "0", "-Inf")))
+
+              legend_grob <- vbracket:::create_annotation_legend_grob(
+                labels = group_labels,
+                colors = legend_colors,
+                comparisons = if (length(groups1) > 0) {
+                  data.frame(group1=groups1, group2=groups2, label=labels, stringsAsFactors=FALSE)
+                } else NULL,
+                x = vbracket_x,
+                y = vbracket_y,
+                text_size = vbracket_text_size,
+                sig_size = vbracket_sig_size,
+                bracket_margin = vbracket_margin,
+                line_length = vbracket_legend_line_length,
+                line_width = vbracket_line_width,
+                item_spacing = vbracket_item_spacing,
+                bracket_layer_spacing = vbracket_bracket_layer_spacing,
+                output_width = output_width,
+                output_height = output_height,
+                text_family = target_font
+              )
+              p <- p + theme(legend.position = "none")
+              p <- p + annotation_custom(
+                grob = legend_grob,
+                xmin = xmin_legend, xmax = Inf,
+                ymin = ymin_legend, ymax = Inf
+              )
+              cat(sprintf("✅ vbracket annotation_custom added (%d comparisons, ymin=%s)\\n",
+                          if (length(groups1) > 0) length(groups1) else 0,
+                          ifelse(is_log_y_scale, "0", "-Inf")))
             }, error = function(e) {
               cat("Error adding vbracket:", e$message, "\\n")
             })
@@ -21005,38 +21004,37 @@ ${SHARED_STAT_HELPERS_R}
               legend_colors <- line_colors[seq_along(group_labels)]
               cat(sprintf("Using vbracket position: x=%.2f, y=%.2f\\n", vbracket_x, vbracket_y))
 
-              if (length(groups1) > 0) {
-                comparisons_df <- data.frame(group1=groups1, group2=groups2, label=labels, stringsAsFactors=FALSE)
-                p <- p + legend_bracket(
-                  labels=group_labels, colors=legend_colors,
-                  comparisons=comparisons_df,
-                  x=vbracket_x,
-                  y=vbracket_y,
-                  text_size=vbracket_text_size, sig_size=vbracket_sig_size,
-                  bracket_margin=vbracket_margin,
-                  line_length=vbracket_legend_line_length,
-                  line_width=vbracket_line_width,
-                  item_spacing=vbracket_item_spacing,
-                  bracket_layer_spacing=vbracket_bracket_layer_spacing,
-                  output_width=output_width, output_height=output_height,
-                  text_family=target_font
-                )
-                cat("✅ Vbracket legend added with comparisons\\n")
-              } else {
-                # No comparisons — still show group color legend without brackets
-                p <- p + legend_bracket(
-                  labels=group_labels, colors=legend_colors,
-                  x=vbracket_x,
-                  y=vbracket_y,
-                  text_size=vbracket_text_size,
-                  line_length=vbracket_legend_line_length,
-                  line_width=vbracket_line_width,
-                  item_spacing=vbracket_item_spacing,
-                  output_width=output_width, output_height=output_height,
-                  text_family=target_font
-                )
-                cat("✅ Vbracket legend added (no comparisons)\\n")
-              }
+              # Use annotation_custom with explicit log scale detection from y_scale parameter.
+              is_log_y_scale <- y_scale %in% c("log10", "log2", "log")
+              is_log_x_scale <- FALSE  # LQ x-axis (dose) is always linear
+              ymin_legend <- if (is_log_y_scale) 0 else -Inf
+              xmin_legend <- -Inf
+              cat(sprintf("vbracket: y_scale=%s, ymin_legend=%s\\n", y_scale, ifelse(is_log_y_scale, "0", "-Inf")))
+
+              legend_grob <- vbracket:::create_annotation_legend_grob(
+                labels=group_labels, colors=legend_colors,
+                comparisons = if (length(groups1) > 0) {
+                  data.frame(group1=groups1, group2=groups2, label=labels, stringsAsFactors=FALSE)
+                } else NULL,
+                x=vbracket_x, y=vbracket_y,
+                text_size=vbracket_text_size, sig_size=vbracket_sig_size,
+                bracket_margin=vbracket_margin,
+                line_length=vbracket_legend_line_length,
+                line_width=vbracket_line_width,
+                item_spacing=vbracket_item_spacing,
+                bracket_layer_spacing=vbracket_bracket_layer_spacing,
+                output_width=output_width, output_height=output_height,
+                text_family=target_font
+              )
+              p <- p + theme(legend.position = "none")
+              p <- p + annotation_custom(
+                grob = legend_grob,
+                xmin = xmin_legend, xmax = Inf,
+                ymin = ymin_legend, ymax = Inf
+              )
+              cat(sprintf("✅ vbracket annotation_custom added (%d comparisons, ymin=%s)\\n",
+                          if (length(groups1) > 0) length(groups1) else 0,
+                          ifelse(is_log_y_scale, "0", "-Inf")))
             }, error=function(e) cat("Error in vbracket:", e$message, "\\n"))
           }
         }
@@ -22301,6 +22299,11 @@ ${SHARED_STAT_HELPERS_R}
     }
 
     print(p)
+
+    # Draw vbracket legend directly after print(p) — bypasses annotation_custom/svglite NPC issue.
+    # annotation_custom + makeContent + unit("npc") in svglite resolves NPC relative to the root
+    # viewport instead of the panel viewport → all items collapse to same coordinate → chunked legend.
+    # Fix: draw directly into the panel viewport after print(p) using draw_legend_with_brackets().
   `;
 
   // Store R code globally for export functionality
