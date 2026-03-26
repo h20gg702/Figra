@@ -2955,8 +2955,8 @@ print(p)
     const statTest  = settings.statisticalTest || 'auto';
     const vbT       = settings.vbracketTimepoint || '';
     const vbPos     = settings.vbracketPosition || 'bottomleft';
-    const vbX       = settings.vbracketX || 0.15;
-    const vbY       = settings.vbracketY || 0.05;
+    const vbX       = parseFloat(settings.vbracketX) || 0.05;
+    const vbY       = parseFloat(settings.vbracketY) || 0.05;
     const vbTs      = settings.vbracketTextSize || 10;
     const vbSig     = settings.vbracketSigSize  || 14;
     const vbMar     = settings.vbracketMargin   || 0.06;
@@ -2965,6 +2965,14 @@ print(p)
     const vbLwl     = settings.vbracketLegendLineWidth  || 2;
     const vbIs      = settings.vbracketItemSpacing || 0.1;
     const compMode  = settings.comparisonMode || 'significant';
+    const yScaleVal = settings.yScale || 'log10';
+    const yScaleLine = yScaleVal === 'log10'
+      ? `  scale_y_log10(labels=function(x) ifelse(x >= 0.1, formatC(x, format='g', digits=2),\n                                          formatC(x, format='e', digits=0))) +`
+      : yScaleVal === 'log2'
+        ? `  scale_y_continuous(trans='log2') +`
+        : yScaleVal === 'log'
+          ? `  scale_y_continuous(trans='log') +`
+          : `  scale_y_continuous() +`;
 
     const statBlock2 = addStat && nGroups === 2 ? `
 # --- Statistical tests (2 groups, per dose) ---
@@ -3039,7 +3047,8 @@ if (nrow(stat_at_dose) > 0) {
     labels = groups,
     colors = c(${colors}),
     comparisons = stat_at_dose,
-    legend_x = ${vbX}, legend_y = ${vbY},
+    position = "${vbPos}",
+    legend_x = ${vbX},
     text_size = ${vbTs}, sig_size = ${vbSig},
     bracket_margin = ${vbMar},
     line_length = ${vbLl}, line_width = ${vbLw},
@@ -3096,8 +3105,7 @@ ${showPts === 'raw' ? `  geom_point(data=dat[dat$${yCol} > 0 & !is.na(dat$${yCol
   geom_point(size=${dotSz * 1.4}, alpha=0.95) +
   geom_line(data=fit_data, aes(x=dose, y=sf_pred, color=group),
             linewidth=${lw}, inherit.aes=FALSE) +
-  scale_y_log10(labels=function(x) ifelse(x >= 0.1, formatC(x, format='g', digits=2),
-                                          formatC(x, format='e', digits=0))) +
+${yScaleLine}
   scale_color_manual(values=color_vec) +
   scale_shape_manual(values=shape_vec) +
   labs(title=${settings.showTitle !== false ? `'${settings.title || 'Clonogenic Survival'}'` : 'NULL'},
@@ -3591,7 +3599,7 @@ function generateCategoryByComparisonsCode(groups, categories, xColName, setting
                    document.getElementById("pairedSamplesDataTab")?.checked ||
                    settings.pairedSamples ||
                    false;
-  const pairedPostHocCorrection = settings.pairedPostHocCorrection || 'holm';
+  const pairedPostHocCorrection = (typeof settings.pairedPostHocCorrection === 'string' ? settings.pairedPostHocCorrection : null) || 'holm';
   let subjectColName_r = null;
   if (isPaired && settings.subjectColumn && window.lastProcessedData && window.lastProcessedData.length > 0) {
     const hIdx = window.lastProcessedData[0].findIndex(h => h === settings.subjectColumn);
@@ -4508,6 +4516,8 @@ function generateSingleGroupStatisticalCode(settings, chartType) {
                    document.getElementById("pairedSamplesDataTab")?.checked ||
                    settings.pairedSamples ||
                    false;
+  const pairedPostHocCorrection = document.getElementById("pairedPostHocCorrection")?.value ||
+                                  settings.pairedPostHocCorrection || 'holm';
   // DOM-first for comparisonMode (radio button string is always truthy, so stored value cannot be trusted)
   const resolvedComparisonMode = document.querySelector('input[name="comparisonMode"]:checked')?.value ||
                                  settings.comparisonMode ||
@@ -4542,13 +4552,8 @@ ${isVsControl ? `# Control group: ${controlGroup}` : '# Pairwise comparisons'}
     }
 
     const categoryOrder_p = uniqueCategories.map(c => `'${c}'`).join(', ');
-    const pAdjustMethod_p = (postHocTest === 'bonferroni') ? 'bonferroni' :
-                            (postHocTest === 'holm') ? 'holm' :
-                            (postHocTest === 'dunn') ? 'bonferroni' :
-                            'holm'; // tukey → holm (closest for paired)
-    const pAdjustLabel_p = (postHocTest === 'tukey') ?
-                           'Holm (Tukey HSD not available for paired tests)' :
-                           pAdjustMethod_p.charAt(0).toUpperCase() + pAdjustMethod_p.slice(1);
+    const pAdjustMethod_p = pairedPostHocCorrection === 'bonferroni' ? 'bonferroni' : 'holm';
+    const pAdjustLabel_p = pAdjustMethod_p.charAt(0).toUpperCase() + pAdjustMethod_p.slice(1);
 
     const subjectCodeFrag_p = subjectColName_r
       ? `subject_id <- dat$${subjectColName_r}`
@@ -6142,11 +6147,16 @@ summary_data <- dat %>%
 
 # Rename columns
 colnames(summary_data) <- c('Group', 'TimePoint', 'Mean', 'SD', 'SE', 'N')
+# Re-apply factor levels (dplyr may drop factor class in some versions)
+summary_data$Group <- factor(summary_data$Group, levels = levels(dat$${groupColName}))
+summary_data$TimePoint <- factor(summary_data$TimePoint, levels = levels(dat$${xColName}))
+# Convert TimePoint to numeric for continuous x-axis (matches add-in's numeric x-axis)
+summary_data$TimePoint_num <- as.numeric(as.character(summary_data$TimePoint))
 summary_data$Error <- ${settings.errorBarType === 'se' ? 'summary_data$SE' : settings.errorBarType === 'ci95' ? '1.96 * summary_data$SE' : 'summary_data$SD'}
 
 # ============ Create Plot ============
 
-p <- ggplot(summary_data, aes(x = TimePoint, y = Mean, color = Group, group = Group)) +
+p <- ggplot(summary_data, aes(x = TimePoint_num, y = Mean, color = Group, group = Group)) +
 
   # Add lines
   geom_line(linewidth = ${settings.lineWidth}) +
@@ -6201,17 +6211,60 @@ p <- ggplot(summary_data, aes(x = TimePoint, y = Mean, color = Group, group = Gr
     code += `p <- p + ylab('${settings.ylab}')\n`;
   }
 
+  // Axis scale transformations
+  const xScaleVal = settings.xScale || 'linear';
+  const yScaleVal = settings.yScale || 'linear';
+  const xBreaksMode = settings.xBreaksMode || 'auto';
+
+  // X-axis: scale transformation + optional forced breaks at data points
+  if (xScaleVal === 'log10') {
+    code += xBreaksMode === 'data'
+      ? `p <- p + scale_x_log10(breaks = sort(unique(summary_data$TimePoint_num)))\n`
+      : `p <- p + scale_x_log10()\n`;
+  } else if (xScaleVal === 'log2') {
+    code += xBreaksMode === 'data'
+      ? `p <- p + scale_x_continuous(trans = 'log2', breaks = sort(unique(summary_data$TimePoint_num)))\n`
+      : `p <- p + scale_x_continuous(trans = 'log2')\n`;
+  } else if (xScaleVal === 'log') {
+    code += xBreaksMode === 'data'
+      ? `p <- p + scale_x_continuous(trans = 'log', breaks = sort(unique(summary_data$TimePoint_num)))\n`
+      : `p <- p + scale_x_continuous(trans = 'log')\n`;
+  } else if (xBreaksMode === 'data') {
+    // Linear x-scale with forced breaks at data points
+    code += `p <- p + scale_x_continuous(breaks = sort(unique(summary_data$TimePoint_num)))\n`;
+  }
+
+  // Y-axis: scale transformation + expansion matching add-in (extra top space when stats shown)
+  const yStatExpand = settings.addStatistics ? `, expand = expansion(mult = c(0.05, 0.15))` : ``;
+  if (yScaleVal === 'log10') {
+    code += `p <- p + scale_y_log10(${settings.addStatistics ? 'expand = expansion(mult = c(0.05, 0.15))' : ''})\n`;
+  } else if (yScaleVal === 'log2') {
+    code += `p <- p + scale_y_continuous(trans = 'log2'${yStatExpand})\n`;
+  } else if (yScaleVal === 'log') {
+    code += `p <- p + scale_y_continuous(trans = 'log'${yStatExpand})\n`;
+  } else if (yScaleVal === '-log10') {
+    code += `p <- p + scale_y_continuous(trans = scales::trans_new('-log10', function(x) -log10(x), function(x) 10^(-x)))\n`;
+  } else if (yScaleVal === '-log2') {
+    code += `p <- p + scale_y_continuous(trans = scales::trans_new('-log2', function(x) -log2(x), function(x) 2^(-x)))\n`;
+  } else if (settings.addStatistics) {
+    // Linear y-scale with stats: add top expansion to match add-in spacing for annotations
+    code += `p <- p + scale_y_continuous(expand = expansion(mult = c(0.05, 0.15)))\n`;
+  }
+
   // Add vbracket for statistical comparisons (3+ groups)
   if (settings.addStatistics && settings.numGroups >= 3) {
-    const vbracketPosition = settings.vbracketPosition || "topright";
-    const vbracketX = settings.vbracketX || 0.05;
-    const vbracketY = settings.vbracketY || 0.99;
     const vbracketTextSize = settings.vbracketTextSize || 14;
     const vbracketMargin = settings.vbracketMargin || 0.06;
     const vbracketLineWidth = settings.vbracketLineWidth || 3;
     const vbracketSigSize = settings.vbracketSigSize || 20;
 
+    // Use stored x/y directly (bypass vbracket preset block,
+    // which can fail to detect log10 scale and produce ymin=-Inf warning)
+    const lbX = parseFloat(settings.vbracketX) || 0.05;
+    const lbY = parseFloat(settings.vbracketY) || 0.99;
+
     // Determine which test to use based on settings
+    const isAutoMode = settings.statisticalTest === 'auto';
     const isNonParametric = settings.dataType === 'nonparametric' ||
                             settings.statisticalTest === 'nonparametric' ||
                             settings.statisticalTest === 'kruskal';
@@ -6219,6 +6272,7 @@ p <- ggplot(summary_data, aes(x = TimePoint, y = Mean, color = Group, group = Gr
     const isVsControl = postHocTest === 'dunnett' || postHocTest === 'steel';
     const controlGroup = settings.controlGroup || '';
     const isPaired = settings.pairedSamples || false;
+    const pairedPostHocCorrection = (typeof settings.pairedPostHocCorrection === 'string' ? settings.pairedPostHocCorrection : null) || 'holm';
     const subjectColIdx = isPaired && settings.subjectColumn && window.lastProcessedData
       ? window.lastProcessedData[0].indexOf(settings.subjectColumn) : -1;
     const subjectColNameR = subjectColIdx >= 0 ? `col${subjectColIdx + 1}` : null;
@@ -6227,23 +6281,24 @@ p <- ggplot(summary_data, aes(x = TimePoint, y = Mean, color = Group, group = Gr
 # ============ Statistical Analysis with vbracket ============
 # Install vbracket if needed: install.packages('vbracket', repos = 'https://h20gg702.r-universe.dev')
 library(vbracket)
+cat(sprintf("vbracket version: %s\\n", packageVersion("vbracket")))
 ${isNonParametric && postHocTest === 'steel' ? `# Install and load kSamples for Steel test
 if (!requireNamespace('kSamples', quietly = TRUE)) {
   install.packages('kSamples')
 }
 library(kSamples)` : ''}
-${isNonParametric && postHocTest === 'dunn' ? `# Install and load dunn.test for Dunn test
+${(isNonParametric && postHocTest === 'dunn') || isAutoMode ? `# Install and load dunn.test for Dunn test (needed if auto mode selects non-parametric)
 if (!requireNamespace('dunn.test', quietly = TRUE)) {
   install.packages('dunn.test')
 }
 library(dunn.test)` : ''}
 
 # Get group order (same as factor levels used in plot)
-group_order <- levels(factor(summary_data$Group))
+group_order <- levels(summary_data$Group)
 group_colors <- ${groupColors}
 
 # Perform statistical tests at selected time point
-selected_timepoint <- ${settings.vbracketTimepoint || 1}
+selected_timepoint <- "${settings.vbracketTimepoint || ''}"
 test_data <- dat %>% filter(${xColName} == selected_timepoint)
 
 # Get unique groups (in same order as plot)
@@ -6253,8 +6308,7 @@ n_groups <- length(group_order)
 p <- p + theme(legend.position = 'none')
 
 # Statistical test settings
-data_type <- '${isNonParametric ? 'nonparametric' : 'parametric'}'
-posthoc_type <- '${postHocTest}'
+posthoc_type <- '${isAutoMode ? postHocTest : postHocTest}'
 control_group <- '${controlGroup}'
 if (control_group == '' || !(control_group %in% group_order)) {
   control_group <- group_order[1]  # Default to first group
@@ -6304,6 +6358,15 @@ for (grp in group_order) {
 any_non_normal <- any(sapply(normality_results, function(p) !is.na(p) && p < 0.05))
 all_normal <- all(sapply(normality_results, function(p) is.na(p) || p >= 0.05))`}
 
+${isAutoMode ? `# Auto-select test based on normality (matching add-in auto mode)
+data_type <- if (any_non_normal) 'nonparametric' else 'parametric'
+if (any_non_normal) {
+  posthoc_type <- 'dunn'
+  cat('\\nAuto-selected: non-parametric (Kruskal-Wallis/Dunn) due to non-normal group(s)\\n\\n')
+} else {
+  posthoc_type <- 'tukey'
+  cat('\\nAuto-selected: parametric (ANOVA/Tukey)\\n\\n')
+}` : `data_type <- '${isNonParametric ? 'nonparametric' : 'parametric'}'
 if (data_type == 'parametric' && any_non_normal) {
   cat('\\n⚠️ WARNING: Some groups appear non-normal. Parametric test (ANOVA/', posthoc_type, ') was selected manually.\\n')
   cat('   Consider using non-parametric test (Kruskal-Wallis/Dunn or Steel) for more robust results.\\n\\n')
@@ -6312,7 +6375,7 @@ if (data_type == 'parametric' && any_non_normal) {
   cat('   Parametric test (ANOVA/Tukey or Dunnett) may have more statistical power.\\n\\n')
 } else {
   cat('\\n')
-}
+}`}
 
 # Perform statistical tests
 if (n_groups >= 3) {
@@ -6354,8 +6417,8 @@ ${isPaired && subjectColNameR ? `    # Friedman test (non-parametric paired)
         }
       } else {
 ${isPaired && subjectColNameR ? `        # Pairwise Wilcoxon signed-rank test (paired non-parametric)
-        cat('Running pairwise Wilcoxon signed-rank test (paired, Holm)\\n')
-        pw_result <- pairwise.wilcox.test(test_data$${yColName}, test_data$${groupColName}, p.adjust.method = 'holm', paired = TRUE)
+        cat('Running pairwise Wilcoxon signed-rank test (paired, ${pairedPostHocCorrection})\\n')
+        pw_result <- pairwise.wilcox.test(test_data$${yColName}, test_data$${groupColName}, p.adjust.method = '${pairedPostHocCorrection}', paired = TRUE)
         p_matrix <- pw_result$p.value
         for (i in 1:nrow(p_matrix)) {
           for (j in 1:ncol(p_matrix)) {
@@ -6460,9 +6523,9 @@ ${isPaired && subjectColNameR ? `    rm_result <- summary(aov(${yColName} ~ ${gr
           }
         }
       } else {
-${isPaired && subjectColNameR ? `        # Paired pairwise t-test with Holm (Tukey HSD requires aov_result which is not available for RM-ANOVA)
-        cat('Running paired pairwise t-test (Holm) for RM-ANOVA\\n')
-        pairwise_result <- pairwise.t.test(test_data$${yColName}, test_data$${groupColName}, p.adjust.method = 'holm', paired = TRUE)
+${isPaired && subjectColNameR ? `        # Paired pairwise t-test with ${pairedPostHocCorrection} (Tukey HSD not available for paired tests)
+        cat('Running paired pairwise t-test (${pairedPostHocCorrection}) for RM-ANOVA\\n')
+        pairwise_result <- pairwise.t.test(test_data$${yColName}, test_data$${groupColName}, p.adjust.method = '${pairedPostHocCorrection}', paired = TRUE)
         p_matrix <- pairwise_result$p.value
         for (i in 1:nrow(p_matrix)) {
           for (j in 1:ncol(p_matrix)) {
@@ -6516,8 +6579,8 @@ ${isPaired && subjectColNameR ? `        # Paired pairwise t-test with Holm (Tuk
         labels = group_order,
         colors = group_colors,
         comparisons = vb_comparisons,
-        legend_x = ${vbracketX},
-        legend_y = ${vbracketY},
+        x = ${lbX},
+        y = ${lbY},
         text_size = ${vbracketTextSize},
         sig_size = ${vbracketSigSize},
         bracket_margin = ${vbracketMargin},
@@ -6530,8 +6593,8 @@ ${isPaired && subjectColNameR ? `        # Paired pairwise t-test with Holm (Tuk
     p <- p + legend_bracket(
         labels = group_order,
         colors = group_colors,
-        legend_x = ${vbracketX},
-        legend_y = ${vbracketY},
+        x = ${lbX},
+        y = ${lbY},
         text_size = ${vbracketTextSize},
         line_width = ${vbracketLineWidth},
         output_width = ${settings.expWidth || 6},
@@ -6721,15 +6784,17 @@ function collectCurrentSettings() {
     significanceLevel: el("significanceLevel")?.value || "0.05",
     comparisonMode: document.querySelector('input[name="comparisonMode"]:checked')?.value || "significant",
     fillMode: document.querySelector('input[name="fillMode"]:checked')?.value || "single",
-    postHocTest: (el("dataTypeSelect")?.value === "nonparametric" ? el("postHocTestNonparam")?.value : el("postHocTest")?.value) || "tukey",
-    controlGroup: el("dunnettControl")?.value || "",
+    postHocTest: (el("statisticalTestMode")?.value || "auto") === "manual"
+      ? ((el("dataTypeSelect")?.value === "nonparametric" ? el("postHocTestNonparam")?.value : el("postHocTest")?.value) || "tukey")
+      : "tukey",
+    controlGroup: (el("statisticalTestMode")?.value || "auto") === "manual" ? (el("dunnettControl")?.value || "") : "",
     dataType: el("dataTypeSelect")?.value || "parametric",
     customComparisons: (typeof getSelectedCustomComparisons === 'function') ? JSON.stringify(getSelectedCustomComparisons()) : "[]",
     customPositions: (typeof getCustomBracketPositions === 'function') ? JSON.stringify(getCustomBracketPositions()) : "{}",
 
     // VBracket legend settings (for 3+ groups line plots)
     vbracketTimepoint: el("vbracketTimepoint")?.value || "",
-    vbracketPosition: el("vbracketPosition")?.value || "bottomleft",
+    vbracketPosition: el("vbracketPosition")?.value || (el("chartType")?.value === "lq_survival_grouped" ? "bottomleft" : "topleft"),
     vbracketX: el("vbracketX")?.value || "0.05",
     vbracketY: el("vbracketY")?.value || "0.99",
     vbracketTextSize: el("vbracketTextSize")?.value || "14",
@@ -7418,13 +7483,13 @@ Office.onReady(() => {
       const vbracketX = document.getElementById("vbracketX");
       const vbracketY = document.getElementById("vbracketY");
       if (vbracketPosition && !vbracketPosition.dataset.userModified) {
-        vbracketPosition.value = chartType === "lq_survival_grouped" ? "bottomleft" : "topright";
+        vbracketPosition.value = chartType === "lq_survival_grouped" ? "bottomleft" : "topleft";
       }
       if (vbracketX && !vbracketX.dataset.userModified) {
-        vbracketX.value = chartType === "lq_survival_grouped" ? "0.15" : "0.85";
+        vbracketX.value = chartType === "lq_survival_grouped" ? "0.05" : "0.05";
       }
       if (vbracketY && !vbracketY.dataset.userModified) {
-        vbracketY.value = chartType === "lq_survival_grouped" ? "0.05" : "0.85";
+        vbracketY.value = chartType === "lq_survival_grouped" ? "0.27" : "0.99";
       }
     }
   }
@@ -7434,6 +7499,13 @@ Office.onReady(() => {
     // X/Y position inputs are always visible now (no dropdown)
     // This function is kept for compatibility but does nothing
   }
+
+  // Mark vbracket X/Y inputs as user-modified so the reset in updateVbracketVisibility
+  // does not override values the user intentionally set
+  const _vbXInput = document.getElementById("vbracketX");
+  const _vbYInput = document.getElementById("vbracketY");
+  if (_vbXInput) _vbXInput.addEventListener("input", () => { _vbXInput.dataset.userModified = "true"; });
+  if (_vbYInput) _vbYInput.addEventListener("input", () => { _vbYInput.dataset.userModified = "true"; });
 
   function updatePairedModeUI() {
     const isPaired = document.getElementById("pairedSamples")?.checked || false;
@@ -7982,8 +8054,8 @@ Office.onReady(() => {
     if (lqSection) lqSection.style.display = isLQ ? "block" : "none";
     if (lqDataOptions) lqDataOptions.style.display = isLQ ? "block" : "none";
 
-    // Always use log10 Y scale for survival curves — hide the scale selector
-    if (yScaleRow) yScaleRow.style.display = isLQ ? "none" : "";
+    // Show Y scale selector for LQ (defaults to log10 but user can change)
+    if (yScaleRow) yScaleRow.style.display = "";
   }
 
   // When ic50ShowLog10Labels changes, toggle decimal labels row visibility
@@ -8916,6 +8988,17 @@ Office.onReady(() => {
   document.getElementById("addStatistics")?.addEventListener("change", function() {
     updateStatsDetailedControlsVisibility();
     updateVbracketVisibility();
+    // Sync: Stats tab → Data tab
+    const dataTabStatCb = document.getElementById("addStatisticsDataTab");
+    if (dataTabStatCb) dataTabStatCb.checked = this.checked;
+  });
+
+  // Sync: Data tab → Stats tab
+  document.getElementById("addStatisticsDataTab")?.addEventListener("change", function() {
+    const statsCb = document.getElementById("addStatistics");
+    if (statsCb) statsCb.checked = this.checked;
+    updateStatsDetailedControlsVisibility();
+    updateVbracketVisibility();
   });
 
   // Track manual edits to vbracket position controls so chart-type-based defaults don't override user input
@@ -9494,7 +9577,7 @@ Office.onReady(() => {
   });
 
   // Populate Dunnett control group dropdown with groups from current data
-  function populateDunnettControl() {
+  window.populateDunnettControl = function populateDunnettControl() {
     const dunnettControl = document.getElementById("dunnettControl");
     if (!dunnettControl) return;
 
@@ -10182,10 +10265,10 @@ async function getStatisticalResultsText() {
   const statisticalTest = testMode === "auto" ? "auto" : (document.getElementById("statisticalTest")?.value || "auto");
   const varianceTest = document.getElementById("varianceTest")?.value || "levene";
   const dataType = document.getElementById("dataTypeSelect")?.value || "parametric";
-  const postHocTest = dataType === "nonparametric"
+  const postHocTest = testMode !== "manual" ? "tukey" : (dataType === "nonparametric"
     ? (document.getElementById("postHocTestNonparam")?.value || "dunn")
-    : (document.getElementById("postHocTest")?.value || "tukey");
-  const dunnettControl = document.getElementById("dunnettControl")?.value || "";
+    : (document.getElementById("postHocTest")?.value || "tukey"));
+  const dunnettControl = testMode === "manual" ? (document.getElementById("dunnettControl")?.value || "") : "";
   const errorBarType = document.getElementById("errorBarType")?.value || "sd";
   const pairedSamples = document.getElementById("pairedSamples")?.checked ||
                         document.getElementById("pairedSamplesDataTab")?.checked || false;
@@ -11068,10 +11151,10 @@ async function exportStatisticalResults() {
     const statisticalTest = testMode === "auto" ? "auto" : (document.getElementById("statisticalTest")?.value || "auto");
     const varianceTest = document.getElementById("varianceTest")?.value || "levene";
     const dataType = document.getElementById("dataTypeSelect")?.value || "parametric";
-    const postHocTest = dataType === "nonparametric"
+    const postHocTest = testMode !== "manual" ? "tukey" : (dataType === "nonparametric"
       ? (document.getElementById("postHocTestNonparam")?.value || "dunn")
-      : (document.getElementById("postHocTest")?.value || "tukey");
-    const dunnettControl = document.getElementById("dunnettControl")?.value || "";
+      : (document.getElementById("postHocTest")?.value || "tukey"));
+    const dunnettControl = testMode === "manual" ? (document.getElementById("dunnettControl")?.value || "") : "";
     const pairedSamples = document.getElementById("pairedSamples")?.checked ||
                           document.getElementById("pairedSamplesDataTab")?.checked || false;
     const subjectColumn = document.getElementById("subjectColumn")?.value || "";
@@ -11509,7 +11592,7 @@ async function exportStatisticalResults() {
             posthoc_3e <- ""
             if (!is.na(omnibus_p_3e) && omnibus_p_3e < 0.05) {
               tryCatch({
-                pAdj3e <- if ("${postHocTest}" %in% c("bonferroni", "holm")) "${postHocTest}" else "holm"
+                pAdj3e <- "${pairedPostHocCorrection}"
                 pAdj3e_label <- if (pAdj3e == "bonferroni") "Bonferroni" else "Holm"
                 if (all_norm_3e) {
                   pw3e <- pairwise.t.test(stat_df_3e$value, stat_df_3e$group, p.adjust.method = pAdj3e, paired = TRUE)
@@ -13376,7 +13459,7 @@ async function initWebR() {
                     }))
 
                     use_rm_anova <- (test_type == "auto" && is_normal_all) || test_type == "parametric"
-                    ph_method <- paired_ph_correction
+                    ph_method <- if (test_type == "auto") "holm" else if (posthoc_test %in% c("bonferroni", "holm")) posthoc_test else paired_ph_correction
                     cat("🔥 PAIRED 3+: differences_normal=", is_normal_all, " use_rm_anova=", use_rm_anova, " post-hoc correction=", ph_method, " 🔥\\n")
 
                     if (use_rm_anova) {
@@ -15855,164 +15938,26 @@ async function initWebR() {
 
               # Only test if both groups have data
               if (length(group1_data) > 0 && length(group2_data) > 0) {
-                # Perform normality test
-                normality_text <- c()
-                both_normal <- TRUE
+                res2 <- sato_run_stats_2group(
+                  group1_data = group1_data, group2_data = group2_data,
+                  group_names = c(groups_with_data[1], groups_with_data[2]),
+                  x_label = as.character(x_val),
+                  statistical_test = statistical_test, variance_test = variance_test,
+                  stat_symbol_type = stat_symbol_type,
+                  paired = paired,
+                  error_label = error_label,
+                  desc_lines = desc_lines
+                )
+                stat_text_results <- c(stat_text_results, res2$result_text)
+                sig_label <- res2$sig_label
 
-                if (paired) {
-                  # For paired: test normality of differences
-                  diffs_2 <- group1_data - group2_data
-                  if (length(diffs_2) >= 3 && length(diffs_2) <= 5000) {
-                    shapiro_diffs <- tryCatch(shapiro.test(diffs_2), error = function(e) NULL)
-                    if (!is.null(shapiro_diffs)) {
-                      both_normal <- shapiro_diffs$p.value >= 0.05
-                      diff_status <- if (both_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
-                      cat(sprintf("    Differences: Shapiro-Wilk p=%.4f (%s)\\n", shapiro_diffs$p.value, diff_status))
-                    }
-                  }
-                } else {
-                  is_group1_normal <- TRUE
-                  is_group2_normal <- TRUE
-                  if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
-                    shapiro_result1 <- tryCatch(shapiro.test(group1_data), error = function(e) NULL)
-                    if (!is.null(shapiro_result1)) {
-                      is_group1_normal <- shapiro_result1$p.value >= 0.05
-                      norm_status <- if (is_group1_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
-                      cat(sprintf("    %s: Shapiro-Wilk p=%.4f (%s)\\n", groups_with_data[1], shapiro_result1$p.value, norm_status))
-                    }
-                  }
-                  if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
-                    shapiro_result2 <- tryCatch(shapiro.test(group2_data), error = function(e) NULL)
-                    if (!is.null(shapiro_result2)) {
-                      is_group2_normal <- shapiro_result2$p.value >= 0.05
-                      norm_status <- if (is_group2_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
-                      cat(sprintf("    %s: Shapiro-Wilk p=%.4f (%s)\\n", groups_with_data[2], shapiro_result2$p.value, norm_status))
-                    }
-                  }
-                  both_normal <- is_group1_normal && is_group2_normal
-                }
-
-                # Select test based on mode
-                test_to_use <- statistical_test
-                if (statistical_test == "auto") {
-                  if (both_normal) {
-                    test_to_use <- "t-test"
-                    cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
-                  } else {
-                    test_to_use <- "wilcoxon"
-                    cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
-                  }
-                } else if (statistical_test == "parametric") {
-                  test_to_use <- "t-test"
-                  cat(if (paired) "  Manual mode: Paired t-test (parametric)\\n" else "  Manual mode: parametric t-test\\n")
-                } else if (statistical_test == "nonparametric") {
-                  test_to_use <- "wilcoxon"
-                  cat(if (paired) "  Manual mode: Paired Wilcoxon (non-parametric)\\n" else "  Manual mode: non-parametric Wilcoxon test\\n")
-                }
-
-                # Perform variance test (only for unpaired parametric tests)
-                variance_text <- ""
-                equal_variances <- TRUE  # default
-                if (test_to_use != "wilcoxon" && !paired) {
-                  if (variance_test == "levene") {
-                    combined_data <- data.frame(
-                      values = c(group1_data, group2_data),
-                      group = factor(c(rep(groups_with_data[1], length(group1_data)),
-                                      rep(groups_with_data[2], length(group2_data))))
-                    )
-                    group_means <- tapply(combined_data$values, combined_data$group, mean)
-                    abs_deviations <- abs(combined_data$values - group_means[combined_data$group])
-                    levene_result <- tryCatch(
-                      anova(lm(abs_deviations ~ combined_data$group)),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(levene_result)) {
-                      levene_p <- levene_result$\`Pr(>F)\`[1]
-                      equal_variances <- levene_p > 0.05
-                      variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                      variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", levene_p, variance_status)
-                      cat(sprintf("    Levene test: p=%.4f (%s)\\n", levene_p, variance_status))
-                    }
-                  } else {
-                    var_test <- tryCatch(var.test(group1_data, group2_data), error = function(e) NULL)
-                    if (!is.null(var_test)) {
-                      equal_variances <- var_test$p.value > 0.05
-                      variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                      variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", var_test$p.value, variance_status)
-                      cat(sprintf("    F-test: p=%.4f (%s)\\n", var_test$p.value, variance_status))
-                    }
-                  }
-                }
-
-                # Perform statistical test
-                if (paired) {
-                  if (test_to_use == "wilcoxon") {
-                    test_result <- tryCatch(
-                      wilcox.test(group1_data, group2_data, paired = TRUE),
-                      error = function(e) NULL
-                    )
-                    test_name <- "Paired Wilcoxon"
-                  } else {
-                    test_result <- tryCatch(
-                      t.test(group1_data, group2_data, paired = TRUE),
-                      error = function(e) NULL
-                    )
-                    test_name <- "Paired t-test"
-                  }
-                } else if (test_to_use == "wilcoxon") {
-                  test_result <- tryCatch(
-                    wilcox.test(group1_data, group2_data),
-                    error = function(e) NULL
-                  )
-                  test_name <- "Wilcoxon"
-                } else {
-                  test_result <- tryCatch(
-                    t.test(group1_data, group2_data, var.equal = equal_variances),
-                    error = function(e) NULL
-                  )
-                  test_name <- if (equal_variances) "Student's t-test" else "Welch's t-test"
-                }
-
-                if (!is.null(test_result)) {
-                  p_val <- test_result$p.value
-                  cat(sprintf("  2-group test: %s vs %s, %s p=%.4f\\n",
-                              groups_with_data[1], groups_with_data[2], test_name, p_val))
-
-                  # Determine significance symbol using helper function
-                  sig_label <- get_sig_symbol(p_val)
-
-                  # Store result text for UI with normality and variance info
-
-                  result_text <- sprintf(">> X-axis value: %g\\nGroups: %s vs %s",
-                                        x_val, groups_with_data[1], groups_with_data[2])
-                  if (length(desc_lines) > 0) {
-                    result_text <- paste0(result_text,
-                      sprintf("\\nSummary (mean +/- %s):\\n", error_label),
-                      paste(desc_lines, collapse="\\n"))
-                  }
-                  if (length(normality_text) > 0) {
-                    result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-                  } else {
-                    result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
-                  }
-                  if (nchar(variance_text) > 0) {
-                    result_text <- paste0(result_text, "\\n", variance_text)
-                  }
-                  result_text <- paste0(result_text,
-                    sprintf("\\nTest: %s, p=%.4f (%s)", test_name, p_val, sig_label))
-                  stat_text_results <- c(stat_text_results, result_text)
-
-                  # Add to results for visual annotation (only if significant)
+                if (!is.na(res2$p_val)) {
+                  cat(sprintf("  2-group test: %s vs %s, p=%.4f (%s)\\n",
+                              groups_with_data[1], groups_with_data[2], res2$p_val, sig_label))
                   if (sig_label != "" && sig_label != "ns") {
                     stat_results <- rbind(stat_results, data.frame(
                       x = x_val,
-                      y_pos = 0,  # Will be calculated later
+                      y_pos = 0,
                       label = sig_label
                     ))
                   }
@@ -16023,16 +15968,7 @@ async function initWebR() {
               # THREE OR MORE GROUPS
               cat("  Performing statistical test for 3+ groups at this time point...\\n")
 
-              result_text <- sprintf(">> X-axis value: %g\\nTime point %.1f:", x_val, x_val)
-              if (length(desc_lines) > 0) {
-                result_text <- paste0(result_text,
-                  sprintf("\\nSummary (mean +/- %s):\\n", error_label),
-                  paste(desc_lines, collapse="\\n"))
-              }
-
               if (paired) {
-                # PAIRED 3+ GROUPS: RM-ANOVA or Friedman per time point
-                cat("  Paired mode: using RM-ANOVA / Friedman\\n")
                 anova_data <- data.frame(
                   group = factor(as.character(data_at_x$group)),
                   value = as.numeric(data_at_x$value),
@@ -16040,302 +15976,30 @@ async function initWebR() {
                 )
                 anova_data <- anova_data[complete.cases(anova_data), ]
                 anova_data$group <- droplevels(anova_data$group)
-
-                # Normality: test pairwise differences
-                normality_text <- c()
-                all_normal <- TRUE
-                groups_list_norm <- levels(anova_data$group)
-                pairs_norm <- combn(groups_list_norm, 2, simplify = FALSE)
-                for (pair_n in pairs_norm) {
-                  g1_df_n <- anova_data[anova_data$group == pair_n[1], c("subject_id", "value")]
-                  g2_df_n <- anova_data[anova_data$group == pair_n[2], c("subject_id", "value")]
-                  merged_n <- merge(g1_df_n, g2_df_n, by = "subject_id")
-                  diffs_n <- merged_n$value.x - merged_n$value.y
-                  if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
-                    shapiro_n <- tryCatch(shapiro.test(diffs_n), error = function(e) NULL)
-                    if (!is.null(shapiro_n)) {
-                      is_norm_n <- shapiro_n$p.value >= 0.05
-                      norm_status_n <- if (is_norm_n) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], shapiro_n$p.value, norm_status_n))
-                      if (!is_norm_n) all_normal <- FALSE
-                    }
-                  }
-                }
-                if (length(normality_text) > 0) {
-                  result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n",
-                                        paste(normality_text, collapse = "\\n"))
-                }
-
-                # Choose test
-                test_to_use_p <- statistical_test
-                if (statistical_test == "auto") {
-                  test_to_use_p <- if (all_normal) "rm_anova" else "friedman"
-                  cat("  Auto-selected:", test_to_use_p, "\\n")
-                } else if (statistical_test == "parametric") {
-                  test_to_use_p <- "rm_anova"
-                  cat("  Manual: RM-ANOVA\\n")
-                } else {
-                  test_to_use_p <- "friedman"
-                  cat("  Manual: Friedman\\n")
-                }
-
-                omnibus_p <- NA
-                test_name_p <- ""
-                if (test_to_use_p == "rm_anova") {
-                  rm_result <- tryCatch(
-                    summary(aov(value ~ group + Error(subject_id/group), data = anova_data)),
-                    error = function(e) { cat("  RM-ANOVA error:", e$message, "\\n"); NULL }
-                  )
-                  if (!is.null(rm_result)) {
-                    omnibus_p <- tryCatch(rm_result[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1], error = function(e) NA)
-                    if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
-                    test_name_p <- "RM-ANOVA"
-                  }
-                } else {
-                  friedman_r <- tryCatch(
-                    friedman.test(value ~ group | subject_id, data = anova_data),
-                    error = function(e) { cat("  Friedman error:", e$message, "\\n"); NULL }
-                  )
-                  if (!is.null(friedman_r)) {
-                    omnibus_p <- friedman_r$p.value
-                    test_name_p <- "Friedman"
-                  }
-                }
-
-                if (!is.na(omnibus_p) && !is.null(omnibus_p)) {
-                  omnibus_sig <- get_sig_symbol(omnibus_p)
-                  result_text <- paste0(result_text,
-                    sprintf("\\nOverall test: %s, p=%.4f (%s)", test_name_p, omnibus_p, omnibus_sig))
-                  cat(sprintf("  %s p=%.4f\\n", test_name_p, omnibus_p))
-
-                  if (!is.na(omnibus_p) && omnibus_p < 0.05) {
-                    # Post-hoc: pairwise paired tests with adjustment
-                    ph_method <- if (post_hoc_test %in% c("bonferroni", "holm")) post_hoc_test else "holm"
-                    ph_label <- if (ph_method == "bonferroni") "Bonferroni" else "Holm"
-                    ph_func <- if (test_to_use_p == "rm_anova") pairwise.t.test else pairwise.wilcox.test
-                    ph_result <- tryCatch(
-                      ph_func(anova_data$value, anova_data$group, p.adjust.method = ph_method, paired = TRUE),
-                      error = function(e) { cat("  Post-hoc error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(ph_result)) {
-                      ph_test_name <- if (test_to_use_p == "rm_anova") "Pairwise paired t-test" else "Pairwise paired Wilcoxon"
-                      result_text <- paste0(result_text,
-                        sprintf("\\nPost-hoc (%s, %s):", ph_test_name, ph_label))
-                      p_mat <- ph_result$p.value
-                      for (r in rownames(p_mat)) {
-                        for (c in colnames(p_mat)) {
-                          p_adj <- p_mat[r, c]
-                          if (!is.na(p_adj)) {
-                            sig_label <- get_sig_symbol(p_adj)
-                            result_text <- paste0(result_text,
-                              sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, sig_label))
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-                stat_text_results <- c(stat_text_results, result_text)
-                next  # skip the unpaired block below
+              } else {
+                anova_data <- data.frame(
+                  group = factor(as.character(data_at_x$group)),
+                  value = as.numeric(data_at_x$value)
+                )
+                anova_data <- anova_data[complete.cases(anova_data), ]
+                anova_data$group <- droplevels(anova_data$group)
               }
 
-              # UNPAIRED 3+ GROUPS: ANOVA or Kruskal-Wallis
-              anova_data <- data.frame(
-                group = factor(data_at_x$group),
-                value = as.numeric(data_at_x$value)
+              res3 <- tryCatch(
+                sato_run_stats_ngroup(
+                  anova_data = anova_data,
+                  x_label = as.character(x_val),
+                  statistical_test = statistical_test, post_hoc_test = post_hoc_test,
+                  dunnett_control = dunnett_control,
+                  stat_symbol_type = stat_symbol_type,
+                  paired = paired,
+                  paired_ph_correction = paired_ph_correction,
+                  error_label = error_label,
+                  desc_lines = desc_lines
+                ),
+                error = function(e) list(result_text = paste0(">> X-axis value: ", x_val, "\\nError: ", e$message), omnibus_p = NA, pairs = data.frame())
               )
-              anova_data <- anova_data[complete.cases(anova_data), ]
-
-              # Normality testing for each group
-              normality_text <- c()
-              all_normal <- TRUE
-              for (grp in levels(anova_data$group)) {
-                grp_data <- anova_data$value[anova_data$group == grp]
-                if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
-                  shapiro_result <- tryCatch(shapiro.test(grp_data), error = function(e) NULL)
-                  if (!is.null(shapiro_result)) {
-                    norm_status <- if (shapiro_result$p.value >= 0.05) "normal" else "non-normal"
-                    if (shapiro_result$p.value < 0.05) all_normal <- FALSE
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", grp, shapiro_result$p.value, norm_status))
-                    cat(sprintf("    %s: Shapiro-Wilk p=%.4f\\n", grp, shapiro_result$p.value))
-                  }
-                }
-              }
-
-              # Decide parametric vs non-parametric
-              use_nonparametric <- (statistical_test == "nonparametric") ||
-                                   (statistical_test == "auto" && !all_normal)
-
-              if (length(normality_text) > 0) {
-                result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n",
-                                      paste(normality_text, collapse="\\n"))
-              } else {
-                result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
-              }
-
-              if (use_nonparametric) {
-                # Non-parametric: Kruskal-Wallis + Dunn post-hoc
-                kw_result <- tryCatch(
-                  kruskal.test(value ~ group, data = anova_data),
-                  error = function(e) { cat("  Kruskal-Wallis error:", e$message, "\\n"); NULL }
-                )
-                if (!is.null(kw_result)) {
-                  kw_p <- kw_result$p.value
-                  kw_sig <- get_sig_symbol(kw_p)
-                  cat(sprintf("  Kruskal-Wallis p=%.4f\\n", kw_p))
-                  result_text <- paste0(result_text, sprintf("\\nOverall test: Kruskal-Wallis, p=%.4f (%s)", kw_p, kw_sig))
-
-                  if (!is.na(kw_p) && kw_p < 0.05) {
-                    if (post_hoc_test == "steel") {
-                      # Steel test - non-parametric vs control (kSamples package)
-                      cat("  Kruskal-Wallis significant - performing Steel test...\\n")
-                      control_group <- if (nchar(dunnett_control) > 0) dunnett_control else levels(anova_data$group)[1]
-                      cat(sprintf("  Steel test control group: %s\\n", control_group))
-
-                      steel_available <- tryCatch({
-                        if (!requireNamespace("kSamples", quietly = TRUE)) {
-                          cat("  Installing kSamples for Steel test...\\n")
-                          webr::install("kSamples")
-                        }
-                        library(kSamples)
-                        TRUE
-                      }, error = function(e) {
-                        cat("  kSamples could not be loaded:", e$message, "\\n")
-                        FALSE
-                      })
-
-                      if (steel_available) {
-                        treatment_groups <- levels(anova_data$group)[levels(anova_data$group) != control_group]
-                        control_values <- anova_data$value[anova_data$group == control_group]
-                        result_text <- paste0(result_text,
-                          sprintf("\\nPost-hoc (Steel test, vs %s):", control_group))
-                        for (trt in treatment_groups) {
-                          trt_values <- anova_data$value[anova_data$group == trt]
-                          steel_result <- tryCatch(
-                            Steel.test(list(control_values, trt_values)),
-                            error = function(e) { cat("  Steel.test error:", e$message, "\\n"); NULL }
-                          )
-                          if (!is.null(steel_result)) {
-                            p_val <- steel_result$st[2]
-                            sig_label <- get_sig_symbol(p_val)
-                            result_text <- paste0(result_text,
-                              sprintf("\\n  %s-%s: p=%.4f (%s)", control_group, trt, p_val, sig_label))
-                          }
-                        }
-                      } else {
-                        result_text <- paste0(result_text,
-                          "\\n[ERROR] Steel test requires the kSamples package which could not be loaded in this environment.",
-                          "\\nPlease contact us for support: https://h20gg702.github.io/figra-pages/support")
-                        cat("ERROR: kSamples package not available for Steel test. Steel test cannot be performed.\\n")
-                      }
-
-                    } else {
-                      # Default: Dunn test (proper post-hoc for Kruskal-Wallis)
-                      # Use p-adjustment method from user selection: dunn_holm -> holm, others -> bonferroni (default)
-                      dunn_method <- if (post_hoc_test == "dunn_holm") "holm" else "bonferroni"
-                      dunn_method_label <- if (dunn_method == "holm") "Holm" else "Bonferroni"
-                      cat(sprintf("  Kruskal-Wallis significant - performing Dunn post-hoc test (%s adj.)...\\n", dunn_method_label))
-                      dunn_available <- tryCatch({
-                        if (!requireNamespace("dunn.test", quietly = TRUE)) {
-                          cat("  Installing dunn.test package...\\n")
-                          webr::install("dunn.test")
-                        }
-                        library(dunn.test)
-                        TRUE
-                      }, error = function(e) {
-                        cat("  dunn.test could not be loaded:", e$message, "\\n")
-                        FALSE
-                      })
-                      if (dunn_available) {
-                        dunn_result <- tryCatch(
-                          dunn.test(anova_data$value, anova_data$group, method = dunn_method),
-                          error = function(e) { cat("  Dunn test error:", e$message, "\\n"); NULL }
-                        )
-                        if (!is.null(dunn_result)) {
-                          result_text <- paste0(result_text, sprintf("\\nPost-hoc (Dunn test with %s):", dunn_method_label))
-                          for (i in seq_along(dunn_result$comparisons)) {
-                            comp_clean <- gsub(" - ", "-", dunn_result$comparisons[i])
-                            p_adj <- dunn_result$P.adjusted[i]
-                            sig_label <- get_sig_symbol(p_adj)
-                            result_text <- paste0(result_text,
-                              sprintf("\\n  %s: p=%.4f (%s)", comp_clean, p_adj, sig_label))
-                          }
-                        }
-                      } else {
-                        result_text <- paste0(result_text,
-                          "\\n[ERROR] Dunn test requires the dunn.test package which could not be loaded.",
-                          "\\nPlease contact us for support: https://h20gg702.github.io/figra-pages/support")
-                        cat("ERROR: dunn.test package not available. Dunn test cannot be performed.\\n")
-                      }
-                    }
-                  }
-                }
-
-              } else {
-                # Parametric: ANOVA + user-selected post-hoc
-                anova_result <- tryCatch(
-                  aov(value ~ group, data = anova_data),
-                  error = function(e) { cat("  ANOVA error:", e$message, "\\n"); NULL }
-                )
-                if (!is.null(anova_result)) {
-                  anova_summary <- summary(anova_result)
-                  anova_p <- anova_summary[[1]][["Pr(>F)"]][1]
-                  anova_sig <- if (!is.na(anova_p)) get_sig_symbol(anova_p) else ""
-                  cat(sprintf("  ANOVA p=%.4f\\n", anova_p))
-                  result_text <- paste0(result_text, sprintf("\\nOverall test: ANOVA, p=%.4f (%s)", anova_p, anova_sig))
-
-                  if (!is.na(anova_p) && anova_p < 0.05) {
-                    if (post_hoc_test == "bonferroni" || post_hoc_test == "holm") {
-                      cat(sprintf("  ANOVA significant - %s post-hoc...\\n", post_hoc_test))
-                      ph_result <- tryCatch(
-                        pairwise.t.test(anova_data$value, anova_data$group,
-                                        p.adjust.method = post_hoc_test),
-                        error = function(e) { cat("  Post-hoc error:", e$message, "\\n"); NULL }
-                      )
-                      if (!is.null(ph_result)) {
-                        ph_label <- if (post_hoc_test == "bonferroni") "Bonferroni" else "Holm"
-                        result_text <- paste0(result_text,
-                          sprintf("\\nPost-hoc (Pairwise t-test with %s):", ph_label))
-                        p_mat <- ph_result$p.value
-                        for (r in rownames(p_mat)) {
-                          for (c in colnames(p_mat)) {
-                            p_adj <- p_mat[r, c]
-                            if (!is.na(p_adj)) {
-                              sig_label <- get_sig_symbol(p_adj)
-                              result_text <- paste0(result_text,
-                                sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, sig_label))
-                            }
-                          }
-                        }
-                      }
-                    } else {
-                      # Default: Tukey HSD
-                      cat("  ANOVA significant - performing Tukey HSD...\\n")
-                      tukey_result <- tryCatch(
-                        TukeyHSD(anova_result),
-                        error = function(e) { cat("  Tukey error:", e$message, "\\n"); NULL }
-                      )
-                      if (!is.null(tukey_result)) {
-                        tukey_summary <- tukey_result$group
-                        result_text <- paste0(result_text, "\\nPost-hoc (Tukey HSD):")
-                        for (i in 1:nrow(tukey_summary)) {
-                          comparison <- rownames(tukey_summary)[i]
-                          p_adj <- tukey_summary[i, "p adj"]
-                          diff <- tukey_summary[i, "diff"]
-                          sig_label <- if (!is.na(p_adj)) get_sig_symbol(p_adj) else "ns"
-                          result_text <- paste0(result_text,
-                            sprintf("\\n  %s: diff=%.2f, p=%.4f (%s)",
-                                    comparison, diff, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-
-              stat_text_results <- c(stat_text_results, result_text)
+              stat_text_results <- c(stat_text_results, res3$result_text)
             }
           }
         }
@@ -16381,17 +16045,31 @@ async function initWebR() {
           # Install and load vbracket package from webR-compatible repository
           vbracket_loaded <- FALSE
           tryCatch({
-            # Try loading package first
-            if (!require("vbracket", quietly = TRUE)) {
+            # Install if missing OR version is older than 1.4.0
+            needs_install <- !require("vbracket", quietly = TRUE)
+            if (!needs_install) {
+              current_ver <- tryCatch(as.numeric_version(packageVersion("vbracket")), error = function(e) as.numeric_version("0.0.0"))
+              if (current_ver < as.numeric_version("1.4.0")) {
+                cat(sprintf("vbracket %s is outdated, reinstalling...\\n", current_ver))
+                needs_install <- TRUE
+              } else {
+                # Check if the has_log_y fix is present (r-universe may have built from an older commit)
+                fn_body <- tryCatch(deparse(body(vbracket:::ggplot_add.vbracket_legend)), error = function(e) "")
+                if (!any(grepl("has_log_y", fn_body))) {
+                  cat("vbracket 1.4.0 missing has_log_y fix — reinstalling from r-universe...\\n")
+                  needs_install <- TRUE
+                }
+              }
+            }
+            if (needs_install) {
               cat("Installing vbracket package from r-universe (WebAssembly)...\\n")
-              # Use webR's install function with r-universe repository
               webr::install("vbracket",
                           repos = c("https://h20gg702.r-universe.dev", "https://repo.r-wasm.org"))
               cat("✓ vbracket package installed\\n")
             }
             suppressPackageStartupMessages(library(vbracket))
             vbracket_loaded <- TRUE
-            cat("✓ vbracket package loaded successfully\\n")
+            cat(sprintf("✓ vbracket package loaded successfully (version %s)\\n", packageVersion("vbracket")))
           }, error = function(e1) {
             cat(sprintf("✗ Failed to load vbracket: %s\\n", e1$message))
           })
@@ -16463,7 +16141,7 @@ async function initWebR() {
                         match <- regmatches(line, regexpr("^[^:]+(?=:)", line, perl=TRUE))
                         if (length(match) > 0) {
                           groups_str <- gsub("^\\\\s+", "", match[1])
-                          group_pair <- strsplit(groups_str, "-")[[1]]
+                          group_pair <- trimws(strsplit(groups_str, "-")[[1]])
                           sig_match <- regmatches(line, regexpr("\\\\([^)]+\\\\)$", line))
                           sig_label <- if (length(sig_match) > 0) gsub("[()]", "", sig_match[1]) else "*"
 
@@ -16511,8 +16189,8 @@ async function initWebR() {
                   labels = group_labels,
                   colors = legend_colors,
                   comparisons = comparisons_df,
-                  legend_x = vbracket_x,
-                  legend_y = vbracket_y,
+                  x = vbracket_x,
+                  y = vbracket_y,
                   text_size = vbracket_text_size,
                   sig_size = vbracket_sig_size,
                   bracket_margin = vbracket_margin,
@@ -16531,8 +16209,8 @@ async function initWebR() {
                 p <- p + legend_bracket(
                   labels = group_labels,
                   colors = legend_colors,
-                  legend_x = vbracket_x,
-                  legend_y = vbracket_y,
+                  x = vbracket_x,
+                  y = vbracket_y,
                   text_size = vbracket_text_size,
                   line_length = vbracket_legend_line_length,
                   line_width = vbracket_line_width,
@@ -17239,853 +16917,87 @@ async function initWebR() {
             n_groups_at_cat <- length(groups_with_data)
 
             if (n_groups_at_cat == 2) {
-              # TWO GROUPS: Use t-test or Wilcoxon
               if (paired) {
                 g1_df <- data_at_cat[data_at_cat$group == groups_with_data[1], c("subject_id", "value")]
                 g2_df <- data_at_cat[data_at_cat$group == groups_with_data[2], c("subject_id", "value")]
                 paired_df_cat <- merge(g1_df, g2_df, by = "subject_id")
-                group1_data <- paired_df_cat$value.x
-                group2_data <- paired_df_cat$value.y
+                g1d <- paired_df_cat$value.x
+                g2d <- paired_df_cat$value.y
               } else {
-                group1_data <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
-                group2_data <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+                g1d <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
+                g2d <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              }
+              if (length(g1d) == 0 || length(g2d) == 0) next
+
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              desc_lines_2g <- c()
+              for (g in groups_with_data) {
+                gd_2g <- as.numeric(plot_data[plot_data$category==cat_val & plot_data$group==g, "value"]); gd_2g <- gd_2g[!is.na(gd_2g)]; ng_2g <- length(gd_2g)
+                if (ng_2g > 0) {
+                  mg_2g <- mean(gd_2g)
+                  if (ng_2g > 1) { sg_2g <- sd(gd_2g); eg_2g <- if(error_type=="se") sg_2g/sqrt(ng_2g) else if(error_type=="ci95") qt(0.975,df=ng_2g-1)*sg_2g/sqrt(ng_2g) else sg_2g; desc_lines_2g <- c(desc_lines_2g, sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng_2g, mg_2g, .err_lbl, eg_2g)) }
+                  else desc_lines_2g <- c(desc_lines_2g, sprintf("  %s: n=%d, mean=%.4g", g, ng_2g, mg_2g))
+                }
               }
 
-              # Only test if both groups have data
-              if (length(group1_data) > 0 && length(group2_data) > 0) {
-                # Perform normality test
-                normality_text <- c()
-                both_normal <- TRUE
-
-                if (paired) {
-                  # For paired tests: test normality of differences (statistically correct)
-                  diffs_paired <- group1_data - group2_data
-                  if (length(diffs_paired) >= 3 && length(diffs_paired) <= 5000) {
-                    shapiro_diffs <- tryCatch(
-                      shapiro.test(diffs_paired),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_diffs)) {
-                      both_normal <- shapiro_diffs$p.value >= 0.05
-                      diff_status <- if (both_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
-                    }
-                  }
-                } else {
-                  # For unpaired tests: test normality of individual groups
-                  is_group1_normal <- TRUE
-                  is_group2_normal <- TRUE
-
-                  if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
-                    shapiro_result1 <- tryCatch(
-                      shapiro.test(group1_data),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_result1)) {
-                      is_group1_normal <- shapiro_result1$p.value >= 0.05
-                      norm_status <- if (is_group1_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
-                    }
-                  }
-
-                  if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
-                    shapiro_result2 <- tryCatch(
-                      shapiro.test(group2_data),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_result2)) {
-                      is_group2_normal <- shapiro_result2$p.value >= 0.05
-                      norm_status <- if (is_group2_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
-                    }
-                  }
-
-                  both_normal <- is_group1_normal && is_group2_normal
-                }
-
-                # Select test based on mode
-                test_to_use <- statistical_test
-                if (statistical_test == "auto") {
-                  if (both_normal) {
-                    test_to_use <- "t-test"
-                    cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
-                  } else {
-                    test_to_use <- "wilcoxon"
-                    cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
-                  }
-                } else if (statistical_test == "parametric") {
-                  test_to_use <- "t-test"
-                  cat(if (paired) "  Manual mode: Paired t-test (parametric)\\n" else "  Manual mode: parametric t-test\\n")
-                } else if (statistical_test == "nonparametric") {
-                  test_to_use <- "wilcoxon"
-                  cat(if (paired) "  Manual mode: Paired Wilcoxon (non-parametric)\\n" else "  Manual mode: non-parametric Wilcoxon test\\n")
-                }
-
-                # Perform variance test (only for parametric tests)
-                variance_text <- ""
-                equal_variances <- TRUE
-                if (test_to_use != "wilcoxon" && !paired) {
-                  if (variance_test == "levene") {
-                    # Levene test for equality of variances
-                    combined_data <- data.frame(
-                      values = c(group1_data, group2_data),
-                      group = factor(c(rep(groups_with_data[1], length(group1_data)),
-                                      rep(groups_with_data[2], length(group2_data))))
-                    )
-
-                    # Calculate Levene test manually
-                    group_means <- tapply(combined_data$values, combined_data$group, mean)
-                    abs_deviations <- abs(combined_data$values - group_means[combined_data$group])
-                    levene_result <- tryCatch(
-                      anova(lm(abs_deviations ~ combined_data$group)),
-                      error = function(e) NULL
-                    )
-
-                    if (!is.null(levene_result)) {
-                      levene_p <- levene_result$\`Pr(>F)\`[1]
-                      equal_variances <- levene_p > 0.05
-                      variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                      variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", levene_p, variance_status)
-                      cat(sprintf("    Levene test: p=%.4f (%s)\\n", levene_p, variance_status))
-                    }
-                  } else {
-                    # F-test for equality of variances
-                    var_test <- tryCatch(
-                      var.test(group1_data, group2_data),
-                      error = function(e) NULL
-                    )
-
-                    if (!is.null(var_test)) {
-                      equal_variances <- var_test$p.value > 0.05
-                      variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                      variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", var_test$p.value, variance_status)
-                      cat(sprintf("    F-test: p=%.4f (%s)\\n", var_test$p.value, variance_status))
-                    }
-                  }
-                }
-
-                # Perform statistical test based on auto-selection
-                if (paired) {
-                  if (test_to_use == "wilcoxon") {
-                    test_result <- tryCatch(
-                      wilcox.test(group1_data, group2_data, paired = TRUE),
-                      error = function(e) NULL
-                    )
-                    test_name <- "Paired Wilcoxon"
-                  } else {
-                    test_result <- tryCatch(
-                      t.test(group1_data, group2_data, paired = TRUE),
-                      error = function(e) NULL
-                    )
-                    test_name <- "Paired t-test"
-                  }
-                } else if (test_to_use == "wilcoxon") {
-                  test_result <- tryCatch(
-                    wilcox.test(group1_data, group2_data),
-                    error = function(e) NULL
-                  )
-                  test_name <- "Wilcoxon"
-                } else {
-                  # Use appropriate t-test based on variance equality
-                  test_result <- tryCatch(
-                    t.test(group1_data, group2_data, var.equal = equal_variances),
-                    error = function(e) NULL
-                  )
-                  test_name <- if (equal_variances) "Student's t-test" else "Welch's t-test"
-                }
-
-                if (!is.null(test_result)) {
-                  p_val <- test_result$p.value
-                  cat(sprintf("  2-group test: %s vs %s, %s p=%.4f\\n",
-                              groups_with_data[1], groups_with_data[2], test_name, p_val))
-
-                  # Determine significance symbol using helper function
-                  sig_label <- get_sig_symbol(p_val)
-
-                  # Store result text for UI with proper order: Category -> Summary -> Normality -> Variance -> Test result
-                  result_text <- sprintf("Category %s:", cat_val)
-
-                  # Add group statistics (n, mean, SD/SE/CI95) for each group
-                  .err_label_2g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_2g))
-                  for (g in groups_with_data) {
-                    g_data <- as.numeric(plot_data[plot_data$category == cat_val & plot_data$group == g, "value"])
-                    g_data <- g_data[!is.na(g_data)]
-                    n_g2 <- length(g_data)
-                    if (n_g2 > 0) {
-                      mean_g2 <- mean(g_data)
-                      if (n_g2 > 1) {
-                        sd_g2 <- sd(g_data)
-                        err_g2 <- if (error_type == "se") sd_g2 / sqrt(n_g2) else if (error_type == "ci95") qt(0.975, df=n_g2-1) * sd_g2 / sqrt(n_g2) else sd_g2
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g2, mean_g2, .err_label_2g, err_g2))
-                      } else {
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g2, mean_g2))
-                      }
-                    }
-                  }
-
-                  # Add normality testing results
-                  if (length(normality_text) > 0) {
-                    result_text <- paste0(result_text, "\\n\\nNormality Testing (Shapiro-Wilk):\\n  ", paste(normality_text, collapse="\\n  "))
-                  }
-
-                  # Add variance test results
-                  if (nchar(variance_text) > 0) {
-                    result_text <- paste0(result_text, "\\n", variance_text)
-                  }
-
-                  # Add main test result
-                  result_text <- paste0(result_text, "\\n\\n", sprintf("%s: p=%.4f (%s)",
-                                        test_name, p_val, sig_label))
-                  stat_text_results <- c(stat_text_results, result_text)
-
-                  # Add ggpubr bracket for this comparison
-                  # Calculate x position (find position in all unique_categories, not just selected ones)
-                  cat_index <- which(unique_categories == cat_val)
-
-                  # Calculate y position (above the highest bar/point in this category)
-                  # Check if custom position is provided (check both possible orderings)
-                  comp_key1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
-                  comp_key2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
-
-                  custom_y_pos <- NULL
-                  if (!is.null(custom_y_positions[[comp_key1]])) {
-                    custom_y_pos <- custom_y_positions[[comp_key1]]
-                    cat("Using custom Y position for", comp_key1, ":", custom_y_pos, "\\n")
-                  } else if (!is.null(custom_y_positions[[comp_key2]])) {
-                    custom_y_pos <- custom_y_positions[[comp_key2]]
-                    cat("Using custom Y position for", comp_key2, ":", custom_y_pos, "\\n")
-                  }
-
-                  if (!is.null(custom_y_pos)) {
-                    # Use custom Y position
-                    y_pos <- custom_y_pos
-                  } else {
-                    # Calculate default position
-                    # Get the summary data for this category to find the bar heights
-                    # Get all data for this category
-                    data_at_cat_for_pos <- plot_data[plot_data$category == cat_val, ]
-                    max_value <- max(data_at_cat_for_pos$value, na.rm = TRUE)
-                    # Box plots have no error bars
-
-                    # Position symbol above the tallest bar + error bar with some spacing
-                    # Increased spacing to avoid overlapping with dots (0.055 -> 0.15)
-                    y_pos <- max_value + (max_value * 0.20)  # 20% above max value
-                  }
-
-                  # Add to bracket data based on comparison mode
-                  should_add_bracket <- FALSE
-                  if (comparison_mode == "significant") {
-                    # Only add if significant
-                    should_add_bracket <- (sig_label != "ns")
-                  } else if (comparison_mode == "all") {
-                    # Add all comparisons
-                    should_add_bracket <- TRUE
-                  } else if (comparison_mode == "custom") {
-                    # Only add if this comparison is selected
-                    # Check if this comparison is in the custom selections
-                    comp_key1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
-                    comp_key2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
-                    should_add_bracket <- (comp_key1 %in% custom_comps) || (comp_key2 %in% custom_comps)
-                  }
-
-                  if (should_add_bracket) {
-                    bracket_data <- rbind(bracket_data, data.frame(
-                      group1 = as.character(groups_with_data[1]),
-                      group2 = as.character(groups_with_data[2]),
-                      p.signif = sig_label,
-                      x.position = cat_index,
-                      y.position = y_pos,
-                      stringsAsFactors = FALSE
-                    ))
-                  }
-                }
-              }
-            } else if (n_groups_at_cat >= 3) {
-              # Calculate x position (shared by paired and unpaired paths)
-              cat_index <- which(unique_categories == cat_val)
-
-              if (paired) {
-                # PAIRED 3+ GROUPS: RM-ANOVA or Friedman
-                cat("  Performing RM-ANOVA/Friedman for", n_groups_at_cat, "paired groups at category", cat_val, "\\n")
-
-                anova_data_p <- data.frame(
-                  value = as.numeric(data_at_cat$value),
-                  group = factor(as.character(data_at_cat$group)),
-                  subject_id = factor(data_at_cat$subject_id)
-                )
-                anova_data_p <- anova_data_p[complete.cases(anova_data_p), ]
-                anova_data_p$group <- droplevels(anova_data_p$group)
-
-                if (nrow(anova_data_p) >= 3) {
-                  # Normality: test pairwise differences
-                  normality_text <- c()
-                  all_normal <- TRUE
-                  groups_list_norm <- levels(factor(anova_data_p$group))
-                  pairs_norm <- combn(groups_list_norm, 2, simplify=FALSE)
-                  for (pair_n in pairs_norm) {
-                    g1_df_n <- anova_data_p[anova_data_p$group == pair_n[1], c("subject_id", "value")]
-                    g2_df_n <- anova_data_p[anova_data_p$group == pair_n[2], c("subject_id", "value")]
-                    merged_n <- merge(g1_df_n, g2_df_n, by="subject_id")
-                    diffs_n <- merged_n$value.x - merged_n$value.y
-                    if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
-                      shapiro_n <- tryCatch(shapiro.test(diffs_n), error=function(e) NULL)
-                      if (!is.null(shapiro_n)) {
-                        is_norm_n <- shapiro_n$p.value >= 0.05
-                        norm_status_n <- if (is_norm_n) "normal" else "non-normal"
-                        normality_text <- c(normality_text,
-                          sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], shapiro_n$p.value, norm_status_n))
-                        if (!is_norm_n) all_normal <- FALSE
-                      }
-                    }
-                  }
-                  # Auto-select test
-                  test_to_use_p <- statistical_test
-                  if (statistical_test == "auto") {
-                    test_to_use_p <- if (all_normal) "rm_anova" else "friedman"
-                    cat("  Auto-selected:", test_to_use_p, "(all diffs normal:", all_normal, ")\\n")
-                  } else if (statistical_test == "parametric") {
-                    test_to_use_p <- "rm_anova"
-                    cat("  Manual mode: RM-ANOVA\\n")
-                  } else {
-                    test_to_use_p <- "friedman"
-                    cat("  Manual mode: Friedman\\n")
-                  }
-                  # Omnibus test
-                  omnibus_p <- NA
-                  test_name <- ""
-                  if (test_to_use_p == "rm_anova") {
-                    rm_result <- tryCatch(
-                      summary(aov(value ~ group + Error(subject_id/group), data=anova_data_p)),
-                      error = function(e) { cat("  RM-ANOVA error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(rm_result)) {
-                      omnibus_p <- rm_result[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1]
-                      if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
-                      test_name <- "RM-ANOVA"
-                    }
-                  } else {
-                    friedman_r <- tryCatch(
-                      friedman.test(value ~ group | subject_id, data=anova_data_p),
-                      error = function(e) { cat("  Friedman error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(friedman_r)) {
-                      omnibus_p <- friedman_r$p.value
-                      test_name <- "Friedman"
-                    }
-                  }
-                  cat("  ", test_name, "p-value:", omnibus_p, "\\n")
-                  # Build result text
-                  result_text <- sprintf("Category %s:", cat_val)
-                  .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
-                  for (g in groups_with_data) {
-                    g_data <- anova_data_p$value[anova_data_p$group == g]
-                    g_data <- g_data[!is.na(g_data)]
-                    n_g3 <- length(g_data)
-                    if (n_g3 > 0) {
-                      mean_g3 <- mean(g_data)
-                      if (n_g3 > 1) {
-                        sd_g3 <- sd(g_data)
-                        err_g3 <- if (error_type == "se") sd_g3/sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1)*sd_g3/sqrt(n_g3) else sd_g3
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
-                      } else {
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
-                      }
-                    }
-                  }
-                  if (length(normality_text) > 0) {
-                    result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-                  }
-                  anova_sig_label <- if (!is.na(omnibus_p)) {
-                    if (omnibus_p < 0.001) "***" else if (omnibus_p < 0.01) "**" else if (omnibus_p < 0.05) "*" else "ns"
-                  } else "ns"
-                  result_text <- paste0(result_text, "\\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", anova_sig_label, ")")
-                  # Post-hoc if omnibus significant
-                  if (!is.na(omnibus_p) && omnibus_p < 0.05) {
-                    cat("  Omnibus significant, performing paired post-hoc tests\\n")
-                    posthoc_text <- c()
-                    ph_method_p <- paired_ph_correction
-                    if (test_to_use_p == "rm_anova") {
-                      cat(sprintf("  Pairwise paired t-test (%s correction)...\\n", ph_method_p))
-                      pt_result_p <- tryCatch(
-                        pairwise.t.test(anova_data_p$value, anova_data_p$group,
-                                        paired=TRUE, p.adjust.method=ph_method_p),
-                        error = function(e) { cat("  pairwise.t.test error:", e$message, "\\n"); NULL }
-                      )
-                      if (!is.null(pt_result_p)) {
-                        groups_pt <- levels(factor(anova_data_p$group))
-                        comps_pt <- combn(groups_pt, 2, simplify=FALSE)
-                        for (comp_pt in comps_pt) {
-                          g1_pt <- comp_pt[1]; g2_pt <- comp_pt[2]
-                          r_idx <- which(rownames(pt_result_p$p.value) == g2_pt)
-                          c_idx <- which(colnames(pt_result_p$p.value) == g1_pt)
-                          p_val_pt <- if (length(r_idx)>0 && length(c_idx)>0) pt_result_p$p.value[r_idx, c_idx] else NA
-                          if (is.na(p_val_pt)) {
-                            r_idx2 <- which(rownames(pt_result_p$p.value) == g1_pt)
-                            c_idx2 <- which(colnames(pt_result_p$p.value) == g2_pt)
-                            p_val_pt <- if (length(r_idx2)>0 && length(c_idx2)>0) pt_result_p$p.value[r_idx2, c_idx2] else NA
-                          }
-                          sig_lbl_pt <- if (!is.na(p_val_pt)) get_sig_symbol(p_val_pt) else "ns"
-                          cmp_str_pt <- paste0(g2_pt, "-", g1_pt)
-                          cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
-                          posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
-                          should_add_pt <- FALSE
-                          if (comparison_mode == "significant") should_add_pt <- (sig_lbl_pt != "ns")
-                          else if (comparison_mode == "all") should_add_pt <- TRUE
-                          else if (comparison_mode == "custom") {
-                            ck1 <- paste0(g1_pt, "-", g2_pt, "@", cat_val)
-                            ck2 <- paste0(g2_pt, "-", g1_pt, "@", cat_val)
-                            should_add_pt <- (ck1 %in% custom_comps) || (ck2 %in% custom_comps)
-                          }
-                          if (should_add_pt) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1=g2_pt, group2=g1_pt,
-                              p.signif=sig_lbl_pt, x.position=cat_index, y.position=NA,
-                              stringsAsFactors=FALSE
-                            ))
-                          }
-                        }
-                      }
-                      ph_header_p <- sprintf("Post-hoc (Paired t-test, %s):", toupper(ph_method_p))
-                    } else {
-                      cat(sprintf("  Pairwise paired Wilcoxon (%s correction)...\\n", ph_method_p))
-                      groups_fw <- levels(factor(anova_data_p$group))
-                      comps_fw <- combn(groups_fw, 2, simplify=FALSE)
-                      p_raw_fw <- c(); cmp_names_fw <- c()
-                      for (comp_fw in comps_fw) {
-                        g1_fw_df <- anova_data_p[anova_data_p$group == comp_fw[1], c("subject_id", "value")]
-                        g2_fw_df <- anova_data_p[anova_data_p$group == comp_fw[2], c("subject_id", "value")]
-                        merged_fw <- merge(g1_fw_df, g2_fw_df, by="subject_id")
-                        pv_fw <- tryCatch(
-                          wilcox.test(merged_fw$value.x, merged_fw$value.y, paired=TRUE)$p.value,
-                          error = function(e) NA
-                        )
-                        p_raw_fw <- c(p_raw_fw, pv_fw)
-                        cmp_names_fw <- c(cmp_names_fw, paste0(comp_fw[2], "-", comp_fw[1]))
-                      }
-                      p_adj_fw <- p.adjust(p_raw_fw, method=ph_method_p)
-                      for (i in seq_along(cmp_names_fw)) {
-                        cmp_fw_str <- cmp_names_fw[i]
-                        p_adj_fw_i <- p_adj_fw[i]
-                        sig_lbl_fw <- if (!is.na(p_adj_fw_i)) get_sig_symbol(p_adj_fw_i) else "ns"
-                        cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
-                        posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
-                        should_add_fw <- FALSE
-                        if (comparison_mode == "significant") should_add_fw <- (sig_lbl_fw != "ns")
-                        else if (comparison_mode == "all") should_add_fw <- TRUE
-                        else if (comparison_mode == "custom") {
-                          comp_parts_fw_temp <- strsplit(cmp_fw_str, "-")[[1]]
-                          if (length(comp_parts_fw_temp) == 2) {
-                            ck1_fw <- paste0(comp_parts_fw_temp[1], "-", comp_parts_fw_temp[2], "@", cat_val)
-                            ck2_fw <- paste0(comp_parts_fw_temp[2], "-", comp_parts_fw_temp[1], "@", cat_val)
-                            should_add_fw <- (ck1_fw %in% custom_comps) || (ck2_fw %in% custom_comps)
-                          }
-                        }
-                        if (should_add_fw) {
-                          comp_parts_fw2 <- strsplit(cmp_fw_str, "-")[[1]]
-                          if (length(comp_parts_fw2) == 2) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1=comp_parts_fw2[1], group2=comp_parts_fw2[2],
-                              p.signif=sig_lbl_fw, x.position=cat_index, y.position=NA,
-                              stringsAsFactors=FALSE
-                            ))
-                          }
-                        }
-                      }
-                      ph_header_p <- sprintf("Post-hoc (Paired Wilcoxon, %s):", toupper(ph_method_p))
-                    }
-                    if (length(posthoc_text) > 0) {
-                      result_text <- paste0(result_text, "\\n", ph_header_p, "\\n", paste(posthoc_text, collapse="\\n"))
-                    }
-                  }
-                  stat_text_results <- c(stat_text_results, result_text)
-                }
-              } else {
-              # THREE OR MORE GROUPS (unpaired): Use ANOVA/Kruskal-Wallis + post-hoc tests
-              cat("  Performing ANOVA/Kruskal-Wallis for", n_groups_at_cat, "groups at category", cat_val, "\\n")
-
-              # Prepare data for ANOVA
-              anova_data <- data.frame(
-                group = factor(data_at_cat$group),
-                value = as.numeric(data_at_cat$value)
+              res2 <- sato_run_stats_2group(
+                group1_data = g1d, group2_data = g2d,
+                group_names = c(as.character(groups_with_data[1]), as.character(groups_with_data[2])),
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, variance_test = variance_test,
+                stat_symbol_type = stat_symbol_type,
+                paired = paired,
+                error_label = .err_lbl,
+                desc_lines = desc_lines_2g
               )
-              anova_data <- anova_data[complete.cases(anova_data), ]
+              stat_text_results <- c(stat_text_results, res2$result_text)
+              sl <- res2$sig_label
 
-              if (nrow(anova_data) >= 3) {
-                # Perform normality test for auto-selection
-                normality_text <- c()
-                all_normal <- TRUE
-
-                for (grp in groups_with_data) {
-                  grp_data <- data_at_cat[data_at_cat$group == grp, "value"]
-                  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
-                    shapiro_result <- tryCatch(
-                      shapiro.test(grp_data),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_result)) {
-                      is_normal <- shapiro_result$p.value >= 0.05
-                      norm_status <- if (is_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", grp, shapiro_result$p.value, norm_status))
-                      if (!is_normal) all_normal <- FALSE
-                    }
-                  }
-                }
-
-                # Auto-select test
-                test_to_use <- statistical_test
-                if (statistical_test == "auto") {
-                  test_to_use <- if (all_normal) "anova" else "kruskal"
-                  cat("  Auto-selected:", test_to_use, "(normality:", all_normal, ")\\n")
-                }
-
-                # Perform omnibus test
-                omnibus_p <- NA
-                test_name <- ""
-                if (test_to_use == "kruskal") {
-                  kruskal_result <- kruskal.test(value ~ group, data = anova_data)
-                  omnibus_p <- kruskal_result$p.value
-                  test_name <- "Kruskal-Wallis"
-                } else {
-                  anova_result <- aov(value ~ group, data = anova_data)
-                  anova_summary <- summary(anova_result)
-                  omnibus_p <- anova_summary[[1]][["Pr(>F)"]][1]
-                  test_name <- "ANOVA"
-                }
-
-                cat("  ", test_name, "p-value:", omnibus_p, "\\n")
-
-                # Build result text - ORDER: Summary, Normality, ANOVA, Post-hoc
-                result_text <- sprintf("Category %s:", cat_val)
-                # Add descriptive statistics
-                .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
-                for (g in groups_with_data) {
-                  g_data <- anova_data$value[anova_data$group == g]
-                  g_data <- g_data[!is.na(g_data)]
-                  n_g3 <- length(g_data)
-                  if (n_g3 > 0) {
-                    mean_g3 <- mean(g_data)
-                    if (n_g3 > 1) {
-                      sd_g3 <- sd(g_data)
-                      err_g3 <- if (error_type == "se") sd_g3 / sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1) * sd_g3 / sqrt(n_g3) else sd_g3
-                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
-                    } else {
-                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
-                    }
-                  }
-                }
-                if (length(normality_text) > 0) {
-                  result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-                }
-                # Add ANOVA result with significance symbol
-                anova_sig_label <- if (!is.na(omnibus_p)) {
-                  if (omnibus_p < 0.001) "***" else if (omnibus_p < 0.01) "**" else if (omnibus_p < 0.05) "*" else "ns"
-                } else "ns"
-                result_text <- paste0(result_text, "\\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", anova_sig_label, ")")
-
-                # If significant, perform post-hoc tests
-                if (!is.na(omnibus_p) && omnibus_p < 0.05) {
-                  cat("  Omnibus test significant, performing post-hoc tests\\n")
-
-                  # Perform appropriate post-hoc test based on omnibus test type
-                  posthoc_result <- NULL
-                  posthoc_text <- c()
-
-                  if (test_to_use == "kruskal") {
-                    # For Kruskal-Wallis, use Dunn test
-                    cat("  Performing Dunn post-hoc test...\\n")
-                    posthoc_result <- tryCatch({
-                      if (!requireNamespace("dunn.test", quietly = TRUE)) {
-                        cat("Installing dunn.test package...\\n")
-                        webr::install("dunn.test")
-                      }
-                      library(dunn.test)
-
-                      dunn_adj <- if (selected_posthoc_test == "dunn_holm") "holm" else "bonferroni"
-                      dunn_result <- dunn.test(anova_data$value, anova_data$group, method = dunn_adj)
-
-                      # Format results into a data frame
-                      data.frame(
-                        Comparison = dunn_result$comparisons,
-                        P.adj = dunn_result$P.adjusted,
-                        stringsAsFactors = FALSE
-                      )
-                    }, error = function(e) {
-                      cat("  Dunn test error:", e$message, "\\n")
-                      # Add error as annotation text for debugging
-                      result_text <<- paste0(result_text, "\\n[DUNN ERROR: ", e$message, "]")
-                      NULL
-                    })
-
-                    if (!is.null(posthoc_result)) {
-                      cat(sprintf("  Dunn found %d pairwise comparisons\\n", nrow(posthoc_result)))
-                      for (i in 1:nrow(posthoc_result)) {
-                        comparison <- posthoc_result$Comparison[i]
-                        p_adj <- posthoc_result$P.adj[i]
-
-                        sig_label <- ""
-                        if (!is.na(p_adj)) {
-                          sig_label <- get_sig_symbol(p_adj)
-                        } else {
-                          sig_label <- "ns"
-                        }
-
-                        cat(sprintf("    %s: p=%.4f (%s)\\n", comparison, p_adj, sig_label))
-                        posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)",
-                                                                comparison, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
-
-                        # Add comparisons to bracket data based on comparison mode
-                        should_add_posthoc <- FALSE
-                        if (comparison_mode == "significant") {
-                          should_add_posthoc <- (sig_label != "ns")
-                        } else if (comparison_mode == "all") {
-                          should_add_posthoc <- TRUE
-                        } else if (comparison_mode == "custom") {
-                          # Parse comparison to check if selected
-                          comp_parts_temp <- strsplit(comparison, " - ")[[1]]
-                          if (length(comp_parts_temp) == 2) {
-                            comp_key1 <- paste0(comp_parts_temp[1], "-", comp_parts_temp[2], "@", cat_val)
-                            comp_key2 <- paste0(comp_parts_temp[2], "-", comp_parts_temp[1], "@", cat_val)
-                            should_add_posthoc <- (comp_key1 %in% custom_comps) || (comp_key2 %in% custom_comps)
-                          }
-                        }
-
-                        if (should_add_posthoc) {
-                          # Parse comparison string (format: "group1 - group2")
-                          comp_parts <- strsplit(comparison, " - ")[[1]]
-                          if (length(comp_parts) == 2) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1 = comp_parts[1],
-                              group2 = comp_parts[2],
-                              p.signif = sig_label,
-                              x.position = cat_index,
-                              y.position = NA,  # Will be calculated later
-                              stringsAsFactors = FALSE
-                            ))
-                          }
-                        }
-                      }
-                    }
-                  } else {
-                    # For ANOVA, use selected post-hoc test
-                    cat(sprintf("  Performing %s post-hoc test...\\n", selected_posthoc_test))
-                    posthoc_result <- NULL
-                    posthoc_summary <- NULL
-
-                    if (selected_posthoc_test == "tukey") {
-                      # Tukey HSD test
-                      posthoc_result <- tryCatch(
-                        TukeyHSD(anova_result),
-                        error = function(e) {
-                          cat("  Tukey error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        posthoc_summary <- posthoc_result$group
-                      }
-                    } else if (selected_posthoc_test == "bonferroni") {
-                      # Bonferroni correction using pairwise t-tests
-                      posthoc_result <- tryCatch(
-                        pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = "bonferroni"),
-                        error = function(e) {
-                          cat("  Bonferroni error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        # Convert to Tukey-like format
-                        groups <- levels(anova_data$group)
-                        comparisons <- combn(groups, 2, simplify = FALSE)
-                        diff_values <- c()
-                        p_adj_values <- c()
-                        comparison_names <- c()
-
-                        for (comp in comparisons) {
-                          g1 <- comp[1]
-                          g2 <- comp[2]
-                          g1_idx <- which(rownames(posthoc_result$p.value) == g1)
-                          g2_idx <- which(colnames(posthoc_result$p.value) == g2)
-
-                          if (length(g1_idx) > 0 && length(g2_idx) > 0) {
-                            p_val <- posthoc_result$p.value[g1_idx, g2_idx]
-                          } else {
-                            g1_idx <- which(rownames(posthoc_result$p.value) == g2)
-                            g2_idx <- which(colnames(posthoc_result$p.value) == g1)
-                            p_val <- if (length(g1_idx) > 0 && length(g2_idx) > 0) posthoc_result$p.value[g1_idx, g2_idx] else NA
-                          }
-
-                          g1_values <- anova_data$value[anova_data$group == g1]
-                          g2_values <- anova_data$value[anova_data$group == g2]
-                          diff <- mean(g2_values, na.rm = TRUE) - mean(g1_values, na.rm = TRUE)
-
-                          comparison_names <- c(comparison_names, paste0(g2, "-", g1))
-                          diff_values <- c(diff_values, diff)
-                          p_adj_values <- c(p_adj_values, p_val)
-                        }
-
-                        posthoc_summary <- data.frame(
-                          diff = diff_values,
-                          lwr = rep(NA, length(diff_values)),
-                          upr = rep(NA, length(diff_values)),
-                          "p adj" = p_adj_values,
-                          row.names = comparison_names,
-                          check.names = FALSE
-                        )
-                      }
-                    } else if (selected_posthoc_test == "holm") {
-                      # Holm correction using pairwise t-tests
-                      posthoc_result <- tryCatch(
-                        pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = "holm"),
-                        error = function(e) {
-                          cat("  Holm error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        # Convert to Tukey-like format (same as Bonferroni)
-                        groups <- levels(anova_data$group)
-                        comparisons <- combn(groups, 2, simplify = FALSE)
-                        diff_values <- c()
-                        p_adj_values <- c()
-                        comparison_names <- c()
-
-                        for (comp in comparisons) {
-                          g1 <- comp[1]
-                          g2 <- comp[2]
-                          g1_idx <- which(rownames(posthoc_result$p.value) == g1)
-                          g2_idx <- which(colnames(posthoc_result$p.value) == g2)
-
-                          if (length(g1_idx) > 0 && length(g2_idx) > 0) {
-                            p_val <- posthoc_result$p.value[g1_idx, g2_idx]
-                          } else {
-                            g1_idx <- which(rownames(posthoc_result$p.value) == g2)
-                            g2_idx <- which(colnames(posthoc_result$p.value) == g1)
-                            p_val <- if (length(g1_idx) > 0 && length(g2_idx) > 0) posthoc_result$p.value[g1_idx, g2_idx] else NA
-                          }
-
-                          g1_values <- anova_data$value[anova_data$group == g1]
-                          g2_values <- anova_data$value[anova_data$group == g2]
-                          diff <- mean(g2_values, na.rm = TRUE) - mean(g1_values, na.rm = TRUE)
-
-                          comparison_names <- c(comparison_names, paste0(g2, "-", g1))
-                          diff_values <- c(diff_values, diff)
-                          p_adj_values <- c(p_adj_values, p_val)
-                        }
-
-                        posthoc_summary <- data.frame(
-                          diff = diff_values,
-                          lwr = rep(NA, length(diff_values)),
-                          upr = rep(NA, length(diff_values)),
-                          "p adj" = p_adj_values,
-                          row.names = comparison_names,
-                          check.names = FALSE
-                        )
-                      }
-                    } else if (selected_posthoc_test == "dunnett") {
-                      # Dunnett test (not typically used for grouped bar, default to Tukey)
-                      cat("  Warning: Dunnett test not implemented for grouped bar, using Tukey\\n")
-                      posthoc_result <- tryCatch(
-                        TukeyHSD(anova_result),
-                        error = function(e) {
-                          cat("  Tukey error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        posthoc_summary <- posthoc_result$group
-                      }
-                    }
-
-                    if (!is.null(posthoc_summary)) {
-                      cat(sprintf("  Post-hoc found %d pairwise comparisons\\n", nrow(posthoc_summary)))
-
-                      for (i in 1:nrow(posthoc_summary)) {
-                        comparison <- rownames(posthoc_summary)[i]
-                        p_adj <- posthoc_summary[i, "p adj"]
-                        diff <- posthoc_summary[i, "diff"]
-
-                        sig_label <- ""
-                        if (!is.na(p_adj)) {
-                          sig_label <- get_sig_symbol(p_adj)
-                        } else {
-                          sig_label <- "ns"
-                        }
-
-                        cat(sprintf("    %s: diff=%.2f, p=%.4f (%s)\\n", comparison, diff, p_adj, sig_label))
-                        posthoc_text <- c(posthoc_text, sprintf("  %s: diff=%.2f, p=%.4f (%s)",
-                                                                comparison, diff, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
-
-                        # Add comparisons to bracket data based on comparison mode
-                        should_add_posthoc <- FALSE
-                        if (comparison_mode == "significant") {
-                          should_add_posthoc <- (sig_label != "ns")
-                        } else if (comparison_mode == "all") {
-                          should_add_posthoc <- TRUE
-                        } else if (comparison_mode == "custom") {
-                          # Parse comparison to check if selected
-                          comp_parts_temp <- strsplit(comparison, "-")[[1]]
-                          if (length(comp_parts_temp) == 2) {
-                            comp_key1 <- paste0(comp_parts_temp[1], "-", comp_parts_temp[2], "@", cat_val)
-                            comp_key2 <- paste0(comp_parts_temp[2], "-", comp_parts_temp[1], "@", cat_val)
-                            should_add_posthoc <- (comp_key1 %in% custom_comps) || (comp_key2 %in% custom_comps)
-                          }
-                        }
-
-                        if (should_add_posthoc) {
-                          # Parse comparison string (format: "group2-group1")
-                          comp_parts <- strsplit(comparison, "-")[[1]]
-                          if (length(comp_parts) == 2) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1 = comp_parts[1],
-                              group2 = comp_parts[2],
-                              p.signif = sig_label,
-                              x.position = cat_index,
-                              y.position = NA,  # Will be calculated later
-                              stringsAsFactors = FALSE
-                            ))
-                          }
-                        }
-                      }
-                    }
-                  }
-
-                  # Combine omnibus and post-hoc results (sig_label already added above)
-                  if (length(posthoc_text) > 0) {
-                    # Add post-hoc test type header with correct test name
-                    posthoc_header <- if (test_to_use == "kruskal") {
-                      dunn_adj_label <- if (selected_posthoc_test == "dunn_holm") "Holm" else "Bonferroni"
-                      sprintf("Post-hoc (Dunn test with %s):", dunn_adj_label)
-                    } else {
-                      # For ANOVA, show the actual selected post-hoc test
-                      if (selected_posthoc_test == "tukey") {
-                        "Post-hoc (Tukey HSD):"
-                      } else if (selected_posthoc_test == "bonferroni") {
-                        "Post-hoc (Pairwise t-test with Bonferroni):"
-                      } else if (selected_posthoc_test == "holm") {
-                        "Post-hoc (Pairwise t-test with Holm):"
-                      } else if (selected_posthoc_test == "dunnett") {
-                        "Post-hoc (Dunnett):"
-                      } else {
-                        "Post-hoc (Tukey HSD):"
-                      }
-                    }
-                    result_text <- paste0(result_text, "\\n", posthoc_header, "\\n", paste(posthoc_text, collapse="\\n"))
-                  }
-
-                  # Add to stat text results
-                  stat_text_results <- c(stat_text_results, result_text)
-                } else {
-                  # Not significant - sig_label already added above
-                  stat_text_results <- c(stat_text_results, result_text)
-                }
+              if (!is.na(res2$p_val)) {
+                cat_index <- which(unique_categories == cat_val)
+                ck1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
+                ck2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
+                should_add <- (comparison_mode=="significant" && sl!="ns") || (comparison_mode=="all") || (comparison_mode=="custom" && (ck1 %in% custom_comps || ck2 %in% custom_comps))
+                if (should_add) bracket_data <- rbind(bracket_data, data.frame(group1=as.character(groups_with_data[1]), group2=as.character(groups_with_data[2]), p.signif=sl, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
               }
+
+            } else if (n_groups_at_cat >= 3) {
+              cat_index <- which(unique_categories == cat_val)
+              if (paired) {
+                ad <- data.frame(group=factor(as.character(data_at_cat$group)), value=as.numeric(data_at_cat$value), subject_id=factor(as.character(data_at_cat$subject_id)))
+              } else {
+                ad <- data.frame(group=factor(as.character(data_at_cat$group)), value=as.numeric(data_at_cat$value))
+              }
+              ad <- ad[complete.cases(ad), ]; ad$group <- droplevels(ad$group)
+              if (nrow(ad) < 3) next
+
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              desc_lines_3g <- sapply(levels(ad$group), function(g) {
+                gd <- ad$value[ad$group==g]; ng <- length(gd); mg <- mean(gd)
+                if (ng > 1) { sg <- sd(gd); eg <- if(error_type=="se") sg/sqrt(ng) else if(error_type=="ci95") qt(0.975,df=ng-1)*sg/sqrt(ng) else sg; sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng, mg, .err_lbl, eg) }
+                else sprintf("  %s: n=%d, mean=%.4g", g, ng, mg)
+              })
+
+              res3 <- sato_run_stats_ngroup(
+                anova_data = ad,
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, post_hoc_test = selected_posthoc_test,
+                dunnett_control = dunnett_control,
+                stat_symbol_type = stat_symbol_type,
+                paired = paired,
+                paired_ph_correction = "${document.getElementById('pairedPostHocCorrection')?.value || 'holm'}",
+                error_label = .err_lbl,
+                desc_lines = desc_lines_3g
+              )
+              stat_text_results <- c(stat_text_results, res3$result_text)
+
+              # Build bracket_data from returned pairs
+              if (nrow(res3$pairs) > 0) {
+                for (pi in 1:nrow(res3$pairs)) {
+                  sl_pi <- res3$pairs$sig_label[pi]
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
+                }
               }
             }
           }
@@ -18425,58 +17337,44 @@ async function initWebR() {
             n_groups_at_cat <- length(groups_with_data)
 
             if (n_groups_at_cat == 2) {
-              g1d <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
-              g2d <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              if (paired) {
+                g1_df <- data_at_cat[data_at_cat$group == groups_with_data[1], c("subject_id", "value")]
+                g2_df <- data_at_cat[data_at_cat$group == groups_with_data[2], c("subject_id", "value")]
+                paired_df_cat <- merge(g1_df, g2_df, by = "subject_id")
+                g1d <- paired_df_cat$value.x
+                g2d <- paired_df_cat$value.y
+              } else {
+                g1d <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
+                g2d <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              }
               if (length(g1d) == 0 || length(g2d) == 0) next
 
-              normality_text <- c(); is_g1_normal <- TRUE; is_g2_normal <- TRUE
-              if (length(g1d) >= 3 && length(g1d) <= 5000) {
-                sr <- tryCatch(shapiro.test(g1d), error=function(e) NULL)
-                if (!is.null(sr)) { is_g1_normal <- sr$p.value >= 0.05; normality_text <- c(normality_text, sprintf("  %s: p=%.4f (%s)", groups_with_data[1], sr$p.value, if(is_g1_normal) "normal" else "non-normal")) }
-              }
-              if (length(g2d) >= 3 && length(g2d) <= 5000) {
-                sr <- tryCatch(shapiro.test(g2d), error=function(e) NULL)
-                if (!is.null(sr)) { is_g2_normal <- sr$p.value >= 0.05; normality_text <- c(normality_text, sprintf("  %s: p=%.4f (%s)", groups_with_data[2], sr$p.value, if(is_g2_normal) "normal" else "non-normal")) }
-              }
-
-              test_to_use <- statistical_test
-              if (statistical_test == "auto") test_to_use <- if (is_g1_normal && is_g2_normal) "t-test" else "wilcoxon"
-              else if (statistical_test == "parametric") test_to_use <- "t-test"
-              else if (statistical_test == "nonparametric") test_to_use <- "wilcoxon"
-
-              equal_variances <- TRUE; variance_text <- ""
-              if (test_to_use != "wilcoxon") {
-                if (variance_test == "levene") {
-                  comb <- data.frame(values=c(g1d, g2d), group=factor(c(rep(as.character(groups_with_data[1]),length(g1d)), rep(as.character(groups_with_data[2]),length(g2d)))))
-                  lev <- tryCatch(anova(lm(abs(values - tapply(values,group,mean)[group]) ~ group, data=comb)), error=function(e) NULL)
-                  if (!is.null(lev)) { equal_variances <- lev$\`Pr(>F)\`[1] > 0.05; variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", lev$\`Pr(>F)\`[1], if(equal_variances) "equal" else "unequal") }
-                } else {
-                  vt <- tryCatch(var.test(g1d, g2d), error=function(e) NULL)
-                  if (!is.null(vt)) { equal_variances <- vt$p.value > 0.05; variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", vt$p.value, if(equal_variances) "equal" else "unequal") }
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              desc_lines_v1 <- c()
+              for (g in groups_with_data) {
+                gd_v1 <- as.numeric(plot_data[plot_data$category==cat_val & plot_data$group==g, "value"]); gd_v1 <- gd_v1[!is.na(gd_v1)]; ng_v1 <- length(gd_v1)
+                if (ng_v1 > 0) {
+                  mg_v1 <- mean(gd_v1)
+                  if (ng_v1 > 1) { sg_v1 <- sd(gd_v1); eg_v1 <- if(error_type=="se") sg_v1/sqrt(ng_v1) else if(error_type=="ci95") qt(0.975,df=ng_v1-1)*sg_v1/sqrt(ng_v1) else sg_v1; desc_lines_v1 <- c(desc_lines_v1, sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng_v1, mg_v1, .err_lbl, eg_v1)) }
+                  else desc_lines_v1 <- c(desc_lines_v1, sprintf("  %s: n=%d, mean=%.4g", g, ng_v1, mg_v1))
                 }
               }
 
-              if (test_to_use == "wilcoxon") { tr <- tryCatch(wilcox.test(g1d, g2d), error=function(e) NULL); tn <- "Wilcoxon" }
-              else { tr <- tryCatch(t.test(g1d, g2d, var.equal=equal_variances), error=function(e) NULL); tn <- if(equal_variances) "Student's t-test" else "Welch's t-test" }
+              res2 <- sato_run_stats_2group(
+                group1_data = g1d, group2_data = g2d,
+                group_names = c(as.character(groups_with_data[1]), as.character(groups_with_data[2])),
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, variance_test = variance_test,
+                stat_symbol_type = stat_symbol_type,
+                paired = paired,
+                error_label = .err_lbl,
+                desc_lines = desc_lines_v1
+              )
+              stat_text_results <- c(stat_text_results, res2$result_text)
+              sl <- res2$sig_label
 
-              if (!is.null(tr)) {
-                p_val <- tr$p.value; sl <- get_sig_symbol(p_val)
+              if (!is.na(res2$p_val)) {
                 cat_index <- which(unique_categories == cat_val)
-                .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                rtxt <- sprintf("Category %s:\nSummary (mean +/- %s):", cat_val, .err_lbl)
-                for (g in groups_with_data) {
-                  gd <- as.numeric(plot_data[plot_data$category==cat_val & plot_data$group==g, "value"]); gd <- gd[!is.na(gd)]; ng <- length(gd)
-                  if (ng > 0) {
-                    mg <- mean(gd)
-                    if (ng > 1) { sg <- sd(gd); eg <- if(error_type=="se") sg/sqrt(ng) else if(error_type=="ci95") qt(0.975,df=ng-1)*sg/sqrt(ng) else sg; rtxt <- paste0(rtxt, sprintf("\n  %s: n=%d, mean=%.4g, %s=%.4g", g, ng, mg, .err_lbl, eg)) }
-                    else rtxt <- paste0(rtxt, sprintf("\n  %s: n=%d, mean=%.4g", g, ng, mg))
-                  }
-                }
-                if (length(normality_text) > 0) rtxt <- paste0(rtxt, "\n\nNormality (Shapiro-Wilk):\n", paste(normality_text, collapse="\n"))
-                if (nchar(variance_text) > 0) rtxt <- paste0(rtxt, "\n", variance_text)
-                rtxt <- paste0(rtxt, "\n\n", sprintf("%s: p=%.4f (%s)", tn, p_val, sl))
-                stat_text_results <- c(stat_text_results, rtxt)
-
                 ck1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
                 ck2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
                 cy <- if (!is.null(custom_y_positions[[ck1]])) custom_y_positions[[ck1]] else if (!is.null(custom_y_positions[[ck2]])) custom_y_positions[[ck2]] else NULL
@@ -18487,92 +17385,41 @@ async function initWebR() {
 
             } else if (n_groups_at_cat >= 3) {
               cat_index <- which(unique_categories == cat_val)
-              ad <- data.frame(group=factor(data_at_cat$group), value=as.numeric(data_at_cat$value))
-              ad <- ad[complete.cases(ad), ]
+              if (paired) {
+                ad <- data.frame(group=factor(as.character(data_at_cat$group)), value=as.numeric(data_at_cat$value), subject_id=factor(as.character(data_at_cat$subject_id)))
+              } else {
+                ad <- data.frame(group=factor(as.character(data_at_cat$group)), value=as.numeric(data_at_cat$value))
+              }
+              ad <- ad[complete.cases(ad), ]; ad$group <- droplevels(ad$group)
               if (nrow(ad) < 3) next
 
-              normality_text <- c(); all_normal <- TRUE
-              for (grp in groups_with_data) {
-                gd <- data_at_cat[data_at_cat$group==grp, "value"]
-                if (length(gd) >= 3 && length(gd) <= 5000) {
-                  sr <- tryCatch(shapiro.test(gd), error=function(e) NULL)
-                  if (!is.null(sr)) { is_n <- sr$p.value >= 0.05; normality_text <- c(normality_text, sprintf("  %s: p=%.4f (%s)", grp, sr$p.value, if(is_n) "normal" else "non-normal")); if (!is_n) all_normal <- FALSE }
-                }
-              }
-
-              test_to_use <- statistical_test
-              if (statistical_test == "auto") test_to_use <- if (all_normal) "anova" else "kruskal"
-
-              omnibus_p <- NA; test_name <- ""
-              if (test_to_use == "kruskal") { kr <- kruskal.test(value ~ group, data=ad); omnibus_p <- kr$p.value; test_name <- "Kruskal-Wallis" }
-              else { ar <- aov(value ~ group, data=ad); omnibus_p <- summary(ar)[[1]][["Pr(>F)"]][1]; test_name <- "ANOVA" }
-
               .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-              rtxt <- sprintf("Category %s:\nSummary (mean +/- %s):", cat_val, .err_lbl)
-              for (g in groups_with_data) {
-                gd <- ad$value[ad$group==g]; gd <- gd[!is.na(gd)]; ng <- length(gd)
-                if (ng > 0) {
-                  mg <- mean(gd)
-                  if (ng > 1) { sg <- sd(gd); eg <- if(error_type=="se") sg/sqrt(ng) else if(error_type=="ci95") qt(0.975,df=ng-1)*sg/sqrt(ng) else sg; rtxt <- paste0(rtxt, sprintf("\n  %s: n=%d, mean=%.4g, %s=%.4g", g, ng, mg, .err_lbl, eg)) }
-                  else rtxt <- paste0(rtxt, sprintf("\n  %s: n=%d, mean=%.4g", g, ng, mg))
-                }
-              }
-              if (length(normality_text) > 0) rtxt <- paste0(rtxt, "\nNormality (Shapiro-Wilk):\n", paste(normality_text, collapse="\n"))
-              asig <- if (!is.na(omnibus_p)) { if(omnibus_p<0.001) "***" else if(omnibus_p<0.01) "**" else if(omnibus_p<0.05) "*" else "ns" } else "ns"
-              rtxt <- paste0(rtxt, "\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", asig, ")")
+              desc_lines_v1 <- sapply(levels(ad$group), function(g) {
+                gd <- ad$value[ad$group==g]; ng <- length(gd); mg <- mean(gd)
+                if (ng > 1) { sg <- sd(gd); eg <- if(error_type=="se") sg/sqrt(ng) else if(error_type=="ci95") qt(0.975,df=ng-1)*sg/sqrt(ng) else sg; sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng, mg, .err_lbl, eg) }
+                else sprintf("  %s: n=%d, mean=%.4g", g, ng, mg)
+              })
 
-              if (!is.na(omnibus_p) && omnibus_p < 0.05) {
-                posthoc_summary <- NULL
-                if (test_to_use == "kruskal") {
-                  ph <- tryCatch({
-                    if (!requireNamespace("dunn.test", quietly=TRUE)) webr::install("dunn.test")
-                    library(dunn.test)
-                    dr <- dunn.test(ad$value, ad$group, method=if(selected_posthoc_test=="dunn_holm") "holm" else "bonferroni")
-                    data.frame(Comparison=dr$comparisons, P.adj=dr$P.adjusted, stringsAsFactors=FALSE)
-                  }, error=function(e) NULL)
-                  if (!is.null(ph)) {
-                    pt <- c()
-                    for (i in 1:nrow(ph)) {
-                      pa <- ph$P.adj[i]; sl <- if (!is.na(pa)) get_sig_symbol(pa) else "ns"
-                      pt <- c(pt, sprintf("  %s: p=%.4f (%s)", ph$Comparison[i], ifelse(is.na(pa),1,pa), sl))
-                      should_add_ph <- (comparison_mode=="significant" && sl!="ns") || comparison_mode=="all"
-                      if (should_add_ph) { cp <- strsplit(ph$Comparison[i], " - ")[[1]]; if (length(cp)==2) bracket_data <- rbind(bracket_data, data.frame(group1=cp[1], group2=cp[2], p.signif=sl, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE)) }
-                    }
-                    rtxt <- paste0(rtxt, "\nPost-hoc (Dunn):\n", paste(pt, collapse="\n"))
-                  }
-                } else {
-                  pw_method <- if (selected_posthoc_test == "bonferroni") "bonferroni" else if (selected_posthoc_test == "holm") "holm" else NULL
-                  if (selected_posthoc_test == "tukey") {
-                    tuk <- tryCatch(TukeyHSD(ar), error=function(e) NULL)
-                    if (!is.null(tuk)) posthoc_summary <- tuk$group
-                  } else if (!is.null(pw_method)) {
-                    pw <- tryCatch(pairwise.t.test(ad$value, ad$group, p.adjust.method=pw_method), error=function(e) NULL)
-                    if (!is.null(pw)) {
-                      gs <- levels(ad$group); comps <- combn(gs, 2, simplify=FALSE)
-                      pn <- c(); dv <- c(); pv <- c()
-                      for (comp in comps) {
-                        g1 <- comp[1]; g2 <- comp[2]
-                        ri <- which(rownames(pw$p.value)==g1); ci <- which(colnames(pw$p.value)==g2)
-                        pval <- if(length(ri)>0&&length(ci)>0) pw$p.value[ri,ci] else { ri2<-which(rownames(pw$p.value)==g2); ci2<-which(colnames(pw$p.value)==g1); if(length(ri2)>0&&length(ci2)>0) pw$p.value[ri2,ci2] else NA }
-                        pn <- c(pn, paste0(g2,"-",g1)); dv <- c(dv, mean(ad$value[ad$group==g2],na.rm=TRUE)-mean(ad$value[ad$group==g1],na.rm=TRUE)); pv <- c(pv, pval)
-                      }
-                      posthoc_summary <- data.frame(diff=dv, lwr=rep(NA,length(dv)), upr=rep(NA,length(dv)), "p adj"=pv, row.names=pn, check.names=FALSE)
-                    }
-                  }
-                  if (!is.null(posthoc_summary)) {
-                    pt <- c()
-                    for (i in 1:nrow(posthoc_summary)) {
-                      pa <- posthoc_summary[i,"p adj"]; sl <- if (!is.na(pa)) get_sig_symbol(pa) else "ns"
-                      cn <- rownames(posthoc_summary)[i]
-                      pt <- c(pt, sprintf("  %s: p=%.4f (%s)", cn, ifelse(is.na(pa),1,pa), sl))
-                      should_add_ph <- (comparison_mode=="significant" && sl!="ns") || comparison_mode=="all"
-                      if (should_add_ph) { cp <- strsplit(cn, "-")[[1]]; if(length(cp)==2) bracket_data <- rbind(bracket_data, data.frame(group1=cp[2], group2=cp[1], p.signif=sl, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE)) }
-                    }
-                    rtxt <- paste0(rtxt, sprintf("\nPost-hoc (%s):\n", selected_posthoc_test), paste(pt, collapse="\n"))
-                  }
+              res3 <- sato_run_stats_ngroup(
+                anova_data = ad,
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, post_hoc_test = selected_posthoc_test,
+                dunnett_control = dunnett_control,
+                stat_symbol_type = stat_symbol_type,
+                paired = paired,
+                error_label = .err_lbl,
+                desc_lines = desc_lines_v1
+              )
+              stat_text_results <- c(stat_text_results, res3$result_text)
+
+              # Build bracket_data from returned pairs
+              if (nrow(res3$pairs) > 0) {
+                for (pi in 1:nrow(res3$pairs)) {
+                  sl_pi <- res3$pairs$sig_label[pi]
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
                 }
               }
-              stat_text_results <- c(stat_text_results, rtxt)
 
               # Fill in NA y positions for 3+ group brackets
               max_val <- max(data_at_cat$value, na.rm=TRUE)
@@ -18815,852 +17662,87 @@ async function initWebR() {
             n_groups_at_cat <- length(groups_with_data)
 
             if (n_groups_at_cat == 2) {
-              # TWO GROUPS: Use t-test or Wilcoxon
               if (paired) {
                 g1_df <- data_at_cat[data_at_cat$group == groups_with_data[1], c("subject_id", "value")]
                 g2_df <- data_at_cat[data_at_cat$group == groups_with_data[2], c("subject_id", "value")]
                 paired_df_cat <- merge(g1_df, g2_df, by = "subject_id")
-                group1_data <- paired_df_cat$value.x
-                group2_data <- paired_df_cat$value.y
+                g1d <- paired_df_cat$value.x
+                g2d <- paired_df_cat$value.y
               } else {
-                group1_data <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
-                group2_data <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+                g1d <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
+                g2d <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              }
+              if (length(g1d) == 0 || length(g2d) == 0) next
+
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              desc_lines_2g <- c()
+              for (g in groups_with_data) {
+                gd_2g <- as.numeric(plot_data[plot_data$category==cat_val & plot_data$group==g, "value"]); gd_2g <- gd_2g[!is.na(gd_2g)]; ng_2g <- length(gd_2g)
+                if (ng_2g > 0) {
+                  mg_2g <- mean(gd_2g)
+                  if (ng_2g > 1) { sg_2g <- sd(gd_2g); eg_2g <- if(error_type=="se") sg_2g/sqrt(ng_2g) else if(error_type=="ci95") qt(0.975,df=ng_2g-1)*sg_2g/sqrt(ng_2g) else sg_2g; desc_lines_2g <- c(desc_lines_2g, sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng_2g, mg_2g, .err_lbl, eg_2g)) }
+                  else desc_lines_2g <- c(desc_lines_2g, sprintf("  %s: n=%d, mean=%.4g", g, ng_2g, mg_2g))
+                }
               }
 
-              # Only test if both groups have data
-              if (length(group1_data) > 0 && length(group2_data) > 0) {
-                # Perform normality test
-                normality_text <- c()
-                both_normal <- TRUE
-
-                if (paired) {
-                  # For paired tests: test normality of differences (statistically correct)
-                  diffs_paired <- group1_data - group2_data
-                  if (length(diffs_paired) >= 3 && length(diffs_paired) <= 5000) {
-                    shapiro_diffs <- tryCatch(
-                      shapiro.test(diffs_paired),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_diffs)) {
-                      both_normal <- shapiro_diffs$p.value >= 0.05
-                      diff_status <- if (both_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
-                    }
-                  }
-                } else {
-                  # For unpaired tests: test normality of individual groups
-                  is_group1_normal <- TRUE
-                  is_group2_normal <- TRUE
-
-                  if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
-                    shapiro_result1 <- tryCatch(
-                      shapiro.test(group1_data),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_result1)) {
-                      is_group1_normal <- shapiro_result1$p.value >= 0.05
-                      norm_status <- if (is_group1_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
-                    }
-                  }
-
-                  if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
-                    shapiro_result2 <- tryCatch(
-                      shapiro.test(group2_data),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_result2)) {
-                      is_group2_normal <- shapiro_result2$p.value >= 0.05
-                      norm_status <- if (is_group2_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
-                    }
-                  }
-
-                  both_normal <- is_group1_normal && is_group2_normal
-                }
-
-                # Select test based on mode
-                test_to_use <- statistical_test
-                if (statistical_test == "auto") {
-                  if (both_normal) {
-                    test_to_use <- "t-test"
-                    cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
-                  } else {
-                    test_to_use <- "wilcoxon"
-                    cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
-                  }
-                } else if (statistical_test == "parametric") {
-                  test_to_use <- "t-test"
-                  cat(if (paired) "  Manual mode: Paired t-test (parametric)\\n" else "  Manual mode: parametric t-test\\n")
-                } else if (statistical_test == "nonparametric") {
-                  test_to_use <- "wilcoxon"
-                  cat(if (paired) "  Manual mode: Paired Wilcoxon (non-parametric)\\n" else "  Manual mode: non-parametric Wilcoxon test\\n")
-                }
-
-                # Perform variance test (only for parametric tests)
-                variance_text <- ""
-                equal_variances <- TRUE
-                if (test_to_use != "wilcoxon" && !paired) {
-                  if (variance_test == "levene") {
-                    # Levene test for equality of variances
-                    combined_data <- data.frame(
-                      values = c(group1_data, group2_data),
-                      group = factor(c(rep(groups_with_data[1], length(group1_data)),
-                                      rep(groups_with_data[2], length(group2_data))))
-                    )
-
-                    # Calculate Levene test manually
-                    group_means <- tapply(combined_data$values, combined_data$group, mean)
-                    abs_deviations <- abs(combined_data$values - group_means[combined_data$group])
-                    levene_result <- tryCatch(
-                      anova(lm(abs_deviations ~ combined_data$group)),
-                      error = function(e) NULL
-                    )
-
-                    if (!is.null(levene_result)) {
-                      levene_p <- levene_result$\`Pr(>F)\`[1]
-                      equal_variances <- levene_p > 0.05
-                      variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                      variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", levene_p, variance_status)
-                      cat(sprintf("    Levene test: p=%.4f (%s)\\n", levene_p, variance_status))
-                    }
-                  } else {
-                    # F-test for equality of variances
-                    var_test <- tryCatch(
-                      var.test(group1_data, group2_data),
-                      error = function(e) NULL
-                    )
-
-                    if (!is.null(var_test)) {
-                      equal_variances <- var_test$p.value > 0.05
-                      variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                      variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", var_test$p.value, variance_status)
-                      cat(sprintf("    F-test: p=%.4f (%s)\\n", var_test$p.value, variance_status))
-                    }
-                  }
-                }
-
-                # Perform statistical test based on auto-selection
-                if (paired) {
-                  if (test_to_use == "wilcoxon") {
-                    test_result <- tryCatch(
-                      wilcox.test(group1_data, group2_data, paired = TRUE),
-                      error = function(e) NULL
-                    )
-                    test_name <- "Paired Wilcoxon"
-                  } else {
-                    test_result <- tryCatch(
-                      t.test(group1_data, group2_data, paired = TRUE),
-                      error = function(e) NULL
-                    )
-                    test_name <- "Paired t-test"
-                  }
-                } else if (test_to_use == "wilcoxon") {
-                  test_result <- tryCatch(
-                    wilcox.test(group1_data, group2_data),
-                    error = function(e) NULL
-                  )
-                  test_name <- "Wilcoxon"
-                } else {
-                  # Use appropriate t-test based on variance equality
-                  test_result <- tryCatch(
-                    t.test(group1_data, group2_data, var.equal = equal_variances),
-                    error = function(e) NULL
-                  )
-                  test_name <- if (equal_variances) "Student's t-test" else "Welch's t-test"
-                }
-
-                if (!is.null(test_result)) {
-                  p_val <- test_result$p.value
-                  cat(sprintf("  2-group test: %s vs %s, %s p=%.4f\\n",
-                              groups_with_data[1], groups_with_data[2], test_name, p_val))
-
-                  # Determine significance symbol using helper function
-                  sig_label <- get_sig_symbol(p_val)
-
-                  # Store result text for UI with proper order: Category -> Summary -> Normality -> Variance -> Test result
-                  result_text <- sprintf("Category %s:", cat_val)
-
-                  # Add group statistics (n, mean, SD/SE/CI95) for each group
-                  .err_label_2g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_2g))
-                  for (g in groups_with_data) {
-                    g_data <- as.numeric(plot_data[plot_data$category == cat_val & plot_data$group == g, "value"])
-                    g_data <- g_data[!is.na(g_data)]
-                    n_g2 <- length(g_data)
-                    if (n_g2 > 0) {
-                      mean_g2 <- mean(g_data)
-                      if (n_g2 > 1) {
-                        sd_g2 <- sd(g_data)
-                        err_g2 <- if (error_type == "se") sd_g2 / sqrt(n_g2) else if (error_type == "ci95") qt(0.975, df=n_g2-1) * sd_g2 / sqrt(n_g2) else sd_g2
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g2, mean_g2, .err_label_2g, err_g2))
-                      } else {
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g2, mean_g2))
-                      }
-                    }
-                  }
-
-                  # Add normality testing results
-                  if (length(normality_text) > 0) {
-                    result_text <- paste0(result_text, "\\n\\nNormality Testing (Shapiro-Wilk):\\n  ", paste(normality_text, collapse="\\n  "))
-                  }
-
-                  # Add variance test results
-                  if (nchar(variance_text) > 0) {
-                    result_text <- paste0(result_text, "\\n", variance_text)
-                  }
-
-                  # Add main test result
-                  result_text <- paste0(result_text, "\\n\\n", sprintf("%s: p=%.4f (%s)",
-                                        test_name, p_val, sig_label))
-                  stat_text_results <- c(stat_text_results, result_text)
-
-                  # Add ggpubr bracket for this comparison
-                  # Calculate x position (find position in all unique_categories, not just selected ones)
-                  cat_index <- which(unique_categories == cat_val)
-
-                  # Calculate y position (above the highest bar/point in this category)
-                  # Check if custom position is provided (check both possible orderings)
-                  comp_key1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
-                  comp_key2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
-
-                  custom_y_pos <- NULL
-                  if (!is.null(custom_y_positions[[comp_key1]])) {
-                    custom_y_pos <- custom_y_positions[[comp_key1]]
-                    cat("Using custom Y position for", comp_key1, ":", custom_y_pos, "\\n")
-                  } else if (!is.null(custom_y_positions[[comp_key2]])) {
-                    custom_y_pos <- custom_y_positions[[comp_key2]]
-                    cat("Using custom Y position for", comp_key2, ":", custom_y_pos, "\\n")
-                  }
-
-                  if (!is.null(custom_y_pos)) {
-                    # Use custom Y position
-                    y_pos <- custom_y_pos
-                  } else {
-                    # Calculate default position
-                    # Get the summary data for this category to find the bar heights
-                    data_at_cat_all <- plot_data[plot_data$category == cat_val, ]
-                    max_value <- max(data_at_cat_all$value, na.rm = TRUE)
-                    # No error bars in box plots
-
-                    # Position symbol above the tallest bar + error bar with some spacing
-                    # Increased spacing to avoid overlapping with dots (0.055 -> 0.15)
-                    y_pos <- max_value + (max_value * 0.20)  # 20% above highest value
-                  }
-
-                  # Add to bracket data based on comparison mode
-                  should_add_bracket <- FALSE
-                  if (comparison_mode == "significant") {
-                    # Only add if significant
-                    should_add_bracket <- (sig_label != "ns")
-                  } else if (comparison_mode == "all") {
-                    # Add all comparisons
-                    should_add_bracket <- TRUE
-                  } else if (comparison_mode == "custom") {
-                    # Only add if this comparison is selected
-                    # Check if this comparison is in the custom selections
-                    comp_key1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
-                    comp_key2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
-                    should_add_bracket <- (comp_key1 %in% custom_comps) || (comp_key2 %in% custom_comps)
-                  }
-
-                  if (should_add_bracket) {
-                    bracket_data <- rbind(bracket_data, data.frame(
-                      group1 = as.character(groups_with_data[1]),
-                      group2 = as.character(groups_with_data[2]),
-                      p.signif = sig_label,
-                      x.position = cat_index,
-                      y.position = y_pos,
-                      stringsAsFactors = FALSE
-                    ))
-                  }
-                }
-              }
-            } else if (n_groups_at_cat >= 3) {
-              # Calculate x position (shared by paired and unpaired paths)
-              cat_index <- which(unique_categories == cat_val)
-
-              if (paired) {
-                # PAIRED 3+ GROUPS: RM-ANOVA or Friedman
-                cat("  Performing RM-ANOVA/Friedman for", n_groups_at_cat, "paired groups at category", cat_val, "\\n")
-
-                anova_data_p <- data.frame(
-                  value = as.numeric(data_at_cat$value),
-                  group = factor(as.character(data_at_cat$group)),
-                  subject_id = factor(data_at_cat$subject_id)
-                )
-                anova_data_p <- anova_data_p[complete.cases(anova_data_p), ]
-                anova_data_p$group <- droplevels(anova_data_p$group)
-
-                if (nrow(anova_data_p) >= 3) {
-                  # Normality: test pairwise differences
-                  normality_text <- c()
-                  all_normal <- TRUE
-                  groups_list_norm <- levels(factor(anova_data_p$group))
-                  pairs_norm <- combn(groups_list_norm, 2, simplify=FALSE)
-                  for (pair_n in pairs_norm) {
-                    g1_df_n <- anova_data_p[anova_data_p$group == pair_n[1], c("subject_id", "value")]
-                    g2_df_n <- anova_data_p[anova_data_p$group == pair_n[2], c("subject_id", "value")]
-                    merged_n <- merge(g1_df_n, g2_df_n, by="subject_id")
-                    diffs_n <- merged_n$value.x - merged_n$value.y
-                    if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
-                      shapiro_n <- tryCatch(shapiro.test(diffs_n), error=function(e) NULL)
-                      if (!is.null(shapiro_n)) {
-                        is_norm_n <- shapiro_n$p.value >= 0.05
-                        norm_status_n <- if (is_norm_n) "normal" else "non-normal"
-                        normality_text <- c(normality_text,
-                          sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], shapiro_n$p.value, norm_status_n))
-                        if (!is_norm_n) all_normal <- FALSE
-                      }
-                    }
-                  }
-                  # Auto-select test
-                  test_to_use_p <- statistical_test
-                  if (statistical_test == "auto") {
-                    test_to_use_p <- if (all_normal) "rm_anova" else "friedman"
-                    cat("  Auto-selected:", test_to_use_p, "(all diffs normal:", all_normal, ")\\n")
-                  } else if (statistical_test == "parametric") {
-                    test_to_use_p <- "rm_anova"
-                    cat("  Manual mode: RM-ANOVA\\n")
-                  } else {
-                    test_to_use_p <- "friedman"
-                    cat("  Manual mode: Friedman\\n")
-                  }
-                  # Omnibus test
-                  omnibus_p <- NA
-                  test_name <- ""
-                  if (test_to_use_p == "rm_anova") {
-                    rm_result <- tryCatch(
-                      summary(aov(value ~ group + Error(subject_id/group), data=anova_data_p)),
-                      error = function(e) { cat("  RM-ANOVA error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(rm_result)) {
-                      omnibus_p <- rm_result[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1]
-                      if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
-                      test_name <- "RM-ANOVA"
-                    }
-                  } else {
-                    friedman_r <- tryCatch(
-                      friedman.test(value ~ group | subject_id, data=anova_data_p),
-                      error = function(e) { cat("  Friedman error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(friedman_r)) {
-                      omnibus_p <- friedman_r$p.value
-                      test_name <- "Friedman"
-                    }
-                  }
-                  cat("  ", test_name, "p-value:", omnibus_p, "\\n")
-                  # Build result text
-                  result_text <- sprintf("Category %s:", cat_val)
-                  .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
-                  for (g in groups_with_data) {
-                    g_data <- anova_data_p$value[anova_data_p$group == g]
-                    g_data <- g_data[!is.na(g_data)]
-                    n_g3 <- length(g_data)
-                    if (n_g3 > 0) {
-                      mean_g3 <- mean(g_data)
-                      if (n_g3 > 1) {
-                        sd_g3 <- sd(g_data)
-                        err_g3 <- if (error_type == "se") sd_g3/sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1)*sd_g3/sqrt(n_g3) else sd_g3
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
-                      } else {
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
-                      }
-                    }
-                  }
-                  if (length(normality_text) > 0) {
-                    result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-                  }
-                  anova_sig_label <- if (!is.na(omnibus_p)) {
-                    if (omnibus_p < 0.001) "***" else if (omnibus_p < 0.01) "**" else if (omnibus_p < 0.05) "*" else "ns"
-                  } else "ns"
-                  result_text <- paste0(result_text, "\\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", anova_sig_label, ")")
-                  # Post-hoc if omnibus significant
-                  if (!is.na(omnibus_p) && omnibus_p < 0.05) {
-                    cat("  Omnibus significant, performing paired post-hoc tests\\n")
-                    posthoc_text <- c()
-                    ph_method_p <- paired_ph_correction
-                    if (test_to_use_p == "rm_anova") {
-                      cat(sprintf("  Pairwise paired t-test (%s correction)...\\n", ph_method_p))
-                      pt_result_p <- tryCatch(
-                        pairwise.t.test(anova_data_p$value, anova_data_p$group,
-                                        paired=TRUE, p.adjust.method=ph_method_p),
-                        error = function(e) { cat("  pairwise.t.test error:", e$message, "\\n"); NULL }
-                      )
-                      if (!is.null(pt_result_p)) {
-                        groups_pt <- levels(factor(anova_data_p$group))
-                        comps_pt <- combn(groups_pt, 2, simplify=FALSE)
-                        for (comp_pt in comps_pt) {
-                          g1_pt <- comp_pt[1]; g2_pt <- comp_pt[2]
-                          r_idx <- which(rownames(pt_result_p$p.value) == g2_pt)
-                          c_idx <- which(colnames(pt_result_p$p.value) == g1_pt)
-                          p_val_pt <- if (length(r_idx)>0 && length(c_idx)>0) pt_result_p$p.value[r_idx, c_idx] else NA
-                          if (is.na(p_val_pt)) {
-                            r_idx2 <- which(rownames(pt_result_p$p.value) == g1_pt)
-                            c_idx2 <- which(colnames(pt_result_p$p.value) == g2_pt)
-                            p_val_pt <- if (length(r_idx2)>0 && length(c_idx2)>0) pt_result_p$p.value[r_idx2, c_idx2] else NA
-                          }
-                          sig_lbl_pt <- if (!is.na(p_val_pt)) get_sig_symbol(p_val_pt) else "ns"
-                          cmp_str_pt <- paste0(g2_pt, "-", g1_pt)
-                          cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
-                          posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
-                          should_add_pt <- FALSE
-                          if (comparison_mode == "significant") should_add_pt <- (sig_lbl_pt != "ns")
-                          else if (comparison_mode == "all") should_add_pt <- TRUE
-                          else if (comparison_mode == "custom") {
-                            ck1 <- paste0(g1_pt, "-", g2_pt, "@", cat_val)
-                            ck2 <- paste0(g2_pt, "-", g1_pt, "@", cat_val)
-                            should_add_pt <- (ck1 %in% custom_comps) || (ck2 %in% custom_comps)
-                          }
-                          if (should_add_pt) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1=g2_pt, group2=g1_pt,
-                              p.signif=sig_lbl_pt, x.position=cat_index, y.position=NA,
-                              stringsAsFactors=FALSE
-                            ))
-                          }
-                        }
-                      }
-                      ph_header_p <- sprintf("Post-hoc (Paired t-test, %s):", toupper(ph_method_p))
-                    } else {
-                      cat(sprintf("  Pairwise paired Wilcoxon (%s correction)...\\n", ph_method_p))
-                      groups_fw <- levels(factor(anova_data_p$group))
-                      comps_fw <- combn(groups_fw, 2, simplify=FALSE)
-                      p_raw_fw <- c(); cmp_names_fw <- c()
-                      for (comp_fw in comps_fw) {
-                        g1_fw_df <- anova_data_p[anova_data_p$group == comp_fw[1], c("subject_id", "value")]
-                        g2_fw_df <- anova_data_p[anova_data_p$group == comp_fw[2], c("subject_id", "value")]
-                        merged_fw <- merge(g1_fw_df, g2_fw_df, by="subject_id")
-                        pv_fw <- tryCatch(
-                          wilcox.test(merged_fw$value.x, merged_fw$value.y, paired=TRUE)$p.value,
-                          error = function(e) NA
-                        )
-                        p_raw_fw <- c(p_raw_fw, pv_fw)
-                        cmp_names_fw <- c(cmp_names_fw, paste0(comp_fw[2], "-", comp_fw[1]))
-                      }
-                      p_adj_fw <- p.adjust(p_raw_fw, method=ph_method_p)
-                      for (i in seq_along(cmp_names_fw)) {
-                        cmp_fw_str <- cmp_names_fw[i]
-                        p_adj_fw_i <- p_adj_fw[i]
-                        sig_lbl_fw <- if (!is.na(p_adj_fw_i)) get_sig_symbol(p_adj_fw_i) else "ns"
-                        cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
-                        posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
-                        should_add_fw <- FALSE
-                        if (comparison_mode == "significant") should_add_fw <- (sig_lbl_fw != "ns")
-                        else if (comparison_mode == "all") should_add_fw <- TRUE
-                        else if (comparison_mode == "custom") {
-                          comp_parts_fw_temp <- strsplit(cmp_fw_str, "-")[[1]]
-                          if (length(comp_parts_fw_temp) == 2) {
-                            ck1_fw <- paste0(comp_parts_fw_temp[1], "-", comp_parts_fw_temp[2], "@", cat_val)
-                            ck2_fw <- paste0(comp_parts_fw_temp[2], "-", comp_parts_fw_temp[1], "@", cat_val)
-                            should_add_fw <- (ck1_fw %in% custom_comps) || (ck2_fw %in% custom_comps)
-                          }
-                        }
-                        if (should_add_fw) {
-                          comp_parts_fw2 <- strsplit(cmp_fw_str, "-")[[1]]
-                          if (length(comp_parts_fw2) == 2) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1=comp_parts_fw2[1], group2=comp_parts_fw2[2],
-                              p.signif=sig_lbl_fw, x.position=cat_index, y.position=NA,
-                              stringsAsFactors=FALSE
-                            ))
-                          }
-                        }
-                      }
-                      ph_header_p <- sprintf("Post-hoc (Paired Wilcoxon, %s):", toupper(ph_method_p))
-                    }
-                    if (length(posthoc_text) > 0) {
-                      result_text <- paste0(result_text, "\\n", ph_header_p, "\\n", paste(posthoc_text, collapse="\\n"))
-                    }
-                  }
-                  stat_text_results <- c(stat_text_results, result_text)
-                }
-              } else {
-              # THREE OR MORE GROUPS (unpaired): Use ANOVA/Kruskal-Wallis + post-hoc tests
-              cat("  Performing ANOVA/Kruskal-Wallis for", n_groups_at_cat, "groups at category", cat_val, "\\n")
-
-              # Prepare data for ANOVA
-              anova_data <- data.frame(
-                group = factor(data_at_cat$group),
-                value = as.numeric(data_at_cat$value)
+              res2 <- sato_run_stats_2group(
+                group1_data = g1d, group2_data = g2d,
+                group_names = c(as.character(groups_with_data[1]), as.character(groups_with_data[2])),
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, variance_test = variance_test,
+                stat_symbol_type = stat_symbol_type,
+                paired = paired,
+                error_label = .err_lbl,
+                desc_lines = desc_lines_2g
               )
-              anova_data <- anova_data[complete.cases(anova_data), ]
+              stat_text_results <- c(stat_text_results, res2$result_text)
+              sl <- res2$sig_label
 
-              if (nrow(anova_data) >= 3) {
-                # Perform normality test for auto-selection
-                normality_text <- c()
-                all_normal <- TRUE
-
-                for (grp in groups_with_data) {
-                  grp_data <- data_at_cat[data_at_cat$group == grp, "value"]
-                  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
-                    shapiro_result <- tryCatch(
-                      shapiro.test(grp_data),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_result)) {
-                      is_normal <- shapiro_result$p.value >= 0.05
-                      norm_status <- if (is_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", grp, shapiro_result$p.value, norm_status))
-                      if (!is_normal) all_normal <- FALSE
-                    }
-                  }
-                }
-
-                # Auto-select test
-                test_to_use <- statistical_test
-                if (statistical_test == "auto") {
-                  test_to_use <- if (all_normal) "anova" else "kruskal"
-                  cat("  Auto-selected:", test_to_use, "(normality:", all_normal, ")\\n")
-                }
-
-                # Perform omnibus test
-                omnibus_p <- NA
-                test_name <- ""
-                if (test_to_use == "kruskal") {
-                  kruskal_result <- kruskal.test(value ~ group, data = anova_data)
-                  omnibus_p <- kruskal_result$p.value
-                  test_name <- "Kruskal-Wallis"
-                } else {
-                  anova_result <- aov(value ~ group, data = anova_data)
-                  anova_summary <- summary(anova_result)
-                  omnibus_p <- anova_summary[[1]][["Pr(>F)"]][1]
-                  test_name <- "ANOVA"
-                }
-
-                cat("  ", test_name, "p-value:", omnibus_p, "\\n")
-
-                # Build result text - ORDER: Summary, Normality, ANOVA, Post-hoc
-                result_text <- sprintf("Category %s:", cat_val)
-                # Add descriptive statistics
-                .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
-                for (g in groups_with_data) {
-                  g_data <- anova_data$value[anova_data$group == g]
-                  g_data <- g_data[!is.na(g_data)]
-                  n_g3 <- length(g_data)
-                  if (n_g3 > 0) {
-                    mean_g3 <- mean(g_data)
-                    if (n_g3 > 1) {
-                      sd_g3 <- sd(g_data)
-                      err_g3 <- if (error_type == "se") sd_g3 / sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1) * sd_g3 / sqrt(n_g3) else sd_g3
-                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
-                    } else {
-                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
-                    }
-                  }
-                }
-                if (length(normality_text) > 0) {
-                  result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-                }
-                # Add ANOVA result with significance symbol
-                anova_sig_label <- if (!is.na(omnibus_p)) {
-                  if (omnibus_p < 0.001) "***" else if (omnibus_p < 0.01) "**" else if (omnibus_p < 0.05) "*" else "ns"
-                } else "ns"
-                result_text <- paste0(result_text, "\\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", anova_sig_label, ")")
-
-                # If significant, perform post-hoc tests
-                if (!is.na(omnibus_p) && omnibus_p < 0.05) {
-                  cat("  Omnibus test significant, performing post-hoc tests\\n")
-
-                  # Perform appropriate post-hoc test based on omnibus test type
-                  posthoc_result <- NULL
-                  posthoc_text <- c()
-
-                  if (test_to_use == "kruskal") {
-                    # For Kruskal-Wallis, use Dunn test
-                    cat("  Performing Dunn post-hoc test...\\n")
-                    posthoc_result <- tryCatch({
-                      if (!requireNamespace("dunn.test", quietly = TRUE)) {
-                        cat("Installing dunn.test package...\\n")
-                        webr::install("dunn.test")
-                      }
-                      library(dunn.test)
-
-                      dunn_adj <- if (selected_posthoc_test == "dunn_holm") "holm" else "bonferroni"
-                      dunn_result <- dunn.test(anova_data$value, anova_data$group, method = dunn_adj)
-
-                      # Format results into a data frame
-                      data.frame(
-                        Comparison = dunn_result$comparisons,
-                        P.adj = dunn_result$P.adjusted,
-                        stringsAsFactors = FALSE
-                      )
-                    }, error = function(e) {
-                      cat("  Dunn test error:", e$message, "\\n")
-                      # Add error as annotation text for debugging
-                      result_text <<- paste0(result_text, "\\n[DUNN ERROR: ", e$message, "]")
-                      NULL
-                    })
-
-                    if (!is.null(posthoc_result)) {
-                      cat(sprintf("  Dunn found %d pairwise comparisons\\n", nrow(posthoc_result)))
-                      for (i in 1:nrow(posthoc_result)) {
-                        comparison <- posthoc_result$Comparison[i]
-                        p_adj <- posthoc_result$P.adj[i]
-
-                        sig_label <- ""
-                        if (!is.na(p_adj)) {
-                          sig_label <- get_sig_symbol(p_adj)
-                        } else {
-                          sig_label <- "ns"
-                        }
-
-                        cat(sprintf("    %s: p=%.4f (%s)\\n", comparison, p_adj, sig_label))
-                        posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)",
-                                                                comparison, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
-
-                        # Add comparisons to bracket data based on comparison mode
-                        should_add_posthoc <- FALSE
-                        if (comparison_mode == "significant") {
-                          should_add_posthoc <- (sig_label != "ns")
-                        } else if (comparison_mode == "all") {
-                          should_add_posthoc <- TRUE
-                        } else if (comparison_mode == "custom") {
-                          # Parse comparison to check if selected
-                          comp_parts_temp <- strsplit(comparison, " - ")[[1]]
-                          if (length(comp_parts_temp) == 2) {
-                            comp_key1 <- paste0(comp_parts_temp[1], "-", comp_parts_temp[2], "@", cat_val)
-                            comp_key2 <- paste0(comp_parts_temp[2], "-", comp_parts_temp[1], "@", cat_val)
-                            should_add_posthoc <- (comp_key1 %in% custom_comps) || (comp_key2 %in% custom_comps)
-                          }
-                        }
-
-                        if (should_add_posthoc) {
-                          # Parse comparison string (format: "group1 - group2")
-                          comp_parts <- strsplit(comparison, " - ")[[1]]
-                          if (length(comp_parts) == 2) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1 = comp_parts[1],
-                              group2 = comp_parts[2],
-                              p.signif = sig_label,
-                              x.position = cat_index,
-                              y.position = NA,  # Will be calculated later
-                              stringsAsFactors = FALSE
-                            ))
-                          }
-                        }
-                      }
-                    }
-                  } else {
-                    # For ANOVA, use selected post-hoc test
-                    cat(sprintf("  Performing %s post-hoc test...\\n", selected_posthoc_test))
-                    posthoc_result <- NULL
-                    posthoc_summary <- NULL
-
-                    if (selected_posthoc_test == "tukey") {
-                      # Tukey HSD test
-                      posthoc_result <- tryCatch(
-                        TukeyHSD(anova_result),
-                        error = function(e) {
-                          cat("  Tukey error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        posthoc_summary <- posthoc_result$group
-                      }
-                    } else if (selected_posthoc_test == "bonferroni") {
-                      # Bonferroni correction using pairwise t-tests
-                      posthoc_result <- tryCatch(
-                        pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = "bonferroni"),
-                        error = function(e) {
-                          cat("  Bonferroni error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        # Convert to Tukey-like format
-                        groups <- levels(anova_data$group)
-                        comparisons <- combn(groups, 2, simplify = FALSE)
-                        diff_values <- c()
-                        p_adj_values <- c()
-                        comparison_names <- c()
-
-                        for (comp in comparisons) {
-                          g1 <- comp[1]
-                          g2 <- comp[2]
-                          g1_idx <- which(rownames(posthoc_result$p.value) == g1)
-                          g2_idx <- which(colnames(posthoc_result$p.value) == g2)
-
-                          if (length(g1_idx) > 0 && length(g2_idx) > 0) {
-                            p_val <- posthoc_result$p.value[g1_idx, g2_idx]
-                          } else {
-                            g1_idx <- which(rownames(posthoc_result$p.value) == g2)
-                            g2_idx <- which(colnames(posthoc_result$p.value) == g1)
-                            p_val <- if (length(g1_idx) > 0 && length(g2_idx) > 0) posthoc_result$p.value[g1_idx, g2_idx] else NA
-                          }
-
-                          g1_values <- anova_data$value[anova_data$group == g1]
-                          g2_values <- anova_data$value[anova_data$group == g2]
-                          diff <- mean(g2_values, na.rm = TRUE) - mean(g1_values, na.rm = TRUE)
-
-                          comparison_names <- c(comparison_names, paste0(g2, "-", g1))
-                          diff_values <- c(diff_values, diff)
-                          p_adj_values <- c(p_adj_values, p_val)
-                        }
-
-                        posthoc_summary <- data.frame(
-                          diff = diff_values,
-                          lwr = rep(NA, length(diff_values)),
-                          upr = rep(NA, length(diff_values)),
-                          "p adj" = p_adj_values,
-                          row.names = comparison_names,
-                          check.names = FALSE
-                        )
-                      }
-                    } else if (selected_posthoc_test == "holm") {
-                      # Holm correction using pairwise t-tests
-                      posthoc_result <- tryCatch(
-                        pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = "holm"),
-                        error = function(e) {
-                          cat("  Holm error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        # Convert to Tukey-like format (same as Bonferroni)
-                        groups <- levels(anova_data$group)
-                        comparisons <- combn(groups, 2, simplify = FALSE)
-                        diff_values <- c()
-                        p_adj_values <- c()
-                        comparison_names <- c()
-
-                        for (comp in comparisons) {
-                          g1 <- comp[1]
-                          g2 <- comp[2]
-                          g1_idx <- which(rownames(posthoc_result$p.value) == g1)
-                          g2_idx <- which(colnames(posthoc_result$p.value) == g2)
-
-                          if (length(g1_idx) > 0 && length(g2_idx) > 0) {
-                            p_val <- posthoc_result$p.value[g1_idx, g2_idx]
-                          } else {
-                            g1_idx <- which(rownames(posthoc_result$p.value) == g2)
-                            g2_idx <- which(colnames(posthoc_result$p.value) == g1)
-                            p_val <- if (length(g1_idx) > 0 && length(g2_idx) > 0) posthoc_result$p.value[g1_idx, g2_idx] else NA
-                          }
-
-                          g1_values <- anova_data$value[anova_data$group == g1]
-                          g2_values <- anova_data$value[anova_data$group == g2]
-                          diff <- mean(g2_values, na.rm = TRUE) - mean(g1_values, na.rm = TRUE)
-
-                          comparison_names <- c(comparison_names, paste0(g2, "-", g1))
-                          diff_values <- c(diff_values, diff)
-                          p_adj_values <- c(p_adj_values, p_val)
-                        }
-
-                        posthoc_summary <- data.frame(
-                          diff = diff_values,
-                          lwr = rep(NA, length(diff_values)),
-                          upr = rep(NA, length(diff_values)),
-                          "p adj" = p_adj_values,
-                          row.names = comparison_names,
-                          check.names = FALSE
-                        )
-                      }
-                    } else if (selected_posthoc_test == "dunnett") {
-                      # Dunnett test (not typically used for grouped bar, default to Tukey)
-                      cat("  Warning: Dunnett test not implemented for grouped bar, using Tukey\\n")
-                      posthoc_result <- tryCatch(
-                        TukeyHSD(anova_result),
-                        error = function(e) {
-                          cat("  Tukey error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        posthoc_summary <- posthoc_result$group
-                      }
-                    }
-
-                    if (!is.null(posthoc_summary)) {
-                      cat(sprintf("  Post-hoc found %d pairwise comparisons\\n", nrow(posthoc_summary)))
-
-                      for (i in 1:nrow(posthoc_summary)) {
-                        comparison <- rownames(posthoc_summary)[i]
-                        p_adj <- posthoc_summary[i, "p adj"]
-                        diff <- posthoc_summary[i, "diff"]
-
-                        sig_label <- ""
-                        if (!is.na(p_adj)) {
-                          sig_label <- get_sig_symbol(p_adj)
-                        } else {
-                          sig_label <- "ns"
-                        }
-
-                        cat(sprintf("    %s: diff=%.2f, p=%.4f (%s)\\n", comparison, diff, p_adj, sig_label))
-                        posthoc_text <- c(posthoc_text, sprintf("  %s: diff=%.2f, p=%.4f (%s)",
-                                                                comparison, diff, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
-
-                        # Add comparisons to bracket data based on comparison mode
-                        should_add_posthoc <- FALSE
-                        if (comparison_mode == "significant") {
-                          should_add_posthoc <- (sig_label != "ns")
-                        } else if (comparison_mode == "all") {
-                          should_add_posthoc <- TRUE
-                        } else if (comparison_mode == "custom") {
-                          # Parse comparison to check if selected
-                          comp_parts_temp <- strsplit(comparison, "-")[[1]]
-                          if (length(comp_parts_temp) == 2) {
-                            comp_key1 <- paste0(comp_parts_temp[1], "-", comp_parts_temp[2], "@", cat_val)
-                            comp_key2 <- paste0(comp_parts_temp[2], "-", comp_parts_temp[1], "@", cat_val)
-                            should_add_posthoc <- (comp_key1 %in% custom_comps) || (comp_key2 %in% custom_comps)
-                          }
-                        }
-
-                        if (should_add_posthoc) {
-                          # Parse comparison string (format: "group2-group1")
-                          comp_parts <- strsplit(comparison, "-")[[1]]
-                          if (length(comp_parts) == 2) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1 = comp_parts[1],
-                              group2 = comp_parts[2],
-                              p.signif = sig_label,
-                              x.position = cat_index,
-                              y.position = NA,  # Will be calculated later
-                              stringsAsFactors = FALSE
-                            ))
-                          }
-                        }
-                      }
-                    }
-                  }
-
-                  # Combine omnibus and post-hoc results (sig_label already added above)
-                  if (length(posthoc_text) > 0) {
-                    # Add post-hoc test type header with correct test name
-                    posthoc_header <- if (test_to_use == "kruskal") {
-                      dunn_adj_label <- if (selected_posthoc_test == "dunn_holm") "Holm" else "Bonferroni"
-                      sprintf("Post-hoc (Dunn test with %s):", dunn_adj_label)
-                    } else {
-                      # For ANOVA, show the actual selected post-hoc test
-                      if (selected_posthoc_test == "tukey") {
-                        "Post-hoc (Tukey HSD):"
-                      } else if (selected_posthoc_test == "bonferroni") {
-                        "Post-hoc (Pairwise t-test with Bonferroni):"
-                      } else if (selected_posthoc_test == "holm") {
-                        "Post-hoc (Pairwise t-test with Holm):"
-                      } else if (selected_posthoc_test == "dunnett") {
-                        "Post-hoc (Dunnett):"
-                      } else {
-                        "Post-hoc (Tukey HSD):"
-                      }
-                    }
-                    result_text <- paste0(result_text, "\\n", posthoc_header, "\\n", paste(posthoc_text, collapse="\\n"))
-                  }
-
-                  # Add to stat text results
-                  stat_text_results <- c(stat_text_results, result_text)
-                } else {
-                  # Not significant - sig_label already added above
-                  stat_text_results <- c(stat_text_results, result_text)
-                }
+              if (!is.na(res2$p_val)) {
+                cat_index <- which(unique_categories == cat_val)
+                ck1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
+                ck2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
+                should_add <- (comparison_mode=="significant" && sl!="ns") || (comparison_mode=="all") || (comparison_mode=="custom" && (ck1 %in% custom_comps || ck2 %in% custom_comps))
+                if (should_add) bracket_data <- rbind(bracket_data, data.frame(group1=as.character(groups_with_data[1]), group2=as.character(groups_with_data[2]), p.signif=sl, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
               }
+
+            } else if (n_groups_at_cat >= 3) {
+              cat_index <- which(unique_categories == cat_val)
+              if (paired) {
+                ad <- data.frame(group=factor(as.character(data_at_cat$group)), value=as.numeric(data_at_cat$value), subject_id=factor(as.character(data_at_cat$subject_id)))
+              } else {
+                ad <- data.frame(group=factor(as.character(data_at_cat$group)), value=as.numeric(data_at_cat$value))
+              }
+              ad <- ad[complete.cases(ad), ]; ad$group <- droplevels(ad$group)
+              if (nrow(ad) < 3) next
+
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              desc_lines_3g <- sapply(levels(ad$group), function(g) {
+                gd <- ad$value[ad$group==g]; ng <- length(gd); mg <- mean(gd)
+                if (ng > 1) { sg <- sd(gd); eg <- if(error_type=="se") sg/sqrt(ng) else if(error_type=="ci95") qt(0.975,df=ng-1)*sg/sqrt(ng) else sg; sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng, mg, .err_lbl, eg) }
+                else sprintf("  %s: n=%d, mean=%.4g", g, ng, mg)
+              })
+
+              res3 <- sato_run_stats_ngroup(
+                anova_data = ad,
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, post_hoc_test = selected_posthoc_test,
+                dunnett_control = dunnett_control,
+                stat_symbol_type = stat_symbol_type,
+                paired = paired,
+                paired_ph_correction = "${document.getElementById('pairedPostHocCorrection')?.value || 'holm'}",
+                error_label = .err_lbl,
+                desc_lines = desc_lines_3g
+              )
+              stat_text_results <- c(stat_text_results, res3$result_text)
+
+              # Build bracket_data from returned pairs
+              if (nrow(res3$pairs) > 0) {
+                for (pi in 1:nrow(res3$pairs)) {
+                  sl_pi <- res3$pairs$sig_label[pi]
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
+                }
               }
             }
           }
@@ -20081,77 +18163,78 @@ async function initWebR() {
             if (n_groups_at_cat == 2) {
               g1d <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
               g2d <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
-              if (length(g1d)==0 || length(g2d)==0) next
+              if (length(g1d) == 0 || length(g2d) == 0) next
 
-              is_g1_normal <- TRUE; is_g2_normal <- TRUE; normality_text <- c()
-              if (length(g1d)>=3&&length(g1d)<=5000) { sr<-tryCatch(shapiro.test(g1d),error=function(e)NULL); if(!is.null(sr)){is_g1_normal<-sr$p.value>=0.05; normality_text<-c(normality_text,sprintf("  %s: p=%.4f (%s)",groups_with_data[1],sr$p.value,if(is_g1_normal)"normal"else"non-normal"))}}
-              if (length(g2d)>=3&&length(g2d)<=5000) { sr<-tryCatch(shapiro.test(g2d),error=function(e)NULL); if(!is.null(sr)){is_g2_normal<-sr$p.value>=0.05; normality_text<-c(normality_text,sprintf("  %s: p=%.4f (%s)",groups_with_data[2],sr$p.value,if(is_g2_normal)"normal"else"non-normal"))}}
-
-              test_to_use <- statistical_test
-              if (statistical_test=="auto") test_to_use <- if(is_g1_normal&&is_g2_normal)"t-test" else "wilcoxon"
-              else if (statistical_test=="parametric") test_to_use <- "t-test"
-              else if (statistical_test=="nonparametric") test_to_use <- "wilcoxon"
-
-              equal_variances <- TRUE; variance_text <- ""
-              if (test_to_use != "wilcoxon") {
-                if (variance_test=="levene") {
-                  comb <- data.frame(values=c(g1d,g2d), group=factor(c(rep(as.character(groups_with_data[1]),length(g1d)),rep(as.character(groups_with_data[2]),length(g2d)))))
-                  lev <- tryCatch(anova(lm(abs(values-tapply(values,group,mean)[group])~group,data=comb)),error=function(e)NULL)
-                  if (!is.null(lev)){equal_variances<-lev$\`Pr(>F)\`[1]>0.05; variance_text<-sprintf("Variance test: p=%.4f (%s, Levene)",lev$\`Pr(>F)\`[1],if(equal_variances)"equal"else"unequal")}
-                } else {
-                  vt<-tryCatch(var.test(g1d,g2d),error=function(e)NULL); if(!is.null(vt)){equal_variances<-vt$p.value>0.05; variance_text<-sprintf("Variance test: p=%.4f (%s, F-test)",vt$p.value,if(equal_variances)"equal"else"unequal")}
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              desc_lines_2g <- c()
+              for (g in groups_with_data) {
+                gd_2g <- as.numeric(plot_data[plot_data$category==cat_val & plot_data$group==g, "value"]); gd_2g <- gd_2g[!is.na(gd_2g)]; ng_2g <- length(gd_2g)
+                if (ng_2g > 0) {
+                  mg_2g <- mean(gd_2g)
+                  if (ng_2g > 1) { sg_2g <- sd(gd_2g); eg_2g <- if(error_type=="se") sg_2g/sqrt(ng_2g) else if(error_type=="ci95") qt(0.975,df=ng_2g-1)*sg_2g/sqrt(ng_2g) else sg_2g; desc_lines_2g <- c(desc_lines_2g, sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng_2g, mg_2g, .err_lbl, eg_2g)) }
+                  else desc_lines_2g <- c(desc_lines_2g, sprintf("  %s: n=%d, mean=%.4g", g, ng_2g, mg_2g))
                 }
               }
 
-              if (test_to_use=="wilcoxon"){tr<-tryCatch(wilcox.test(g1d,g2d),error=function(e)NULL);tn<-"Wilcoxon"}
-              else{tr<-tryCatch(t.test(g1d,g2d,var.equal=equal_variances),error=function(e)NULL);tn<-if(equal_variances)"Student's t-test"else"Welch's t-test"}
+              res2 <- sato_run_stats_2group(
+                group1_data = g1d, group2_data = g2d,
+                group_names = c(as.character(groups_with_data[1]), as.character(groups_with_data[2])),
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, variance_test = variance_test,
+                stat_symbol_type = stat_symbol_type,
+                paired = FALSE,
+                error_label = .err_lbl,
+                desc_lines = desc_lines_2g
+              )
+              stat_text_results <- c(stat_text_results, res2$result_text)
+              sl <- res2$sig_label
 
-              if (!is.null(tr)) {
-                p_val<-tr$p.value; sl<-get_sig_symbol(p_val); cat_index<-which(unique_categories==cat_val)
-                .el<-if(error_type=="se")"SE"else if(error_type=="ci95")"CI95"else"SD"
-                rtxt<-sprintf("Category %s:\nSummary (mean +/- %s):",cat_val,.el)
-                for (g in groups_with_data) { gd<-as.numeric(plot_data[plot_data$category==cat_val&plot_data$group==g,"value"]); gd<-gd[!is.na(gd)]; ng<-length(gd); if(ng>0){mg<-mean(gd); if(ng>1){sg<-sd(gd);eg<-if(error_type=="se")sg/sqrt(ng)else if(error_type=="ci95")qt(0.975,df=ng-1)*sg/sqrt(ng)else sg; rtxt<-paste0(rtxt,sprintf("\n  %s: n=%d, mean=%.4g, %s=%.4g",g,ng,mg,.el,eg))}else rtxt<-paste0(rtxt,sprintf("\n  %s: n=%d, mean=%.4g",g,ng,mg))}}
-                if(length(normality_text)>0) rtxt<-paste0(rtxt,"\n\nNormality (Shapiro-Wilk):\n",paste(normality_text,collapse="\n"))
-                if(nchar(variance_text)>0) rtxt<-paste0(rtxt,"\n",variance_text)
-                rtxt<-paste0(rtxt,"\n\n",sprintf("%s: p=%.4f (%s)",tn,p_val,sl))
-                stat_text_results<-c(stat_text_results,rtxt)
-                ck1<-paste0(groups_with_data[1],"-",groups_with_data[2],"@",cat_val); ck2<-paste0(groups_with_data[2],"-",groups_with_data[1],"@",cat_val)
-                cy<-if(!is.null(custom_y_positions[[ck1]]))custom_y_positions[[ck1]]else if(!is.null(custom_y_positions[[ck2]]))custom_y_positions[[ck2]]else NULL
-                yp<-if(!is.null(cy))cy else max(data_at_cat$value,na.rm=TRUE)*1.20
-                should_add<-(comparison_mode=="significant"&&sl!="ns")||(comparison_mode=="all")||(comparison_mode=="custom"&&(ck1%in%custom_comps||ck2%in%custom_comps))
-                if(should_add) bracket_data<-rbind(bracket_data,data.frame(group1=as.character(groups_with_data[1]),group2=as.character(groups_with_data[2]),p.signif=sl,x.position=cat_index,y.position=yp,stringsAsFactors=FALSE))
+              if (!is.na(res2$p_val)) {
+                cat_index <- which(unique_categories == cat_val)
+                ck1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
+                ck2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
+                cy <- if (!is.null(custom_y_positions[[ck1]])) custom_y_positions[[ck1]] else if (!is.null(custom_y_positions[[ck2]])) custom_y_positions[[ck2]] else NULL
+                yp <- if (!is.null(cy)) cy else max(data_at_cat$value, na.rm=TRUE) * 1.20
+                should_add <- (comparison_mode=="significant" && sl!="ns") || (comparison_mode=="all") || (comparison_mode=="custom" && (ck1 %in% custom_comps || ck2 %in% custom_comps))
+                if (should_add) bracket_data <- rbind(bracket_data, data.frame(group1=as.character(groups_with_data[1]), group2=as.character(groups_with_data[2]), p.signif=sl, x.position=cat_index, y.position=yp, stringsAsFactors=FALSE))
               }
 
             } else if (n_groups_at_cat >= 3) {
-              cat_index<-which(unique_categories==cat_val)
-              ad<-data.frame(group=factor(data_at_cat$group),value=as.numeric(data_at_cat$value)); ad<-ad[complete.cases(ad),]
-              if(nrow(ad)<3) next
-              all_normal<-TRUE; normality_text<-c()
-              for(grp in groups_with_data){gd<-data_at_cat[data_at_cat$group==grp,"value"];if(length(gd)>=3&&length(gd)<=5000){sr<-tryCatch(shapiro.test(gd),error=function(e)NULL);if(!is.null(sr)){is_n<-sr$p.value>=0.05;normality_text<-c(normality_text,sprintf("  %s: p=%.4f (%s)",grp,sr$p.value,if(is_n)"normal"else"non-normal"));if(!is_n)all_normal<-FALSE}}}
-              test_to_use<-statistical_test; if(statistical_test=="auto")test_to_use<-if(all_normal)"anova"else"kruskal"
-              if(test_to_use=="kruskal"){kr<-kruskal.test(value~group,data=ad);omnibus_p<-kr$p.value;test_name<-"Kruskal-Wallis"}
-              else{ar<-aov(value~group,data=ad);omnibus_p<-summary(ar)[[1]][["Pr(>F)"]][1];test_name<-"ANOVA"}
-              .el<-if(error_type=="se")"SE"else if(error_type=="ci95")"CI95"else"SD"
-              rtxt<-sprintf("Category %s:\nSummary (mean +/- %s):",cat_val,.el)
-              for(g in groups_with_data){gd<-ad$value[ad$group==g];gd<-gd[!is.na(gd)];ng<-length(gd);if(ng>0){mg<-mean(gd);if(ng>1){sg<-sd(gd);eg<-if(error_type=="se")sg/sqrt(ng)else if(error_type=="ci95")qt(0.975,df=ng-1)*sg/sqrt(ng)else sg;rtxt<-paste0(rtxt,sprintf("\n  %s: n=%d, mean=%.4g, %s=%.4g",g,ng,mg,.el,eg))}else rtxt<-paste0(rtxt,sprintf("\n  %s: n=%d, mean=%.4g",g,ng,mg))}}
-              if(length(normality_text)>0)rtxt<-paste0(rtxt,"\nNormality (Shapiro-Wilk):\n",paste(normality_text,collapse="\n"))
-              asig<-if(!is.na(omnibus_p)){if(omnibus_p<0.001)"***"else if(omnibus_p<0.01)"**"else if(omnibus_p<0.05)"*"else"ns"}else"ns"
-              rtxt<-paste0(rtxt,"\n",test_name," p=",sprintf("%.4f",omnibus_p)," (",asig,")")
-              if(!is.na(omnibus_p)&&omnibus_p<0.05){
-                posthoc_summary<-NULL
-                if(test_to_use=="kruskal"){
-                  ph<-tryCatch({if(!requireNamespace("dunn.test",quietly=TRUE))webr::install("dunn.test");library(dunn.test);dr<-dunn.test(ad$value,ad$group,method=if(selected_posthoc_test=="dunn_holm")"holm"else"bonferroni");data.frame(Comparison=dr$comparisons,P.adj=dr$P.adjusted,stringsAsFactors=FALSE)},error=function(e)NULL)
-                  if(!is.null(ph)){pt<-c();for(i in 1:nrow(ph)){pa<-ph$P.adj[i];sl<-if(!is.na(pa))get_sig_symbol(pa)else"ns";pt<-c(pt,sprintf("  %s: p=%.4f (%s)",ph$Comparison[i],ifelse(is.na(pa),1,pa),sl));if((comparison_mode=="significant"&&sl!="ns")||comparison_mode=="all"){cp<-strsplit(ph$Comparison[i]," - ")[[1]];if(length(cp)==2)bracket_data<-rbind(bracket_data,data.frame(group1=cp[1],group2=cp[2],p.signif=sl,x.position=cat_index,y.position=NA,stringsAsFactors=FALSE))}};rtxt<-paste0(rtxt,"\nPost-hoc (Dunn):\n",paste(pt,collapse="\n"))}
-                } else {
-                  pw_method<-if(selected_posthoc_test=="bonferroni")"bonferroni"else if(selected_posthoc_test=="holm")"holm"else NULL
-                  if(selected_posthoc_test=="tukey"){tuk<-tryCatch(TukeyHSD(ar),error=function(e)NULL);if(!is.null(tuk))posthoc_summary<-tuk$group}
-                  else if(!is.null(pw_method)){pw<-tryCatch(pairwise.t.test(ad$value,ad$group,p.adjust.method=pw_method),error=function(e)NULL);if(!is.null(pw)){gs<-levels(ad$group);comps<-combn(gs,2,simplify=FALSE);pn<-c();dv<-c();pv<-c();for(comp in comps){g1<-comp[1];g2<-comp[2];ri<-which(rownames(pw$p.value)==g1);ci<-which(colnames(pw$p.value)==g2);pval<-if(length(ri)>0&&length(ci)>0)pw$p.value[ri,ci]else{ri2<-which(rownames(pw$p.value)==g2);ci2<-which(colnames(pw$p.value)==g1);if(length(ri2)>0&&length(ci2)>0)pw$p.value[ri2,ci2]else NA};pn<-c(pn,paste0(g2,"-",g1));dv<-c(dv,mean(ad$value[ad$group==g2],na.rm=TRUE)-mean(ad$value[ad$group==g1],na.rm=TRUE));pv<-c(pv,pval)};posthoc_summary<-data.frame(diff=dv,lwr=rep(NA,length(dv)),upr=rep(NA,length(dv)),"p adj"=pv,row.names=pn,check.names=FALSE)}}
-                  if(!is.null(posthoc_summary)){pt<-c();for(i in 1:nrow(posthoc_summary)){pa<-posthoc_summary[i,"p adj"];sl<-if(!is.na(pa))get_sig_symbol(pa)else"ns";cn<-rownames(posthoc_summary)[i];pt<-c(pt,sprintf("  %s: p=%.4f (%s)",cn,ifelse(is.na(pa),1,pa),sl));if((comparison_mode=="significant"&&sl!="ns")||comparison_mode=="all"){cp<-strsplit(cn,"-")[[1]];if(length(cp)==2)bracket_data<-rbind(bracket_data,data.frame(group1=cp[2],group2=cp[1],p.signif=sl,x.position=cat_index,y.position=NA,stringsAsFactors=FALSE))}};rtxt<-paste0(rtxt,sprintf("\nPost-hoc (%s):\n",selected_posthoc_test),paste(pt,collapse="\n"))}
+              cat_index <- which(unique_categories == cat_val)
+              ad <- data.frame(group=factor(as.character(data_at_cat$group)), value=as.numeric(data_at_cat$value))
+              ad <- ad[complete.cases(ad), ]; ad$group <- droplevels(ad$group)
+              if (nrow(ad) < 3) next
+
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              desc_lines_3g <- sapply(levels(ad$group), function(g) {
+                gd <- ad$value[ad$group==g]; ng <- length(gd); mg <- mean(gd)
+                if (ng > 1) { sg <- sd(gd); eg <- if(error_type=="se") sg/sqrt(ng) else if(error_type=="ci95") qt(0.975,df=ng-1)*sg/sqrt(ng) else sg; sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng, mg, .err_lbl, eg) }
+                else sprintf("  %s: n=%d, mean=%.4g", g, ng, mg)
+              })
+
+              res3 <- sato_run_stats_ngroup(
+                anova_data = ad,
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, post_hoc_test = selected_posthoc_test,
+                dunnett_control = dunnett_control,
+                stat_symbol_type = stat_symbol_type,
+                paired = FALSE,
+                error_label = .err_lbl,
+                desc_lines = desc_lines_3g
+              )
+              stat_text_results <- c(stat_text_results, res3$result_text)
+
+              # Build bracket_data from returned pairs
+              if (nrow(res3$pairs) > 0) {
+                for (pi in 1:nrow(res3$pairs)) {
+                  sl_pi <- res3$pairs$sig_label[pi]
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
                 }
               }
-              stat_text_results<-c(stat_text_results,rtxt)
-              max_val<-max(data_at_cat$value,na.rm=TRUE); na_rows<-which(is.na(bracket_data$y.position)&bracket_data$x.position==cat_index)
-              for(bi in seq_along(na_rows))bracket_data$y.position[na_rows[bi]]<-max_val*1.20+(bi-1)*max_val*0.12
+              max_val <- max(data_at_cat$value, na.rm=TRUE)
+              na_rows <- which(is.na(bracket_data$y.position) & bracket_data$x.position == cat_index)
+              for (bi in seq_along(na_rows)) bracket_data$y.position[na_rows[bi]] <- max_val * 1.20 + (bi-1) * max_val * 0.12
             }
           }
 
@@ -20362,852 +18445,87 @@ async function initWebR() {
             n_groups_at_cat <- length(groups_with_data)
 
             if (n_groups_at_cat == 2) {
-              # TWO GROUPS: Use t-test or Wilcoxon
               if (paired) {
                 g1_df <- data_at_cat[data_at_cat$group == groups_with_data[1], c("subject_id", "value")]
                 g2_df <- data_at_cat[data_at_cat$group == groups_with_data[2], c("subject_id", "value")]
                 paired_df_cat <- merge(g1_df, g2_df, by = "subject_id")
-                group1_data <- paired_df_cat$value.x
-                group2_data <- paired_df_cat$value.y
+                g1d <- paired_df_cat$value.x
+                g2d <- paired_df_cat$value.y
               } else {
-                group1_data <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
-                group2_data <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+                g1d <- data_at_cat[data_at_cat$group == groups_with_data[1], "value"]
+                g2d <- data_at_cat[data_at_cat$group == groups_with_data[2], "value"]
+              }
+              if (length(g1d) == 0 || length(g2d) == 0) next
+
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              desc_lines_2g <- c()
+              for (g in groups_with_data) {
+                gd_2g <- as.numeric(plot_data[plot_data$category==cat_val & plot_data$group==g, "value"]); gd_2g <- gd_2g[!is.na(gd_2g)]; ng_2g <- length(gd_2g)
+                if (ng_2g > 0) {
+                  mg_2g <- mean(gd_2g)
+                  if (ng_2g > 1) { sg_2g <- sd(gd_2g); eg_2g <- if(error_type=="se") sg_2g/sqrt(ng_2g) else if(error_type=="ci95") qt(0.975,df=ng_2g-1)*sg_2g/sqrt(ng_2g) else sg_2g; desc_lines_2g <- c(desc_lines_2g, sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng_2g, mg_2g, .err_lbl, eg_2g)) }
+                  else desc_lines_2g <- c(desc_lines_2g, sprintf("  %s: n=%d, mean=%.4g", g, ng_2g, mg_2g))
+                }
               }
 
-              # Only test if both groups have data
-              if (length(group1_data) > 0 && length(group2_data) > 0) {
-                # Perform normality test
-                normality_text <- c()
-                both_normal <- TRUE
-
-                if (paired) {
-                  # For paired tests: test normality of differences (statistically correct)
-                  diffs_paired <- group1_data - group2_data
-                  if (length(diffs_paired) >= 3 && length(diffs_paired) <= 5000) {
-                    shapiro_diffs <- tryCatch(
-                      shapiro.test(diffs_paired),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_diffs)) {
-                      both_normal <- shapiro_diffs$p.value >= 0.05
-                      diff_status <- if (both_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
-                    }
-                  }
-                } else {
-                  # For unpaired tests: test normality of individual groups
-                  is_group1_normal <- TRUE
-                  is_group2_normal <- TRUE
-
-                  if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
-                    shapiro_result1 <- tryCatch(
-                      shapiro.test(group1_data),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_result1)) {
-                      is_group1_normal <- shapiro_result1$p.value >= 0.05
-                      norm_status <- if (is_group1_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", groups_with_data[1], shapiro_result1$p.value, norm_status))
-                    }
-                  }
-
-                  if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
-                    shapiro_result2 <- tryCatch(
-                      shapiro.test(group2_data),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_result2)) {
-                      is_group2_normal <- shapiro_result2$p.value >= 0.05
-                      norm_status <- if (is_group2_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", groups_with_data[2], shapiro_result2$p.value, norm_status))
-                    }
-                  }
-
-                  both_normal <- is_group1_normal && is_group2_normal
-                }
-
-                # Select test based on mode
-                test_to_use <- statistical_test
-                if (statistical_test == "auto") {
-                  if (both_normal) {
-                    test_to_use <- "t-test"
-                    cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
-                  } else {
-                    test_to_use <- "wilcoxon"
-                    cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
-                  }
-                } else if (statistical_test == "parametric") {
-                  test_to_use <- "t-test"
-                  cat(if (paired) "  Manual mode: Paired t-test (parametric)\\n" else "  Manual mode: parametric t-test\\n")
-                } else if (statistical_test == "nonparametric") {
-                  test_to_use <- "wilcoxon"
-                  cat(if (paired) "  Manual mode: Paired Wilcoxon (non-parametric)\\n" else "  Manual mode: non-parametric Wilcoxon test\\n")
-                }
-
-                # Perform variance test (only for parametric tests)
-                variance_text <- ""
-                equal_variances <- TRUE
-                if (test_to_use != "wilcoxon" && !paired) {
-                  if (variance_test == "levene") {
-                    # Levene test for equality of variances
-                    combined_data <- data.frame(
-                      values = c(group1_data, group2_data),
-                      group = factor(c(rep(groups_with_data[1], length(group1_data)),
-                                      rep(groups_with_data[2], length(group2_data))))
-                    )
-
-                    # Calculate Levene test manually
-                    group_means <- tapply(combined_data$values, combined_data$group, mean)
-                    abs_deviations <- abs(combined_data$values - group_means[combined_data$group])
-                    levene_result <- tryCatch(
-                      anova(lm(abs_deviations ~ combined_data$group)),
-                      error = function(e) NULL
-                    )
-
-                    if (!is.null(levene_result)) {
-                      levene_p <- levene_result$\`Pr(>F)\`[1]
-                      equal_variances <- levene_p > 0.05
-                      variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                      variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", levene_p, variance_status)
-                      cat(sprintf("    Levene test: p=%.4f (%s)\\n", levene_p, variance_status))
-                    }
-                  } else {
-                    # F-test for equality of variances
-                    var_test <- tryCatch(
-                      var.test(group1_data, group2_data),
-                      error = function(e) NULL
-                    )
-
-                    if (!is.null(var_test)) {
-                      equal_variances <- var_test$p.value > 0.05
-                      variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                      variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", var_test$p.value, variance_status)
-                      cat(sprintf("    F-test: p=%.4f (%s)\\n", var_test$p.value, variance_status))
-                    }
-                  }
-                }
-
-                # Perform statistical test based on auto-selection
-                if (paired) {
-                  if (test_to_use == "wilcoxon") {
-                    test_result <- tryCatch(
-                      wilcox.test(group1_data, group2_data, paired = TRUE),
-                      error = function(e) NULL
-                    )
-                    test_name <- "Paired Wilcoxon"
-                  } else {
-                    test_result <- tryCatch(
-                      t.test(group1_data, group2_data, paired = TRUE),
-                      error = function(e) NULL
-                    )
-                    test_name <- "Paired t-test"
-                  }
-                } else if (test_to_use == "wilcoxon") {
-                  test_result <- tryCatch(
-                    wilcox.test(group1_data, group2_data),
-                    error = function(e) NULL
-                  )
-                  test_name <- "Wilcoxon"
-                } else {
-                  # Use appropriate t-test based on variance equality
-                  test_result <- tryCatch(
-                    t.test(group1_data, group2_data, var.equal = equal_variances),
-                    error = function(e) NULL
-                  )
-                  test_name <- if (equal_variances) "Student's t-test" else "Welch's t-test"
-                }
-
-                if (!is.null(test_result)) {
-                  p_val <- test_result$p.value
-                  cat(sprintf("  2-group test: %s vs %s, %s p=%.4f\\n",
-                              groups_with_data[1], groups_with_data[2], test_name, p_val))
-
-                  # Determine significance symbol using helper function
-                  sig_label <- get_sig_symbol(p_val)
-
-                  # Store result text for UI with proper order: Category -> Summary -> Normality -> Variance -> Test result
-                  result_text <- sprintf("Category %s:", cat_val)
-
-                  # Add group statistics (n, mean, SD/SE/CI95) for each group
-                  .err_label_2g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_2g))
-                  for (g in groups_with_data) {
-                    g_data <- as.numeric(plot_data[plot_data$category == cat_val & plot_data$group == g, "value"])
-                    g_data <- g_data[!is.na(g_data)]
-                    n_g2 <- length(g_data)
-                    if (n_g2 > 0) {
-                      mean_g2 <- mean(g_data)
-                      if (n_g2 > 1) {
-                        sd_g2 <- sd(g_data)
-                        err_g2 <- if (error_type == "se") sd_g2 / sqrt(n_g2) else if (error_type == "ci95") qt(0.975, df=n_g2-1) * sd_g2 / sqrt(n_g2) else sd_g2
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g2, mean_g2, .err_label_2g, err_g2))
-                      } else {
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g2, mean_g2))
-                      }
-                    }
-                  }
-
-                  # Add normality testing results
-                  if (length(normality_text) > 0) {
-                    result_text <- paste0(result_text, "\\n\\nNormality Testing (Shapiro-Wilk):\\n  ", paste(normality_text, collapse="\\n  "))
-                  }
-
-                  # Add variance test results
-                  if (nchar(variance_text) > 0) {
-                    result_text <- paste0(result_text, "\\n", variance_text)
-                  }
-
-                  # Add main test result
-                  result_text <- paste0(result_text, "\\n\\n", sprintf("%s: p=%.4f (%s)",
-                                        test_name, p_val, sig_label))
-                  stat_text_results <- c(stat_text_results, result_text)
-
-                  # Add ggpubr bracket for this comparison
-                  # Calculate x position (find position in all unique_categories, not just selected ones)
-                  cat_index <- which(unique_categories == cat_val)
-
-                  # Calculate y position (above the highest bar/point in this category)
-                  # Check if custom position is provided (check both possible orderings)
-                  comp_key1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
-                  comp_key2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
-
-                  custom_y_pos <- NULL
-                  if (!is.null(custom_y_positions[[comp_key1]])) {
-                    custom_y_pos <- custom_y_positions[[comp_key1]]
-                    cat("Using custom Y position for", comp_key1, ":", custom_y_pos, "\\n")
-                  } else if (!is.null(custom_y_positions[[comp_key2]])) {
-                    custom_y_pos <- custom_y_positions[[comp_key2]]
-                    cat("Using custom Y position for", comp_key2, ":", custom_y_pos, "\\n")
-                  }
-
-                  if (!is.null(custom_y_pos)) {
-                    # Use custom Y position
-                    y_pos <- custom_y_pos
-                  } else {
-                    # Calculate default position
-                    # Get the summary data for this category to find the bar heights
-                    data_at_cat_all <- plot_data[plot_data$category == cat_val, ]
-                    max_value <- max(data_at_cat_all$value, na.rm = TRUE)
-                    # No error bars in box plots
-
-                    # Position symbol above the tallest bar + error bar with some spacing
-                    # Increased spacing to avoid overlapping with dots (0.055 -> 0.15)
-                    y_pos <- max_value + (max_value * 0.20)  # 20% above highest value
-                  }
-
-                  # Add to bracket data based on comparison mode
-                  should_add_bracket <- FALSE
-                  if (comparison_mode == "significant") {
-                    # Only add if significant
-                    should_add_bracket <- (sig_label != "ns")
-                  } else if (comparison_mode == "all") {
-                    # Add all comparisons
-                    should_add_bracket <- TRUE
-                  } else if (comparison_mode == "custom") {
-                    # Only add if this comparison is selected
-                    # Check if this comparison is in the custom selections
-                    comp_key1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
-                    comp_key2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
-                    should_add_bracket <- (comp_key1 %in% custom_comps) || (comp_key2 %in% custom_comps)
-                  }
-
-                  if (should_add_bracket) {
-                    bracket_data <- rbind(bracket_data, data.frame(
-                      group1 = as.character(groups_with_data[1]),
-                      group2 = as.character(groups_with_data[2]),
-                      p.signif = sig_label,
-                      x.position = cat_index,
-                      y.position = y_pos,
-                      stringsAsFactors = FALSE
-                    ))
-                  }
-                }
-              }
-            } else if (n_groups_at_cat >= 3) {
-              # Calculate x position (shared by paired and unpaired paths)
-              cat_index <- which(unique_categories == cat_val)
-
-              if (paired) {
-                # PAIRED 3+ GROUPS: RM-ANOVA or Friedman
-                cat("  Performing RM-ANOVA/Friedman for", n_groups_at_cat, "paired groups at category", cat_val, "\\n")
-
-                anova_data_p <- data.frame(
-                  value = as.numeric(data_at_cat$value),
-                  group = factor(as.character(data_at_cat$group)),
-                  subject_id = factor(data_at_cat$subject_id)
-                )
-                anova_data_p <- anova_data_p[complete.cases(anova_data_p), ]
-                anova_data_p$group <- droplevels(anova_data_p$group)
-
-                if (nrow(anova_data_p) >= 3) {
-                  # Normality: test pairwise differences
-                  normality_text <- c()
-                  all_normal <- TRUE
-                  groups_list_norm <- levels(factor(anova_data_p$group))
-                  pairs_norm <- combn(groups_list_norm, 2, simplify=FALSE)
-                  for (pair_n in pairs_norm) {
-                    g1_df_n <- anova_data_p[anova_data_p$group == pair_n[1], c("subject_id", "value")]
-                    g2_df_n <- anova_data_p[anova_data_p$group == pair_n[2], c("subject_id", "value")]
-                    merged_n <- merge(g1_df_n, g2_df_n, by="subject_id")
-                    diffs_n <- merged_n$value.x - merged_n$value.y
-                    if (length(diffs_n) >= 3 && length(diffs_n) <= 5000) {
-                      shapiro_n <- tryCatch(shapiro.test(diffs_n), error=function(e) NULL)
-                      if (!is.null(shapiro_n)) {
-                        is_norm_n <- shapiro_n$p.value >= 0.05
-                        norm_status_n <- if (is_norm_n) "normal" else "non-normal"
-                        normality_text <- c(normality_text,
-                          sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], shapiro_n$p.value, norm_status_n))
-                        if (!is_norm_n) all_normal <- FALSE
-                      }
-                    }
-                  }
-                  # Auto-select test
-                  test_to_use_p <- statistical_test
-                  if (statistical_test == "auto") {
-                    test_to_use_p <- if (all_normal) "rm_anova" else "friedman"
-                    cat("  Auto-selected:", test_to_use_p, "(all diffs normal:", all_normal, ")\\n")
-                  } else if (statistical_test == "parametric") {
-                    test_to_use_p <- "rm_anova"
-                    cat("  Manual mode: RM-ANOVA\\n")
-                  } else {
-                    test_to_use_p <- "friedman"
-                    cat("  Manual mode: Friedman\\n")
-                  }
-                  # Omnibus test
-                  omnibus_p <- NA
-                  test_name <- ""
-                  if (test_to_use_p == "rm_anova") {
-                    rm_result <- tryCatch(
-                      summary(aov(value ~ group + Error(subject_id/group), data=anova_data_p)),
-                      error = function(e) { cat("  RM-ANOVA error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(rm_result)) {
-                      omnibus_p <- rm_result[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1]
-                      if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
-                      test_name <- "RM-ANOVA"
-                    }
-                  } else {
-                    friedman_r <- tryCatch(
-                      friedman.test(value ~ group | subject_id, data=anova_data_p),
-                      error = function(e) { cat("  Friedman error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(friedman_r)) {
-                      omnibus_p <- friedman_r$p.value
-                      test_name <- "Friedman"
-                    }
-                  }
-                  cat("  ", test_name, "p-value:", omnibus_p, "\\n")
-                  # Build result text
-                  result_text <- sprintf("Category %s:", cat_val)
-                  .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                  result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
-                  for (g in groups_with_data) {
-                    g_data <- anova_data_p$value[anova_data_p$group == g]
-                    g_data <- g_data[!is.na(g_data)]
-                    n_g3 <- length(g_data)
-                    if (n_g3 > 0) {
-                      mean_g3 <- mean(g_data)
-                      if (n_g3 > 1) {
-                        sd_g3 <- sd(g_data)
-                        err_g3 <- if (error_type == "se") sd_g3/sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1)*sd_g3/sqrt(n_g3) else sd_g3
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
-                      } else {
-                        result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
-                      }
-                    }
-                  }
-                  if (length(normality_text) > 0) {
-                    result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-                  }
-                  anova_sig_label <- if (!is.na(omnibus_p)) {
-                    if (omnibus_p < 0.001) "***" else if (omnibus_p < 0.01) "**" else if (omnibus_p < 0.05) "*" else "ns"
-                  } else "ns"
-                  result_text <- paste0(result_text, "\\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", anova_sig_label, ")")
-                  # Post-hoc if omnibus significant
-                  if (!is.na(omnibus_p) && omnibus_p < 0.05) {
-                    cat("  Omnibus significant, performing paired post-hoc tests\\n")
-                    posthoc_text <- c()
-                    ph_method_p <- paired_ph_correction
-                    if (test_to_use_p == "rm_anova") {
-                      cat(sprintf("  Pairwise paired t-test (%s correction)...\\n", ph_method_p))
-                      pt_result_p <- tryCatch(
-                        pairwise.t.test(anova_data_p$value, anova_data_p$group,
-                                        paired=TRUE, p.adjust.method=ph_method_p),
-                        error = function(e) { cat("  pairwise.t.test error:", e$message, "\\n"); NULL }
-                      )
-                      if (!is.null(pt_result_p)) {
-                        groups_pt <- levels(factor(anova_data_p$group))
-                        comps_pt <- combn(groups_pt, 2, simplify=FALSE)
-                        for (comp_pt in comps_pt) {
-                          g1_pt <- comp_pt[1]; g2_pt <- comp_pt[2]
-                          r_idx <- which(rownames(pt_result_p$p.value) == g2_pt)
-                          c_idx <- which(colnames(pt_result_p$p.value) == g1_pt)
-                          p_val_pt <- if (length(r_idx)>0 && length(c_idx)>0) pt_result_p$p.value[r_idx, c_idx] else NA
-                          if (is.na(p_val_pt)) {
-                            r_idx2 <- which(rownames(pt_result_p$p.value) == g1_pt)
-                            c_idx2 <- which(colnames(pt_result_p$p.value) == g2_pt)
-                            p_val_pt <- if (length(r_idx2)>0 && length(c_idx2)>0) pt_result_p$p.value[r_idx2, c_idx2] else NA
-                          }
-                          sig_lbl_pt <- if (!is.na(p_val_pt)) get_sig_symbol(p_val_pt) else "ns"
-                          cmp_str_pt <- paste0(g2_pt, "-", g1_pt)
-                          cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
-                          posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_str_pt, ifelse(is.na(p_val_pt),1,p_val_pt), sig_lbl_pt))
-                          should_add_pt <- FALSE
-                          if (comparison_mode == "significant") should_add_pt <- (sig_lbl_pt != "ns")
-                          else if (comparison_mode == "all") should_add_pt <- TRUE
-                          else if (comparison_mode == "custom") {
-                            ck1 <- paste0(g1_pt, "-", g2_pt, "@", cat_val)
-                            ck2 <- paste0(g2_pt, "-", g1_pt, "@", cat_val)
-                            should_add_pt <- (ck1 %in% custom_comps) || (ck2 %in% custom_comps)
-                          }
-                          if (should_add_pt) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1=g2_pt, group2=g1_pt,
-                              p.signif=sig_lbl_pt, x.position=cat_index, y.position=NA,
-                              stringsAsFactors=FALSE
-                            ))
-                          }
-                        }
-                      }
-                      ph_header_p <- sprintf("Post-hoc (Paired t-test, %s):", toupper(ph_method_p))
-                    } else {
-                      cat(sprintf("  Pairwise paired Wilcoxon (%s correction)...\\n", ph_method_p))
-                      groups_fw <- levels(factor(anova_data_p$group))
-                      comps_fw <- combn(groups_fw, 2, simplify=FALSE)
-                      p_raw_fw <- c(); cmp_names_fw <- c()
-                      for (comp_fw in comps_fw) {
-                        g1_fw_df <- anova_data_p[anova_data_p$group == comp_fw[1], c("subject_id", "value")]
-                        g2_fw_df <- anova_data_p[anova_data_p$group == comp_fw[2], c("subject_id", "value")]
-                        merged_fw <- merge(g1_fw_df, g2_fw_df, by="subject_id")
-                        pv_fw <- tryCatch(
-                          wilcox.test(merged_fw$value.x, merged_fw$value.y, paired=TRUE)$p.value,
-                          error = function(e) NA
-                        )
-                        p_raw_fw <- c(p_raw_fw, pv_fw)
-                        cmp_names_fw <- c(cmp_names_fw, paste0(comp_fw[2], "-", comp_fw[1]))
-                      }
-                      p_adj_fw <- p.adjust(p_raw_fw, method=ph_method_p)
-                      for (i in seq_along(cmp_names_fw)) {
-                        cmp_fw_str <- cmp_names_fw[i]
-                        p_adj_fw_i <- p_adj_fw[i]
-                        sig_lbl_fw <- if (!is.na(p_adj_fw_i)) get_sig_symbol(p_adj_fw_i) else "ns"
-                        cat(sprintf("    %s: p=%.4f (%s)\\n", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
-                        posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)", cmp_fw_str, ifelse(is.na(p_adj_fw_i),1,p_adj_fw_i), sig_lbl_fw))
-                        should_add_fw <- FALSE
-                        if (comparison_mode == "significant") should_add_fw <- (sig_lbl_fw != "ns")
-                        else if (comparison_mode == "all") should_add_fw <- TRUE
-                        else if (comparison_mode == "custom") {
-                          comp_parts_fw_temp <- strsplit(cmp_fw_str, "-")[[1]]
-                          if (length(comp_parts_fw_temp) == 2) {
-                            ck1_fw <- paste0(comp_parts_fw_temp[1], "-", comp_parts_fw_temp[2], "@", cat_val)
-                            ck2_fw <- paste0(comp_parts_fw_temp[2], "-", comp_parts_fw_temp[1], "@", cat_val)
-                            should_add_fw <- (ck1_fw %in% custom_comps) || (ck2_fw %in% custom_comps)
-                          }
-                        }
-                        if (should_add_fw) {
-                          comp_parts_fw2 <- strsplit(cmp_fw_str, "-")[[1]]
-                          if (length(comp_parts_fw2) == 2) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1=comp_parts_fw2[1], group2=comp_parts_fw2[2],
-                              p.signif=sig_lbl_fw, x.position=cat_index, y.position=NA,
-                              stringsAsFactors=FALSE
-                            ))
-                          }
-                        }
-                      }
-                      ph_header_p <- sprintf("Post-hoc (Paired Wilcoxon, %s):", toupper(ph_method_p))
-                    }
-                    if (length(posthoc_text) > 0) {
-                      result_text <- paste0(result_text, "\\n", ph_header_p, "\\n", paste(posthoc_text, collapse="\\n"))
-                    }
-                  }
-                  stat_text_results <- c(stat_text_results, result_text)
-                }
-              } else {
-              # THREE OR MORE GROUPS (unpaired): Use ANOVA/Kruskal-Wallis + post-hoc tests
-              cat("  Performing ANOVA/Kruskal-Wallis for", n_groups_at_cat, "groups at category", cat_val, "\\n")
-
-              # Prepare data for ANOVA
-              anova_data <- data.frame(
-                group = factor(data_at_cat$group),
-                value = as.numeric(data_at_cat$value)
+              res2 <- sato_run_stats_2group(
+                group1_data = g1d, group2_data = g2d,
+                group_names = c(as.character(groups_with_data[1]), as.character(groups_with_data[2])),
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, variance_test = variance_test,
+                stat_symbol_type = stat_symbol_type,
+                paired = paired,
+                error_label = .err_lbl,
+                desc_lines = desc_lines_2g
               )
-              anova_data <- anova_data[complete.cases(anova_data), ]
+              stat_text_results <- c(stat_text_results, res2$result_text)
+              sl <- res2$sig_label
 
-              if (nrow(anova_data) >= 3) {
-                # Perform normality test for auto-selection
-                normality_text <- c()
-                all_normal <- TRUE
-
-                for (grp in groups_with_data) {
-                  grp_data <- data_at_cat[data_at_cat$group == grp, "value"]
-                  if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
-                    shapiro_result <- tryCatch(
-                      shapiro.test(grp_data),
-                      error = function(e) NULL
-                    )
-                    if (!is.null(shapiro_result)) {
-                      is_normal <- shapiro_result$p.value >= 0.05
-                      norm_status <- if (is_normal) "normal" else "non-normal"
-                      normality_text <- c(normality_text,
-                        sprintf("  %s: p=%.4f (%s)", grp, shapiro_result$p.value, norm_status))
-                      if (!is_normal) all_normal <- FALSE
-                    }
-                  }
-                }
-
-                # Auto-select test
-                test_to_use <- statistical_test
-                if (statistical_test == "auto") {
-                  test_to_use <- if (all_normal) "anova" else "kruskal"
-                  cat("  Auto-selected:", test_to_use, "(normality:", all_normal, ")\\n")
-                }
-
-                # Perform omnibus test
-                omnibus_p <- NA
-                test_name <- ""
-                if (test_to_use == "kruskal") {
-                  kruskal_result <- kruskal.test(value ~ group, data = anova_data)
-                  omnibus_p <- kruskal_result$p.value
-                  test_name <- "Kruskal-Wallis"
-                } else {
-                  anova_result <- aov(value ~ group, data = anova_data)
-                  anova_summary <- summary(anova_result)
-                  omnibus_p <- anova_summary[[1]][["Pr(>F)"]][1]
-                  test_name <- "ANOVA"
-                }
-
-                cat("  ", test_name, "p-value:", omnibus_p, "\\n")
-
-                # Build result text - ORDER: Summary, Normality, ANOVA, Post-hoc
-                result_text <- sprintf("Category %s:", cat_val)
-                # Add descriptive statistics
-                .err_label_3g <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
-                result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):", .err_label_3g))
-                for (g in groups_with_data) {
-                  g_data <- anova_data$value[anova_data$group == g]
-                  g_data <- g_data[!is.na(g_data)]
-                  n_g3 <- length(g_data)
-                  if (n_g3 > 0) {
-                    mean_g3 <- mean(g_data)
-                    if (n_g3 > 1) {
-                      sd_g3 <- sd(g_data)
-                      err_g3 <- if (error_type == "se") sd_g3 / sqrt(n_g3) else if (error_type == "ci95") qt(0.975, df=n_g3-1) * sd_g3 / sqrt(n_g3) else sd_g3
-                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g, %s=%.4g", g, n_g3, mean_g3, .err_label_3g, err_g3))
-                    } else {
-                      result_text <- paste0(result_text, sprintf("\\n  %s: n=%d, mean=%.4g", g, n_g3, mean_g3))
-                    }
-                  }
-                }
-                if (length(normality_text) > 0) {
-                  result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-                }
-                # Add ANOVA result with significance symbol
-                anova_sig_label <- if (!is.na(omnibus_p)) {
-                  if (omnibus_p < 0.001) "***" else if (omnibus_p < 0.01) "**" else if (omnibus_p < 0.05) "*" else "ns"
-                } else "ns"
-                result_text <- paste0(result_text, "\\n", test_name, " p=", sprintf("%.4f", omnibus_p), " (", anova_sig_label, ")")
-
-                # If significant, perform post-hoc tests
-                if (!is.na(omnibus_p) && omnibus_p < 0.05) {
-                  cat("  Omnibus test significant, performing post-hoc tests\\n")
-
-                  # Perform appropriate post-hoc test based on omnibus test type
-                  posthoc_result <- NULL
-                  posthoc_text <- c()
-
-                  if (test_to_use == "kruskal") {
-                    # For Kruskal-Wallis, use Dunn test
-                    cat("  Performing Dunn post-hoc test...\\n")
-                    posthoc_result <- tryCatch({
-                      if (!requireNamespace("dunn.test", quietly = TRUE)) {
-                        cat("Installing dunn.test package...\\n")
-                        webr::install("dunn.test")
-                      }
-                      library(dunn.test)
-
-                      dunn_adj <- if (selected_posthoc_test == "dunn_holm") "holm" else "bonferroni"
-                      dunn_result <- dunn.test(anova_data$value, anova_data$group, method = dunn_adj)
-
-                      # Format results into a data frame
-                      data.frame(
-                        Comparison = dunn_result$comparisons,
-                        P.adj = dunn_result$P.adjusted,
-                        stringsAsFactors = FALSE
-                      )
-                    }, error = function(e) {
-                      cat("  Dunn test error:", e$message, "\\n")
-                      # Add error as annotation text for debugging
-                      result_text <<- paste0(result_text, "\\n[DUNN ERROR: ", e$message, "]")
-                      NULL
-                    })
-
-                    if (!is.null(posthoc_result)) {
-                      cat(sprintf("  Dunn found %d pairwise comparisons\\n", nrow(posthoc_result)))
-                      for (i in 1:nrow(posthoc_result)) {
-                        comparison <- posthoc_result$Comparison[i]
-                        p_adj <- posthoc_result$P.adj[i]
-
-                        sig_label <- ""
-                        if (!is.na(p_adj)) {
-                          sig_label <- get_sig_symbol(p_adj)
-                        } else {
-                          sig_label <- "ns"
-                        }
-
-                        cat(sprintf("    %s: p=%.4f (%s)\\n", comparison, p_adj, sig_label))
-                        posthoc_text <- c(posthoc_text, sprintf("  %s: p=%.4f (%s)",
-                                                                comparison, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
-
-                        # Add comparisons to bracket data based on comparison mode
-                        should_add_posthoc <- FALSE
-                        if (comparison_mode == "significant") {
-                          should_add_posthoc <- (sig_label != "ns")
-                        } else if (comparison_mode == "all") {
-                          should_add_posthoc <- TRUE
-                        } else if (comparison_mode == "custom") {
-                          # Parse comparison to check if selected
-                          comp_parts_temp <- strsplit(comparison, " - ")[[1]]
-                          if (length(comp_parts_temp) == 2) {
-                            comp_key1 <- paste0(comp_parts_temp[1], "-", comp_parts_temp[2], "@", cat_val)
-                            comp_key2 <- paste0(comp_parts_temp[2], "-", comp_parts_temp[1], "@", cat_val)
-                            should_add_posthoc <- (comp_key1 %in% custom_comps) || (comp_key2 %in% custom_comps)
-                          }
-                        }
-
-                        if (should_add_posthoc) {
-                          # Parse comparison string (format: "group1 - group2")
-                          comp_parts <- strsplit(comparison, " - ")[[1]]
-                          if (length(comp_parts) == 2) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1 = comp_parts[1],
-                              group2 = comp_parts[2],
-                              p.signif = sig_label,
-                              x.position = cat_index,
-                              y.position = NA,  # Will be calculated later
-                              stringsAsFactors = FALSE
-                            ))
-                          }
-                        }
-                      }
-                    }
-                  } else {
-                    # For ANOVA, use selected post-hoc test
-                    cat(sprintf("  Performing %s post-hoc test...\\n", selected_posthoc_test))
-                    posthoc_result <- NULL
-                    posthoc_summary <- NULL
-
-                    if (selected_posthoc_test == "tukey") {
-                      # Tukey HSD test
-                      posthoc_result <- tryCatch(
-                        TukeyHSD(anova_result),
-                        error = function(e) {
-                          cat("  Tukey error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        posthoc_summary <- posthoc_result$group
-                      }
-                    } else if (selected_posthoc_test == "bonferroni") {
-                      # Bonferroni correction using pairwise t-tests
-                      posthoc_result <- tryCatch(
-                        pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = "bonferroni"),
-                        error = function(e) {
-                          cat("  Bonferroni error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        # Convert to Tukey-like format
-                        groups <- levels(anova_data$group)
-                        comparisons <- combn(groups, 2, simplify = FALSE)
-                        diff_values <- c()
-                        p_adj_values <- c()
-                        comparison_names <- c()
-
-                        for (comp in comparisons) {
-                          g1 <- comp[1]
-                          g2 <- comp[2]
-                          g1_idx <- which(rownames(posthoc_result$p.value) == g1)
-                          g2_idx <- which(colnames(posthoc_result$p.value) == g2)
-
-                          if (length(g1_idx) > 0 && length(g2_idx) > 0) {
-                            p_val <- posthoc_result$p.value[g1_idx, g2_idx]
-                          } else {
-                            g1_idx <- which(rownames(posthoc_result$p.value) == g2)
-                            g2_idx <- which(colnames(posthoc_result$p.value) == g1)
-                            p_val <- if (length(g1_idx) > 0 && length(g2_idx) > 0) posthoc_result$p.value[g1_idx, g2_idx] else NA
-                          }
-
-                          g1_values <- anova_data$value[anova_data$group == g1]
-                          g2_values <- anova_data$value[anova_data$group == g2]
-                          diff <- mean(g2_values, na.rm = TRUE) - mean(g1_values, na.rm = TRUE)
-
-                          comparison_names <- c(comparison_names, paste0(g2, "-", g1))
-                          diff_values <- c(diff_values, diff)
-                          p_adj_values <- c(p_adj_values, p_val)
-                        }
-
-                        posthoc_summary <- data.frame(
-                          diff = diff_values,
-                          lwr = rep(NA, length(diff_values)),
-                          upr = rep(NA, length(diff_values)),
-                          "p adj" = p_adj_values,
-                          row.names = comparison_names,
-                          check.names = FALSE
-                        )
-                      }
-                    } else if (selected_posthoc_test == "holm") {
-                      # Holm correction using pairwise t-tests
-                      posthoc_result <- tryCatch(
-                        pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method = "holm"),
-                        error = function(e) {
-                          cat("  Holm error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        # Convert to Tukey-like format (same as Bonferroni)
-                        groups <- levels(anova_data$group)
-                        comparisons <- combn(groups, 2, simplify = FALSE)
-                        diff_values <- c()
-                        p_adj_values <- c()
-                        comparison_names <- c()
-
-                        for (comp in comparisons) {
-                          g1 <- comp[1]
-                          g2 <- comp[2]
-                          g1_idx <- which(rownames(posthoc_result$p.value) == g1)
-                          g2_idx <- which(colnames(posthoc_result$p.value) == g2)
-
-                          if (length(g1_idx) > 0 && length(g2_idx) > 0) {
-                            p_val <- posthoc_result$p.value[g1_idx, g2_idx]
-                          } else {
-                            g1_idx <- which(rownames(posthoc_result$p.value) == g2)
-                            g2_idx <- which(colnames(posthoc_result$p.value) == g1)
-                            p_val <- if (length(g1_idx) > 0 && length(g2_idx) > 0) posthoc_result$p.value[g1_idx, g2_idx] else NA
-                          }
-
-                          g1_values <- anova_data$value[anova_data$group == g1]
-                          g2_values <- anova_data$value[anova_data$group == g2]
-                          diff <- mean(g2_values, na.rm = TRUE) - mean(g1_values, na.rm = TRUE)
-
-                          comparison_names <- c(comparison_names, paste0(g2, "-", g1))
-                          diff_values <- c(diff_values, diff)
-                          p_adj_values <- c(p_adj_values, p_val)
-                        }
-
-                        posthoc_summary <- data.frame(
-                          diff = diff_values,
-                          lwr = rep(NA, length(diff_values)),
-                          upr = rep(NA, length(diff_values)),
-                          "p adj" = p_adj_values,
-                          row.names = comparison_names,
-                          check.names = FALSE
-                        )
-                      }
-                    } else if (selected_posthoc_test == "dunnett") {
-                      # Dunnett test (not typically used for grouped bar, default to Tukey)
-                      cat("  Warning: Dunnett test not implemented for grouped bar, using Tukey\\n")
-                      posthoc_result <- tryCatch(
-                        TukeyHSD(anova_result),
-                        error = function(e) {
-                          cat("  Tukey error:", e$message, "\\n")
-                          NULL
-                        }
-                      )
-                      if (!is.null(posthoc_result)) {
-                        posthoc_summary <- posthoc_result$group
-                      }
-                    }
-
-                    if (!is.null(posthoc_summary)) {
-                      cat(sprintf("  Post-hoc found %d pairwise comparisons\\n", nrow(posthoc_summary)))
-
-                      for (i in 1:nrow(posthoc_summary)) {
-                        comparison <- rownames(posthoc_summary)[i]
-                        p_adj <- posthoc_summary[i, "p adj"]
-                        diff <- posthoc_summary[i, "diff"]
-
-                        sig_label <- ""
-                        if (!is.na(p_adj)) {
-                          sig_label <- get_sig_symbol(p_adj)
-                        } else {
-                          sig_label <- "ns"
-                        }
-
-                        cat(sprintf("    %s: diff=%.2f, p=%.4f (%s)\\n", comparison, diff, p_adj, sig_label))
-                        posthoc_text <- c(posthoc_text, sprintf("  %s: diff=%.2f, p=%.4f (%s)",
-                                                                comparison, diff, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
-
-                        # Add comparisons to bracket data based on comparison mode
-                        should_add_posthoc <- FALSE
-                        if (comparison_mode == "significant") {
-                          should_add_posthoc <- (sig_label != "ns")
-                        } else if (comparison_mode == "all") {
-                          should_add_posthoc <- TRUE
-                        } else if (comparison_mode == "custom") {
-                          # Parse comparison to check if selected
-                          comp_parts_temp <- strsplit(comparison, "-")[[1]]
-                          if (length(comp_parts_temp) == 2) {
-                            comp_key1 <- paste0(comp_parts_temp[1], "-", comp_parts_temp[2], "@", cat_val)
-                            comp_key2 <- paste0(comp_parts_temp[2], "-", comp_parts_temp[1], "@", cat_val)
-                            should_add_posthoc <- (comp_key1 %in% custom_comps) || (comp_key2 %in% custom_comps)
-                          }
-                        }
-
-                        if (should_add_posthoc) {
-                          # Parse comparison string (format: "group2-group1")
-                          comp_parts <- strsplit(comparison, "-")[[1]]
-                          if (length(comp_parts) == 2) {
-                            bracket_data <- rbind(bracket_data, data.frame(
-                              group1 = comp_parts[1],
-                              group2 = comp_parts[2],
-                              p.signif = sig_label,
-                              x.position = cat_index,
-                              y.position = NA,  # Will be calculated later
-                              stringsAsFactors = FALSE
-                            ))
-                          }
-                        }
-                      }
-                    }
-                  }
-
-                  # Combine omnibus and post-hoc results (sig_label already added above)
-                  if (length(posthoc_text) > 0) {
-                    # Add post-hoc test type header with correct test name
-                    posthoc_header <- if (test_to_use == "kruskal") {
-                      dunn_adj_label <- if (selected_posthoc_test == "dunn_holm") "Holm" else "Bonferroni"
-                      sprintf("Post-hoc (Dunn test with %s):", dunn_adj_label)
-                    } else {
-                      # For ANOVA, show the actual selected post-hoc test
-                      if (selected_posthoc_test == "tukey") {
-                        "Post-hoc (Tukey HSD):"
-                      } else if (selected_posthoc_test == "bonferroni") {
-                        "Post-hoc (Pairwise t-test with Bonferroni):"
-                      } else if (selected_posthoc_test == "holm") {
-                        "Post-hoc (Pairwise t-test with Holm):"
-                      } else if (selected_posthoc_test == "dunnett") {
-                        "Post-hoc (Dunnett):"
-                      } else {
-                        "Post-hoc (Tukey HSD):"
-                      }
-                    }
-                    result_text <- paste0(result_text, "\\n", posthoc_header, "\\n", paste(posthoc_text, collapse="\\n"))
-                  }
-
-                  # Add to stat text results
-                  stat_text_results <- c(stat_text_results, result_text)
-                } else {
-                  # Not significant - sig_label already added above
-                  stat_text_results <- c(stat_text_results, result_text)
-                }
+              if (!is.na(res2$p_val)) {
+                cat_index <- which(unique_categories == cat_val)
+                ck1 <- paste0(groups_with_data[1], "-", groups_with_data[2], "@", cat_val)
+                ck2 <- paste0(groups_with_data[2], "-", groups_with_data[1], "@", cat_val)
+                should_add <- (comparison_mode=="significant" && sl!="ns") || (comparison_mode=="all") || (comparison_mode=="custom" && (ck1 %in% custom_comps || ck2 %in% custom_comps))
+                if (should_add) bracket_data <- rbind(bracket_data, data.frame(group1=as.character(groups_with_data[1]), group2=as.character(groups_with_data[2]), p.signif=sl, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
               }
+
+            } else if (n_groups_at_cat >= 3) {
+              cat_index <- which(unique_categories == cat_val)
+              if (paired) {
+                ad <- data.frame(group=factor(as.character(data_at_cat$group)), value=as.numeric(data_at_cat$value), subject_id=factor(as.character(data_at_cat$subject_id)))
+              } else {
+                ad <- data.frame(group=factor(as.character(data_at_cat$group)), value=as.numeric(data_at_cat$value))
+              }
+              ad <- ad[complete.cases(ad), ]; ad$group <- droplevels(ad$group)
+              if (nrow(ad) < 3) next
+
+              .err_lbl <- if (error_type == "se") "SE" else if (error_type == "ci95") "CI95" else "SD"
+              desc_lines_3g <- sapply(levels(ad$group), function(g) {
+                gd <- ad$value[ad$group==g]; ng <- length(gd); mg <- mean(gd)
+                if (ng > 1) { sg <- sd(gd); eg <- if(error_type=="se") sg/sqrt(ng) else if(error_type=="ci95") qt(0.975,df=ng-1)*sg/sqrt(ng) else sg; sprintf("  %s: n=%d, mean=%.4g, %s=%.4g", g, ng, mg, .err_lbl, eg) }
+                else sprintf("  %s: n=%d, mean=%.4g", g, ng, mg)
+              })
+
+              res3 <- sato_run_stats_ngroup(
+                anova_data = ad,
+                x_label = as.character(cat_val),
+                statistical_test = statistical_test, post_hoc_test = selected_posthoc_test,
+                dunnett_control = dunnett_control,
+                stat_symbol_type = stat_symbol_type,
+                paired = paired,
+                paired_ph_correction = "${document.getElementById('pairedPostHocCorrection')?.value || 'holm'}",
+                error_label = .err_lbl,
+                desc_lines = desc_lines_3g
+              )
+              stat_text_results <- c(stat_text_results, res3$result_text)
+
+              # Build bracket_data from returned pairs
+              if (nrow(res3$pairs) > 0) {
+                for (pi in 1:nrow(res3$pairs)) {
+                  sl_pi <- res3$pairs$sig_label[pi]
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
+                }
               }
             }
           }
@@ -22508,7 +19826,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const varianceTest = o.varianceTest || 'levene';
   const postHocTest = o.postHocTest || 'tukey';
   const dunnettControl = o.dunnettControl || '';
-  const pairedPostHocCorrection = o.pairedPostHocCorrection || document.getElementById("pairedPostHocCorrection")?.value || "holm";
+  const pairedPostHocCorrection = (typeof o.pairedPostHocCorrection === 'string' ? o.pairedPostHocCorrection : null) || document.getElementById("pairedPostHocCorrection")?.value || "holm";
   const statSymbolType = o.statSymbolType || 'stars';
   const customSymbol05 = o.customSymbol05 || '*';
   const customSymbol01 = o.customSymbol01 || '**';
@@ -22554,9 +19872,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
   // VBracket legend settings (for 3+ groups line plots)
   const vbracketTimepoint = o.vbracketTimepoint || "";
-  const vbracketPosition = o.vbracketPosition || "bottomleft";
+  const vbracketPosition = o.vbracketPosition || "topleft";
   const vbracketX = Number(o.vbracketX) || 0.05;
-  const vbracketY = Number(o.vbracketY) || 0.99;
+  const vbracketY = Number(o.vbracketY) || 0.92;
   const vbracketTextSize = Number(o.vbracketTextSize) || 14;
   const vbracketSigSize = Number(o.vbracketSigSize) || 20;
   const vbracketMargin = Number(o.vbracketMargin) || 0.06;
@@ -22802,6 +20120,7 @@ sato_run_stats_ngroup <- function(
   statistical_test, post_hoc_test, dunnett_control = "",
   stat_symbol_type = "stars",
   paired = FALSE,
+  paired_ph_correction = "holm",
   error_label = "SD",
   desc_lines = c()
 ) {
@@ -22813,9 +20132,28 @@ sato_run_stats_ngroup <- function(
   if (length(desc_lines) > 0)
     result_text <- paste0(result_text, sprintf("\\nSummary (mean +/- %s):\\n", error_label), paste(desc_lines, collapse="\\n"))
 
+  pairs <- data.frame(group1=character(0), group2=character(0), p_adj=numeric(0), sig_label=character(0), stringsAsFactors=FALSE)
+
   if (paired) {
     normality_text <- c(); all_normal <- TRUE
-    groups_list <- levels(anova_data$group)
+    # Convert to character to avoid all factor comparison issues
+    anova_data$group      <- as.character(anova_data$group)
+    anova_data$subject_id <- as.character(anova_data$subject_id)
+    groups_list <- unique(anova_data$group)
+    # Re-balance subject IDs if not shared across all groups (e.g. auto-assigned row numbers)
+    shared_ids <- Reduce(intersect, lapply(groups_list, function(g) anova_data$subject_id[anova_data$group == g]))
+    if (length(shared_ids) == 0) {
+      cat("Paired stats: subject IDs not shared across groups - re-assigning sequential IDs\\n")
+      new_ids <- character(nrow(anova_data))
+      for (g in groups_list) {
+        idx <- which(anova_data$group == g)
+        new_ids[idx] <- as.character(seq_along(idx))
+      }
+      anova_data$subject_id <- new_ids
+    }
+    # Pre-compute paired t-test and Wilcoxon p-values for each pair using merge
+    # (done here before aov() runs, since aov() may corrupt anova_data in webR)
+    ph_t_pvals <- c(); ph_w_pvals <- c(); ph_g1_pre <- c(); ph_g2_pre <- c()
     for (pair_n in combn(groups_list, 2, simplify = FALSE)) {
       g1 <- anova_data[anova_data$group == pair_n[1], c("subject_id","value")]
       g2 <- anova_data[anova_data$group == pair_n[2], c("subject_id","value")]
@@ -22831,6 +20169,15 @@ sato_run_stats_ngroup <- function(
           if (!is_norm) all_normal <- FALSE
         }
       }
+      if (length(diffs_n) >= 2) {
+        ph_t_pvals <- c(ph_t_pvals, tryCatch(t.test(diffs_n)$p.value, error=function(e) NA_real_))
+        ph_w_pvals <- c(ph_w_pvals, tryCatch(wilcox.test(diffs_n, mu=0)$p.value, error=function(e) NA_real_))
+      } else {
+        ph_t_pvals <- c(ph_t_pvals, NA_real_)
+        ph_w_pvals <- c(ph_w_pvals, NA_real_)
+      }
+      ph_g1_pre <- c(ph_g1_pre, pair_n[1])
+      ph_g2_pre <- c(ph_g2_pre, pair_n[2])
     }
     if (length(normality_text) > 0)
       result_text <- paste0(result_text, "\\nNormality of differences (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
@@ -22840,37 +20187,47 @@ sato_run_stats_ngroup <- function(
     else                                       test_to_use_p <- "friedman"
     omnibus_p <- NA; test_name_p <- ""
     if (test_to_use_p == "rm_anova") {
-      rm_res <- tryCatch(summary(aov(value ~ group + Error(subject_id/group), data = anova_data)), error = function(e) NULL)
+      rm_res <- tryCatch(summary(aov(value ~ group + Error(subject_id/group), data = anova_data)), error = function(e) { cat("RM-ANOVA error:", e$message, "\\n"); NULL })
       if (!is.null(rm_res)) {
         omnibus_p <- tryCatch(rm_res[["Error: subject_id:group"]][[1]][["Pr(>F)"]][1], error = function(e) NA)
         if (is.null(omnibus_p) || length(omnibus_p) == 0) omnibus_p <- NA_real_
         test_name_p <- "RM-ANOVA"
       }
+      # Fallback to Friedman if RM-ANOVA failed
+      if (is.na(omnibus_p)) {
+        cat("RM-ANOVA produced no result, trying Friedman as fallback\\n")
+        fr <- tryCatch(friedman.test(value ~ group | subject_id, data = anova_data), error = function(e) { cat("Friedman error:", e$message, "\\n"); NULL })
+        if (!is.null(fr)) { omnibus_p <- fr$p.value; test_name_p <- "Friedman (RM-ANOVA fallback)" }
+      }
     } else {
-      fr <- tryCatch(friedman.test(value ~ group | subject_id, data = anova_data), error = function(e) NULL)
+      fr <- tryCatch(friedman.test(value ~ group | subject_id, data = anova_data), error = function(e) { cat("Friedman error:", e$message, "\\n"); NULL })
       if (!is.null(fr)) { omnibus_p <- fr$p.value; test_name_p <- "Friedman" }
     }
     if (!is.na(omnibus_p)) {
       result_text <- paste0(result_text,
         sprintf("\\nOverall test: %s, p=%.4f (%s)", test_name_p, omnibus_p, get_sig_sym(omnibus_p)))
       if (omnibus_p < 0.05) {
-        ph_method <- if (post_hoc_test %in% c("bonferroni","holm")) post_hoc_test else "holm"
-        ph_label  <- if (ph_method == "bonferroni") "Bonferroni" else "Holm"
-        ph_func   <- if (test_to_use_p == "rm_anova") pairwise.t.test else pairwise.wilcox.test
-        ph_name   <- if (test_to_use_p == "rm_anova") "Pairwise paired t-test" else "Pairwise paired Wilcoxon"
-        ph_res <- tryCatch(ph_func(anova_data$value, anova_data$group, p.adjust.method=ph_method, paired=TRUE), error=function(e) NULL)
-        if (!is.null(ph_res)) {
-          result_text <- paste0(result_text, sprintf("\\nPost-hoc (%s, %s):", ph_name, ph_label))
-          p_mat <- ph_res$p.value
-          for (r in rownames(p_mat)) for (c in colnames(p_mat)) {
-            p_adj <- p_mat[r,c]
-            if (!is.na(p_adj)) result_text <- paste0(result_text,
-              sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, get_sig_sym(p_adj)))
+        ph_method  <- if (statistical_test == "auto") "holm" else if (post_hoc_test %in% c("bonferroni", "holm")) post_hoc_test else paired_ph_correction
+        ph_label   <- if (ph_method == "bonferroni") "Bonferroni" else "Holm"
+        ph_name    <- if (test_to_use_p == "rm_anova") "Pairwise paired t-test" else "Pairwise Wilcoxon signed-rank"
+        use_rm_ph  <- (test_to_use_p == "rm_anova")
+        ph_raw_p   <- if (use_rm_ph) ph_t_pvals else ph_w_pvals
+        ph_g1_vec  <- ph_g1_pre
+        ph_g2_vec  <- ph_g2_pre
+        ph_adj_p <- tryCatch(p.adjust(ph_raw_p, method = ph_method), error = function(e) rep(NA_real_, length(ph_raw_p)))
+        result_text <- paste0(result_text, sprintf("\\nPost-hoc (%s, %s):", ph_name, ph_label))
+        for (k in seq_along(ph_g1_vec)) {
+          p_adj_k <- ph_adj_p[k]
+          if (!is.na(p_adj_k)) {
+            result_text <- paste0(result_text, sprintf("\\n  %s-%s: p=%.4f (%s)", ph_g1_vec[k], ph_g2_vec[k], p_adj_k, get_sig_sym(p_adj_k)))
+            pairs <- rbind(pairs, data.frame(group1=ph_g1_vec[k], group2=ph_g2_vec[k], p_adj=p_adj_k, sig_label=get_sig_sym(p_adj_k), stringsAsFactors=FALSE))
+          } else {
+            result_text <- paste0(result_text, sprintf("\\n  %s-%s: insufficient paired data", ph_g1_vec[k], ph_g2_vec[k]))
           }
         }
       }
     }
-    return(list(result_text = result_text, omnibus_p = omnibus_p))
+    return(list(result_text = result_text, omnibus_p = omnibus_p, pairs = pairs))
   }
 
   normality_text <- c(); all_normal <- TRUE
@@ -22908,8 +20265,10 @@ sato_run_stats_ngroup <- function(
             ctrl_vals <- anova_data$value[anova_data$group == ctrl]
             for (trt in levels(anova_data$group)[levels(anova_data$group) != ctrl]) {
               sr <- tryCatch(Steel.test(list(ctrl_vals, anova_data$value[anova_data$group == trt])), error=function(e) NULL)
-              if (!is.null(sr)) result_text <- paste0(result_text,
-                sprintf("\\n  %s-%s: p=%.4f (%s)", ctrl, trt, sr$st[2], get_sig_sym(sr$st[2])))
+              if (!is.null(sr)) {
+                result_text <- paste0(result_text, sprintf("\\n  %s-%s: p=%.4f (%s)", ctrl, trt, sr$st[2], get_sig_sym(sr$st[2])))
+                pairs <- rbind(pairs, data.frame(group1=ctrl, group2=trt, p_adj=sr$st[2], sig_label=get_sig_sym(sr$st[2]), stringsAsFactors=FALSE))
+              }
             }
           } else result_text <- paste0(result_text, "\\n[ERROR] Steel test requires kSamples package.")
         } else {
@@ -22922,8 +20281,10 @@ sato_run_stats_ngroup <- function(
               result_text <- paste0(result_text, sprintf("\\nPost-hoc (Dunn test with %s):", dunn_label))
               for (i in seq_along(dr$comparisons)) {
                 comp_clean <- gsub(" - ", "-", dr$comparisons[i])
-                result_text <- paste0(result_text,
-                  sprintf("\\n  %s: p=%.4f (%s)", comp_clean, dr$P.adjusted[i], get_sig_sym(dr$P.adjusted[i])))
+                p_i <- dr$P.adjusted[i]
+                result_text <- paste0(result_text, sprintf("\\n  %s: p=%.4f (%s)", comp_clean, p_i, get_sig_sym(p_i)))
+                dn_parts <- strsplit(comp_clean, "-")[[1]]
+                if (length(dn_parts) == 2) pairs <- rbind(pairs, data.frame(group1=dn_parts[1], group2=dn_parts[2], p_adj=p_i, sig_label=get_sig_sym(p_i), stringsAsFactors=FALSE))
               }
             }
           } else result_text <- paste0(result_text, "\\n[ERROR] Dunn test requires dunn.test package.")
@@ -22950,8 +20311,11 @@ sato_run_stats_ngroup <- function(
             if (!is.null(dr)) {
               result_text <- paste0(result_text, sprintf("\\nPost-hoc (Dunnett, vs %s):", ctrl))
               pvals <- dr$test$pvalues; cnames <- names(dr$test$coefficients)
-              for (i in seq_along(pvals)) result_text <- paste0(result_text,
-                sprintf("\\n  %s: p=%.4f (%s)", cnames[i], pvals[i], get_sig_sym(pvals[i])))
+              for (i in seq_along(pvals)) {
+                result_text <- paste0(result_text, sprintf("\\n  %s: p=%.4f (%s)", cnames[i], pvals[i], get_sig_sym(pvals[i])))
+                dn_parts <- strsplit(cnames[i], " - ")[[1]]
+                if (length(dn_parts) == 2) pairs <- rbind(pairs, data.frame(group1=trimws(dn_parts[2]), group2=trimws(dn_parts[1]), p_adj=pvals[i], sig_label=get_sig_sym(pvals[i]), stringsAsFactors=FALSE))
+              }
             }
           } else result_text <- paste0(result_text, "\\n[ERROR] Dunnett requires multcomp package.")
         } else if (post_hoc_test %in% c("bonferroni","holm")) {
@@ -22962,8 +20326,10 @@ sato_run_stats_ngroup <- function(
             p_mat <- ph_res$p.value
             for (r in rownames(p_mat)) for (c in colnames(p_mat)) {
               p_adj <- p_mat[r,c]
-              if (!is.na(p_adj)) result_text <- paste0(result_text,
-                sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, get_sig_sym(p_adj)))
+              if (!is.na(p_adj)) {
+                result_text <- paste0(result_text, sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, get_sig_sym(p_adj)))
+                pairs <- rbind(pairs, data.frame(group1=r, group2=c, p_adj=p_adj, sig_label=get_sig_sym(p_adj), stringsAsFactors=FALSE))
+              }
             }
           }
         } else {
@@ -22976,13 +20342,15 @@ sato_run_stats_ngroup <- function(
               result_text <- paste0(result_text,
                 sprintf("\\n  %s: diff=%.2f, p=%.4f (%s)", comparison, diff,
                         ifelse(is.na(p_adj),1.0,p_adj), if (!is.na(p_adj)) get_sig_sym(p_adj) else "ns"))
+              tuk_parts <- strsplit(comparison, "-")[[1]]
+              if (length(tuk_parts) == 2) pairs <- rbind(pairs, data.frame(group1=tuk_parts[2], group2=tuk_parts[1], p_adj=ifelse(is.na(p_adj),1.0,p_adj), sig_label=if(!is.na(p_adj)) get_sig_sym(p_adj) else "ns", stringsAsFactors=FALSE))
             }
           }
         }
       }
     }
   }
-  list(result_text = result_text, omnibus_p = omnibus_p)
+  list(result_text = result_text, omnibus_p = omnibus_p, pairs = pairs)
 }
 `;
 
@@ -23234,12 +20602,13 @@ ${SHARED_STAT_HELPERS_R}
       variance_test="levene", stat_symbol_type="stars",
       stat_symbol_size=5, comparison_mode="significant",
       post_hoc_test="tukey", custom_comparisons="[]",
-      vbracket_timepoint="", vbracket_position="bottomleft", vbracket_x=0.15, vbracket_y=0.05,
+      vbracket_timepoint="", vbracket_position="bottomleft", vbracket_x=0.15, vbracket_y=0.27,
       vbracket_text_size=10, vbracket_sig_size=14,
       vbracket_margin=0.06, vbracket_line_width=3,
       vbracket_legend_line_length=0.05, vbracket_legend_line_width=2,
       vbracket_item_spacing=0.1, vbracket_bracket_layer_spacing=NULL,
-      output_width=6, output_height=4
+      output_width=6, output_height=4,
+      y_scale="log10"
     ) {
       library(ggplot2)
 
@@ -23388,10 +20757,19 @@ ${SHARED_STAT_HELPERS_R}
       }
 
       p <- p +
-        scale_y_log10(labels = function(x) {
-          ifelse(x >= 0.1, formatC(x, format="g", digits=2),
-                 formatC(x, format="e", digits=0))
-        }) +
+        { if (y_scale == "log10") {
+            scale_y_log10(labels = function(x) {
+              ifelse(x >= 0.1, formatC(x, format="g", digits=2),
+                     formatC(x, format="e", digits=0))
+            })
+          } else if (y_scale == "log2") {
+            scale_y_continuous(trans = "log2")
+          } else if (y_scale == "log") {
+            scale_y_continuous(trans = "log")
+          } else {
+            scale_y_continuous()
+          }
+        } +
         scale_color_manual(values=line_colors[1:n_groups]) +
         scale_shape_manual(values=shapes_vec[1:n_groups]) +
         labs(
@@ -23483,289 +20861,59 @@ ${SHARED_STAT_HELPERS_R}
                 }
               }
 
-              # Normality test (same as standard charts)
-              normality_text <- c()
-              both_normal <- TRUE
-              if (paired) {
-                diffs_2 <- group1_data - group2_data
-                if (length(diffs_2) >= 3 && length(diffs_2) <= 5000) {
-                  shapiro_diffs <- tryCatch(shapiro.test(diffs_2), error=function(e) NULL)
-                  if (!is.null(shapiro_diffs)) {
-                    both_normal <- shapiro_diffs$p.value >= 0.05
-                    diff_status <- if (both_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  Differences: p=%.4f (%s)", shapiro_diffs$p.value, diff_status))
-                  }
-                }
-              } else {
-                is_group1_normal <- TRUE
-                is_group2_normal <- TRUE
-                if (length(group1_data) >= 3 && length(group1_data) <= 5000) {
-                  shapiro_result1 <- tryCatch(shapiro.test(group1_data), error=function(e) NULL)
-                  if (!is.null(shapiro_result1)) {
-                    is_group1_normal <- shapiro_result1$p.value >= 0.05
-                    norm_status <- if (is_group1_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_at_d[1], shapiro_result1$p.value, norm_status))
-                  }
-                }
-                if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
-                  shapiro_result2 <- tryCatch(shapiro.test(group2_data), error=function(e) NULL)
-                  if (!is.null(shapiro_result2)) {
-                    is_group2_normal <- shapiro_result2$p.value >= 0.05
-                    norm_status <- if (is_group2_normal) "normal" else "non-normal"
-                    normality_text <- c(normality_text,
-                      sprintf("  %s: p=%.4f (%s)", groups_at_d[2], shapiro_result2$p.value, norm_status))
-                  }
-                }
-                both_normal <- is_group1_normal && is_group2_normal
-              }
+              res2 <- sato_run_stats_2group(
+                group1_data = group1_data, group2_data = group2_data,
+                group_names = c(as.character(groups_at_d[1]), as.character(groups_at_d[2])),
+                x_label = as.character(d_val),
+                statistical_test = statistical_test, variance_test = variance_test,
+                stat_symbol_type = stat_symbol_type,
+                paired = paired,
+                error_label = "SD",
+                desc_lines = desc_lines
+              )
+              stat_text_results <- c(stat_text_results, res2$result_text)
+              sig_label <- res2$sig_label
 
-              # Select test based on mode (same as standard charts)
-              test_to_use <- statistical_test
-              if (statistical_test == "auto") {
-                if (both_normal) {
-                  test_to_use <- "t-test"
-                  cat(if (paired) "  Auto-selected: Paired t-test (differences normal)\\n" else "  Auto-selected: t-test (both groups normal)\\n")
-                } else {
-                  test_to_use <- "wilcoxon"
-                  cat(if (paired) "  Auto-selected: Paired Wilcoxon (differences non-normal)\\n" else "  Auto-selected: Wilcoxon test (non-normal data detected)\\n")
-                }
-              } else if (statistical_test == "parametric") {
-                test_to_use <- "t-test"
-              } else if (statistical_test == "nonparametric") {
-                test_to_use <- "wilcoxon"
-              }
-
-              # Variance test (only for unpaired parametric, same as standard charts)
-              variance_text <- ""
-              equal_variances <- TRUE
-              if (test_to_use != "wilcoxon" && !paired) {
-                if (variance_test == "levene") {
-                  combined_data <- data.frame(
-                    values = c(group1_data, group2_data),
-                    group = factor(c(rep(groups_at_d[1], length(group1_data)),
-                                     rep(groups_at_d[2], length(group2_data))))
-                  )
-                  group_means <- tapply(combined_data$values, combined_data$group, mean)
-                  abs_deviations <- abs(combined_data$values - group_means[combined_data$group])
-                  levene_result <- tryCatch(
-                    anova(lm(abs_deviations ~ combined_data$group)),
-                    error=function(e) NULL
-                  )
-                  if (!is.null(levene_result)) {
-                    levene_p <- levene_result$\`Pr(>F)\`[1]
-                    equal_variances <- levene_p > 0.05
-                    variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                    variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", levene_p, variance_status)
-                    cat(sprintf("    Levene test: p=%.4f (%s)\\n", levene_p, variance_status))
-                  }
-                } else {
-                  var_test <- tryCatch(var.test(group1_data, group2_data), error=function(e) NULL)
-                  if (!is.null(var_test)) {
-                    equal_variances <- var_test$p.value > 0.05
-                    variance_status <- if (equal_variances) "equal variances" else "unequal variances"
-                    variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", var_test$p.value, variance_status)
-                    cat(sprintf("    F-test: p=%.4f (%s)\\n", var_test$p.value, variance_status))
-                  }
-                }
-              }
-
-              # Run test (same as standard charts)
-              test_result <- NULL; test_name <- ""
-              if (paired) {
-                if (test_to_use == "wilcoxon") {
-                  test_result <- tryCatch(wilcox.test(group1_data, group2_data, paired=TRUE), error=function(e) NULL)
-                  test_name <- "Paired Wilcoxon"
-                } else {
-                  test_result <- tryCatch(t.test(group1_data, group2_data, paired=TRUE), error=function(e) NULL)
-                  test_name <- "Paired t-test"
-                }
-              } else if (test_to_use == "wilcoxon") {
-                test_result <- tryCatch(wilcox.test(group1_data, group2_data), error=function(e) NULL)
-                test_name <- "Wilcoxon"
-              } else {
-                test_result <- tryCatch(t.test(group1_data, group2_data, var.equal=equal_variances), error=function(e) NULL)
-                test_name <- if (equal_variances) "Student's t-test" else "Welch's t-test"
-              }
-
-              if (!is.null(test_result)) {
-                p_val <- test_result$p.value
-                cat(sprintf("  2-group test: %s vs %s, %s p=%.4f\\n",
-                            groups_at_d[1], groups_at_d[2], test_name, p_val))
-                sig_label <- get_sig_symbol(p_val)
-
-                result_text <- sprintf(">> X-axis value: %g\\nGroups: %s vs %s",
-                                       d_val, groups_at_d[1], groups_at_d[2])
-                if (length(desc_lines) > 0) {
-                  result_text <- paste0(result_text, "\\nSummary (mean +/- SD):\\n", paste(desc_lines, collapse="\\n"))
-                }
-                if (length(normality_text) > 0) {
-                  result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-                } else {
-                  result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
-                }
-                if (nchar(variance_text) > 0) {
-                  result_text <- paste0(result_text, "\\n", variance_text)
-                }
-                result_text <- paste0(result_text,
-                  sprintf("\\nTest: %s, p=%.4f (%s)", test_name, p_val, sig_label))
-                stat_text_results <- c(stat_text_results, result_text)
-
-                if (sig_label != "" && sig_label != "ns") {
-                  stat_results <- rbind(stat_results,
-                    data.frame(x=d_val, label=sig_label, stringsAsFactors=FALSE))
-                }
+              if (!is.na(res2$p_val) && sig_label != "" && sig_label != "ns") {
+                stat_results <- rbind(stat_results,
+                  data.frame(x=d_val, label=sig_label, stringsAsFactors=FALSE))
               }
             }
 
           } else if (n_grp_d >= 3) {
-            anova_data <- data.frame(
-              group = factor(as.character(data_at_d$grp)),
-              value = as.numeric(data_at_d$sf)
-            )
+            paired_3g <- paired_samples && subject_col > 0 && subject_col <= ncol(dat)
+            if (paired_3g) {
+              anova_data <- data.frame(
+                group = factor(as.character(data_at_d$grp)),
+                value = as.numeric(data_at_d$sf),
+                subject_id = factor(as.character(data_at_d[[subject_col]]))
+              )
+            } else {
+              anova_data <- data.frame(
+                group = factor(as.character(data_at_d$grp)),
+                value = as.numeric(data_at_d$sf)
+              )
+            }
             anova_data <- anova_data[complete.cases(anova_data), ]
             anova_data$group <- droplevels(anova_data$group)
 
-            # Summary stats
             desc_lines <- sapply(levels(anova_data$group), function(g) {
               gv <- anova_data$value[anova_data$group == g]
               sprintf("  %s: n=%d, mean=%.4g, SD=%.4g", g, length(gv), mean(gv), if(length(gv)>1) sd(gv) else 0)
             })
 
-            result_text <- sprintf(">> X-axis value: %g\\nTime point %.1f:", d_val, d_val)
-            if (length(desc_lines) > 0) {
-              result_text <- paste0(result_text, "\\nSummary (mean +/- SD):\\n", paste(desc_lines, collapse="\\n"))
-            }
-
-            # Normality testing for each group (same as standard charts)
-            normality_text <- c()
-            all_normal <- TRUE
-            for (grp in levels(anova_data$group)) {
-              grp_data <- anova_data$value[anova_data$group == grp]
-              if (length(grp_data) >= 3 && length(grp_data) <= 5000) {
-                shapiro_result <- tryCatch(shapiro.test(grp_data), error=function(e) NULL)
-                if (!is.null(shapiro_result)) {
-                  norm_status <- if (shapiro_result$p.value >= 0.05) "normal" else "non-normal"
-                  if (shapiro_result$p.value < 0.05) all_normal <- FALSE
-                  normality_text <- c(normality_text,
-                    sprintf("  %s: p=%.4f (%s)", grp, shapiro_result$p.value, norm_status))
-                }
-              }
-            }
-            if (length(normality_text) > 0) {
-              result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk):\\n", paste(normality_text, collapse="\\n"))
-            } else {
-              result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
-            }
-
-            # Decide parametric vs non-parametric (same as standard charts)
-            use_nonparametric <- (statistical_test == "nonparametric") ||
-                                 (statistical_test == "auto" && !all_normal)
-
-            if (use_nonparametric) {
-              # Non-parametric: Kruskal-Wallis + Dunn post-hoc (same as standard charts)
-              kw_result <- tryCatch(
-                kruskal.test(value ~ group, data=anova_data),
-                error=function(e) { cat("  Kruskal-Wallis error:", e$message, "\\n"); NULL }
-              )
-              if (!is.null(kw_result)) {
-                kw_p <- kw_result$p.value
-                kw_sig <- get_sig_symbol(kw_p)
-                cat(sprintf("  Kruskal-Wallis p=%.4f\\n", kw_p))
-                result_text <- paste0(result_text, sprintf("\\nOverall test: Kruskal-Wallis, p=%.4f (%s)", kw_p, kw_sig))
-
-                if (!is.na(kw_p) && kw_p < 0.05) {
-                  dunn_method <- if (post_hoc_test == "dunn_holm") "holm" else "bonferroni"
-                  dunn_method_label <- if (dunn_method == "holm") "Holm" else "Bonferroni"
-                  dunn_available <- tryCatch({
-                    if (!requireNamespace("dunn.test", quietly=TRUE)) webr::install("dunn.test")
-                    library(dunn.test)
-                    TRUE
-                  }, error=function(e) { cat("  dunn.test could not be loaded:", e$message, "\\n"); FALSE })
-                  if (dunn_available) {
-                    dunn_result <- tryCatch(
-                      dunn.test(anova_data$value, anova_data$group, method=dunn_method),
-                      error=function(e) { cat("  Dunn test error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(dunn_result)) {
-                      result_text <- paste0(result_text, sprintf("\\nPost-hoc (Dunn test with %s):", dunn_method_label))
-                      for (i in seq_along(dunn_result$comparisons)) {
-                        comp_clean <- gsub(" - ", "-", dunn_result$comparisons[i])
-                        p_adj <- dunn_result$P.adjusted[i]
-                        sig_label <- get_sig_symbol(p_adj)
-                        result_text <- paste0(result_text,
-                          sprintf("\\n  %s: p=%.4f (%s)", comp_clean, p_adj, sig_label))
-                      }
-                    }
-                  } else {
-                    result_text <- paste0(result_text,
-                      "\\n[ERROR] Dunn test requires the dunn.test package which could not be loaded.",
-                      "\\nPlease contact us for support: https://h20gg702.github.io/figra-pages/support")
-                  }
-                }
-              }
-            } else {
-              # Parametric: ANOVA + user-selected post-hoc (same as standard charts)
-              anova_result <- tryCatch(
-                aov(value ~ group, data=anova_data),
-                error=function(e) { cat("  ANOVA error:", e$message, "\\n"); NULL }
-              )
-              if (!is.null(anova_result)) {
-                anova_summary <- summary(anova_result)
-                anova_p <- anova_summary[[1]][["Pr(>F)"]][1]
-                anova_sig <- if (!is.na(anova_p)) get_sig_symbol(anova_p) else ""
-                cat(sprintf("  ANOVA p=%.4f\\n", anova_p))
-                result_text <- paste0(result_text, sprintf("\\nOverall test: ANOVA, p=%.4f (%s)", anova_p, anova_sig))
-
-                if (!is.na(anova_p) && anova_p < 0.05) {
-                  if (post_hoc_test == "bonferroni" || post_hoc_test == "holm") {
-                    cat(sprintf("  ANOVA significant - %s post-hoc...\\n", post_hoc_test))
-                    ph_result <- tryCatch(
-                      pairwise.t.test(anova_data$value, anova_data$group, p.adjust.method=post_hoc_test),
-                      error=function(e) { cat("  Post-hoc error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(ph_result)) {
-                      ph_label <- if (post_hoc_test == "bonferroni") "Bonferroni" else "Holm"
-                      result_text <- paste0(result_text,
-                        sprintf("\\nPost-hoc (Pairwise t-test with %s):", ph_label))
-                      p_mat <- ph_result$p.value
-                      for (r in rownames(p_mat)) {
-                        for (c in colnames(p_mat)) {
-                          p_adj <- p_mat[r, c]
-                          if (!is.na(p_adj)) {
-                            sig_label <- get_sig_symbol(p_adj)
-                            result_text <- paste0(result_text,
-                              sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, sig_label))
-                          }
-                        }
-                      }
-                    }
-                  } else {
-                    cat("  ANOVA significant - performing Tukey HSD...\\n")
-                    tukey_result <- tryCatch(
-                      TukeyHSD(anova_result),
-                      error=function(e) { cat("  Tukey error:", e$message, "\\n"); NULL }
-                    )
-                    if (!is.null(tukey_result)) {
-                      tukey_summary <- tukey_result$group
-                      result_text <- paste0(result_text, "\\nPost-hoc (Tukey HSD):")
-                      for (i in 1:nrow(tukey_summary)) {
-                        comparison <- rownames(tukey_summary)[i]
-                        p_adj <- tukey_summary[i, "p adj"]
-                        diff <- tukey_summary[i, "diff"]
-                        sig_label <- if (!is.na(p_adj)) get_sig_symbol(p_adj) else "ns"
-                        result_text <- paste0(result_text,
-                          sprintf("\\n  %s: diff=%.2f, p=%.4f (%s)",
-                                  comparison, diff, ifelse(is.na(p_adj), 1.0, p_adj), sig_label))
-                      }
-                    }
-                  }
-                }
-              }
-            }
-
-            stat_text_results <- c(stat_text_results, result_text)
+            res3 <- sato_run_stats_ngroup(
+              anova_data = anova_data,
+              x_label = as.character(d_val),
+              statistical_test = statistical_test, post_hoc_test = post_hoc_test,
+              dunnett_control = dunnett_control,
+              stat_symbol_type = stat_symbol_type,
+              paired = paired_3g,
+              paired_ph_correction = "${pairedPostHocCorrection}",
+              error_label = "SD",
+              desc_lines = desc_lines
+            )
+            stat_text_results <- c(stat_text_results, res3$result_text)
           }
         }
 
@@ -23797,13 +20945,26 @@ ${SHARED_STAT_HELPERS_R}
 
           vbracket_loaded <- FALSE
           tryCatch({
-            if (!require("vbracket", quietly=TRUE)) {
+            needs_install <- !require("vbracket", quietly=TRUE)
+            if (!needs_install) {
+              current_ver <- tryCatch(as.numeric_version(packageVersion("vbracket")), error = function(e) as.numeric_version("0.0.0"))
+              if (current_ver < as.numeric_version("1.4.0")) {
+                needs_install <- TRUE
+              } else {
+                fn_body <- tryCatch(deparse(body(vbracket:::ggplot_add.vbracket_legend)), error = function(e) "")
+                if (!any(grepl("has_log_y", fn_body))) {
+                  cat("vbracket 1.4.0 missing has_log_y fix — reinstalling...\\n")
+                  needs_install <- TRUE
+                }
+              }
+            }
+            if (needs_install) {
               webr::install("vbracket",
                 repos = c("https://h20gg702.r-universe.dev", "https://repo.r-wasm.org"))
             }
             suppressPackageStartupMessages(library(vbracket))
             vbracket_loaded <- TRUE
-            cat("✓ vbracket loaded\\n")
+            cat(sprintf("✓ vbracket loaded (version %s)\\n", packageVersion("vbracket")))
           }, error=function(e) cat(sprintf("✗ vbracket failed: %s\\n", e$message)))
 
           if (vbracket_loaded) {
@@ -23849,7 +21010,8 @@ ${SHARED_STAT_HELPERS_R}
                 p <- p + legend_bracket(
                   labels=group_labels, colors=legend_colors,
                   comparisons=comparisons_df,
-                  legend_x=vbracket_x, legend_y=vbracket_y,
+                  x=vbracket_x,
+                  y=vbracket_y,
                   text_size=vbracket_text_size, sig_size=vbracket_sig_size,
                   bracket_margin=vbracket_margin,
                   line_length=vbracket_legend_line_length,
@@ -23864,7 +21026,8 @@ ${SHARED_STAT_HELPERS_R}
                 # No comparisons — still show group color legend without brackets
                 p <- p + legend_bracket(
                   labels=group_labels, colors=legend_colors,
-                  legend_x=vbracket_x, legend_y=vbracket_y,
+                  x=vbracket_x,
+                  y=vbracket_y,
                   text_size=vbracket_text_size,
                   line_length=vbracket_legend_line_length,
                   line_width=vbracket_line_width,
@@ -25061,7 +22224,8 @@ ${SHARED_STAT_HELPERS_R}
         vbracket_item_spacing = ${vbracketItemSpacing},
         vbracket_bracket_layer_spacing = ${vbracketBracketLayerSpacing !== null ? vbracketBracketLayerSpacing : 'NULL'},
         output_width = ${wIn},
-        output_height = ${hIn}
+        output_height = ${hIn},
+        y_scale = "${yScale}"
       )
     } else {
       stop("Unsupported chart type:", chart_type)
@@ -26311,9 +23475,11 @@ function uiOpts(){
       ? "auto"
       : (el("dataTypeSelect")?.value === "nonparametric" ? "nonparametric" : "parametric"),
     varianceTest: el("varianceTest")?.value || "levene",
-    postHocTest: (el("dataTypeSelect")?.value === "nonparametric" ? el("postHocTestNonparam")?.value : el("postHocTest")?.value) || "tukey",
+    postHocTest: (el("statisticalTestMode")?.value || "auto") === "manual"
+      ? ((el("dataTypeSelect")?.value === "nonparametric" ? el("postHocTestNonparam")?.value : el("postHocTest")?.value) || "tukey")
+      : "tukey",
     dataType: el("dataTypeSelect")?.value || "parametric",
-    dunnettControl: el("dunnettControl")?.value || "",
+    dunnettControl: (el("statisticalTestMode")?.value || "auto") === "manual" ? (el("dunnettControl")?.value || "") : "",
     statSymbolSize: Number(el("statSymbolSize")?.value) || 7,
     statSymbolType: el("statSymbolType")?.value || "stars",
     customSymbol05: el("customSymbol05")?.value || "*",
@@ -26336,7 +23502,7 @@ function uiOpts(){
 
     // VBracket legend settings (for 3+ groups line plots)
     vbracketTimepoint: el("vbracketTimepoint")?.value || "",
-    vbracketPosition: "custom",
+    vbracketPosition: el("vbracketPosition")?.value || (el("chartType")?.value === "lq_survival_grouped" ? "bottomleft" : "topleft"),
     vbracketX: Number(el("vbracketX")?.value) || 0.05,
     vbracketY: Number(el("vbracketY")?.value) || 0.99,
     vbracketTextSize: Number(el("vbracketTextSize")?.value) || 14,
