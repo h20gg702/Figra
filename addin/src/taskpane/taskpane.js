@@ -2449,7 +2449,7 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
       const catIdx = (settings.xColIndex || 1) - 1;  // Convert from 1-based to 0-based
 
       if (catIdx >= 0 && catIdx < data[0].length) {
-        actualCategories = [...new Set(data.slice(1).map(row => row[catIdx]).filter(v => v))];
+        actualCategories = [...new Set(data.slice(1).map(row => row[catIdx]).filter(v => v !== null && v !== undefined && v !== ''))];
       }
     }
 
@@ -2957,6 +2957,11 @@ print(p)
     const vbPos     = settings.vbracketPosition || 'bottomleft';
     const vbX       = parseFloat(settings.vbracketX) || 0.05;
     const vbY       = parseFloat(settings.vbracketY) || 0.05;
+    // Compute legend x/y from preset — matches add-in's LQ position logic exactly
+    const lbX = (vbPos === 'custom') ? vbX
+              : (vbPos === 'topright' || vbPos === 'bottomright') ? 0.75 : 0.05;
+    const lbY = (vbPos === 'custom') ? vbY
+              : (vbPos === 'topleft' || vbPos === 'topright') ? 0.92 : 0.55;
     const vbTs      = settings.vbracketTextSize || 10;
     const vbSig     = settings.vbracketSigSize  || 14;
     const vbMar     = settings.vbracketMargin   || 0.06;
@@ -3008,38 +3013,73 @@ for (i in seq_len(nrow(stat_results))) {
 
     const statBlock3 = addStat && nGroups >= 3 ? `
 # --- Statistical tests (3+ groups, per dose) ---
+# Matches add-in: auto-selects ANOVA/Tukey (parametric) or KW/Wilcoxon (non-parametric)
+# based on Shapiro-Wilk normality tests. Results stored with dose for filtering.
 doses <- sort(unique(dat$${xCol}))
-stat_df <- data.frame(group1=character(0), group2=character(0), label=character(0), stringsAsFactors=FALSE)
+stat_df <- data.frame(group1=character(0), group2=character(0), label=character(0), dose=numeric(0), stringsAsFactors=FALSE)
 
 for (d in doses) {
   sub <- dat[dat$${xCol} == d, ]
   sub <- sub[!is.na(sub$${yCol}), ]
-  if (length(unique(sub$${groupCol})) < 2) next
+  grps_d <- intersect(groups, unique(sub$${groupCol}))
+  if (length(grps_d) < 2) next
 
-  # Overall test
-  kw <- tryCatch(kruskal.test(as.formula(paste0('${yCol} ~ ${groupCol}')), data=sub), error=function(e) NULL)
-  if (is.null(kw)) next
-  cat(sprintf('Dose %.2f Gy: Kruskal-Wallis p=%.4f\\n', d, kw$p.value))
+  # Test normality per group (Shapiro-Wilk)
+  group_normal <- sapply(grps_d, function(g) {
+    vals <- sub[sub$${groupCol} == g, '${yCol}']
+    if (length(vals) >= 3 && length(vals) <= 5000)
+      tryCatch(shapiro.test(vals)$p.value >= 0.05, error=function(e) TRUE)
+    else TRUE
+  })
+  use_parametric <- ${statTest === 'nonparametric' || statTest === 'kruskal' ? 'FALSE' : statTest === 'parametric' ? 'TRUE' : 'all(group_normal)'}
 
-  # Pairwise (Wilcoxon + Bonferroni)
-  pairs <- combn(levels(factor(sub$${groupCol})), 2, simplify=FALSE)
-  for (pair in pairs) {
-    g1v <- sub[sub$${groupCol}==pair[1], '${yCol}']
-    g2v <- sub[sub$${groupCol}==pair[2], '${yCol}']
-    res <- tryCatch(wilcox.test(g1v, g2v), error=function(e) NULL)
-    if (is.null(res)) next
-    p_adj <- min(res$p.value * length(pairs), 1)
-    sig <- if (p_adj < 0.001) '***' else if (p_adj < 0.01) '**' else if (p_adj < 0.05) '*' else 'ns'
-    stat_df <- rbind(stat_df, data.frame(group1=pair[1], group2=pair[2], label=sig, stringsAsFactors=FALSE))
-    cat(sprintf('  %s vs %s: p_adj=%.4f (%s)\\n', pair[1], pair[2], p_adj, sig))
+  if (use_parametric) {
+    # ANOVA + Tukey HSD (parametric)
+    aov_r <- tryCatch(aov(${yCol} ~ ${groupCol}, data=sub), error=function(e) NULL)
+    if (is.null(aov_r)) next
+    overall_p <- summary(aov_r)[[1]][['Pr(>F)']][1]
+    cat(sprintf('Dose %.2f Gy: ANOVA p=%.4f\\n', d, overall_p))
+    if (overall_p < 0.05) {
+      th <- tryCatch(TukeyHSD(aov_r), error=function(e) NULL)
+      if (is.null(th)) next
+      th_df <- as.data.frame(th[['${groupCol}']])
+      th_df$comparison <- rownames(th_df)
+      for (i in seq_len(nrow(th_df))) {
+        p_val <- th_df[['p adj']][i]
+        sig <- if (p_val < 0.001) '***' else if (p_val < 0.01) '**' else if (p_val < 0.05) '*' else 'ns'
+        comp <- th_df$comparison[i]
+        # Robust parse: match "B-A" against known group pairs (handles group names with hyphens)
+        grp1 <- NA; grp2 <- NA
+        for (ga in grps_d) { for (gb in grps_d) { if (ga != gb && comp == paste0(gb, '-', ga)) { grp1 <- ga; grp2 <- gb } } }
+        if (is.na(grp1)) { parts <- strsplit(comp, '-')[[1]]; grp2 <- parts[1]; grp1 <- paste(parts[-1], collapse='-') }
+        cat(sprintf('  %s vs %s: p=%.4f (%s)\\n', grp1, grp2, p_val, sig))
+        if (sig != 'ns') stat_df <- rbind(stat_df, data.frame(group1=grp1, group2=grp2, label=sig, dose=d, stringsAsFactors=FALSE))
+      }
+    }
+  } else {
+    # Kruskal-Wallis + Wilcoxon pairwise with Bonferroni (non-parametric)
+    kw <- tryCatch(kruskal.test(${yCol} ~ ${groupCol}, data=sub), error=function(e) NULL)
+    if (is.null(kw)) next
+    cat(sprintf('Dose %.2f Gy: Kruskal-Wallis p=%.4f\\n', d, kw$p.value))
+    if (kw$p.value < 0.05) {
+      pairs <- combn(grps_d, 2, simplify=FALSE)
+      for (pair in pairs) {
+        g1v <- sub[sub$${groupCol}==pair[1], '${yCol}']
+        g2v <- sub[sub$${groupCol}==pair[2], '${yCol}']
+        res <- tryCatch(wilcox.test(g1v, g2v), error=function(e) NULL)
+        if (is.null(res)) next
+        p_adj <- min(res$p.value * length(pairs), 1)
+        sig <- if (p_adj < 0.001) '***' else if (p_adj < 0.01) '**' else if (p_adj < 0.05) '*' else 'ns'
+        cat(sprintf('  %s vs %s: p_adj=%.4f (%s)\\n', pair[1], pair[2], p_adj, sig))
+        if (sig != 'ns') stat_df <- rbind(stat_df, data.frame(group1=pair[1], group2=pair[2], label=sig, dose=d, stringsAsFactors=FALSE))
+      }
+    }
   }
 }
 
-# VBracket legend — filter to selected dose point
-selected_dose <- ${vbT !== '' ? `'${vbT}'` : 'doses[1]'}  # dose to display in legend
-stat_at_dose <- stat_df  # already filtered by dose in loop above; use all for legend
-# (In practice, re-run the loop above for only selected_dose and collect comparisons)
-${compMode === 'significant' ? `stat_at_dose <- stat_at_dose[stat_at_dose$label != 'ns', ]` : ''}
+# VBracket legend — filter to selected dose
+selected_dose <- ${vbT !== '' ? `'${vbT}'` : 'as.character(doses[1])'}
+stat_at_dose <- stat_df[as.character(stat_df$dose) == selected_dose, c('group1','group2','label')]
 
 if (nrow(stat_at_dose) > 0) {
   p <- p + theme(legend.position = 'none')
@@ -3047,14 +3087,24 @@ if (nrow(stat_at_dose) > 0) {
     labels = groups,
     colors = c(${colors}),
     comparisons = stat_at_dose,
-    position = "${vbPos}",
-    legend_x = ${vbX},
+    x = ${lbX},
+    y = ${lbY},
     text_size = ${vbTs}, sig_size = ${vbSig},
     bracket_margin = ${vbMar},
     line_length = ${vbLl}, line_width = ${vbLw},
     item_spacing = ${vbIs},
     output_width = 6, output_height = 4
   )
+  # Fix for log scale: vbracket's has_log_y detection fails in ggplot2 >= 3.5.0.
+  # Re-add annotation_custom grob with ymin=0 so the legend is visible.
+  tryCatch({
+    n <- length(p${'$'}layers)
+    vb_grob <- p${'$'}layers[[n]]${'$'}geom_params${'$'}grob
+    if (!is.null(vb_grob)) {
+      p${'$'}layers[[n]] <- NULL
+      p <- p + annotation_custom(vb_grob, xmin = -Inf, xmax = Inf, ymin = 0, ymax = Inf)
+    }
+  }, error = function(e) invisible(NULL))
 }` : '';
 
     code += `# ---- Data preparation ----
@@ -3112,7 +3162,15 @@ ${yScaleLine}
        x=${settings.showXLabel !== false ? `'${settings.xlab || 'Dose (Gy)'}'` : 'NULL'},
        y=${settings.showYLabel !== false ? `'${settings.ylab || 'Surviving Fraction'}'` : 'NULL'},
        color=NULL, shape=NULL) +
-  theme_${theme}(base_size=14)
+  theme_${theme}(base_size = ${settings.xAxisTextSize || 12}, base_family = '${settings.fontFamily || 'Arial'}') +
+  theme(
+    plot.title = element_text(size = ${settings.titleSize || 14}, face = '${settings.titleWeight || 'plain'}'),
+    axis.title.x = element_text(size = ${settings.xAxisTitleSize || 12}, face = '${settings.axisTitleWeight || 'plain'}'),
+    axis.title.y = element_text(size = ${settings.yAxisTitleSize || 12}, face = '${settings.axisTitleWeight || 'plain'}'),
+    axis.text.x = element_text(size = ${settings.xAxisTextSize || 10}, color = 'black', face = '${settings.axisTextWeight || 'plain'}'),
+    axis.text.y = element_text(size = ${settings.yAxisTextSize || 10}, color = 'black', face = '${settings.axisTextWeight || 'plain'}'),
+    legend.text = element_text(size = ${settings.legendTextSize || 10})
+  )
 ${statBlock2}${statBlock3}
 
 print(p)
@@ -3240,10 +3298,10 @@ function generateGroupedBarCode(chartType, settings, groupColors) {
     const grpIdx = settings.groupColIndex - 1;
 
     if (catIdx >= 0 && catIdx < headers.length) {
-      actualCategories = [...new Set(data.slice(1).map(row => row[catIdx]).filter(v => v))];
+      actualCategories = [...new Set(data.slice(1).map(row => row[catIdx]).filter(v => v !== null && v !== undefined && v !== ''))];
     }
     if (grpIdx >= 0 && grpIdx < headers.length) {
-      actualGroups = [...new Set(data.slice(1).map(row => row[grpIdx]).filter(v => v))];
+      actualGroups = [...new Set(data.slice(1).map(row => row[grpIdx]).filter(v => v !== null && v !== undefined && v !== ''))];
     }
   }
 
@@ -5655,10 +5713,10 @@ function generateGroupedBoxCode(chartType, settings, groupColors) {
     const grpIdx = settings.groupColIndex - 1;
 
     if (catIdx >= 0 && catIdx < headers.length) {
-      actualCategories = [...new Set(data.slice(1).map(row => row[catIdx]).filter(v => v))];
+      actualCategories = [...new Set(data.slice(1).map(row => row[catIdx]).filter(v => v !== null && v !== undefined && v !== ''))];
     }
     if (grpIdx >= 0 && grpIdx < headers.length) {
-      actualGroups = [...new Set(data.slice(1).map(row => row[grpIdx]).filter(v => v))];
+      actualGroups = [...new Set(data.slice(1).map(row => row[grpIdx]).filter(v => v !== null && v !== undefined && v !== ''))];
     }
   }
 
@@ -5849,10 +5907,10 @@ function generateGroupedViolinCode(chartType, settings, groupColors) {
     const grpIdx = settings.groupColIndex - 1;
 
     if (catIdx >= 0 && catIdx < headers.length) {
-      actualCategories = [...new Set(data.slice(1).map(row => row[catIdx]).filter(v => v))];
+      actualCategories = [...new Set(data.slice(1).map(row => row[catIdx]).filter(v => v !== null && v !== undefined && v !== ''))];
     }
     if (grpIdx >= 0 && grpIdx < headers.length) {
-      actualGroups = [...new Set(data.slice(1).map(row => row[grpIdx]).filter(v => v))];
+      actualGroups = [...new Set(data.slice(1).map(row => row[grpIdx]).filter(v => v !== null && v !== undefined && v !== ''))];
     }
   }
 
@@ -6605,6 +6663,17 @@ ${isPaired && subjectColNameR ? `        # Paired pairwise t-test with ${pairedP
         output_height = ${settings.expHeight || 4}
       )
   }
+${['log10','log2','log'].includes(yScaleVal) ? `  # Fix for log scale: vbracket's has_log_y detection fails in ggplot2 >= 3.5.0,
+  # causing annotation_custom(ymin=-Inf) which makes the legend invisible on log axes.
+  # Extract the grob and re-add with ymin=0 (log10(0)=-Inf -> squished to panel bottom).
+  tryCatch({
+    n <- length(p${'$'}layers)
+    vb_grob <- p${'$'}layers[[n]]${'$'}geom_params${'$'}grob
+    if (!is.null(vb_grob)) {
+      p${'$'}layers[[n]] <- NULL
+      p <- p + annotation_custom(vb_grob, xmin = -Inf, xmax = Inf, ymin = 0, ymax = Inf)
+    }
+  }, error = function(e) invisible(NULL))` : ''}
 }
 
 `;
@@ -7258,6 +7327,48 @@ function applySettingsToUI(settings) {
       }
     }
   }
+
+  // LQ survival shape settings
+  setValue("lqPointShape", settings.lqPointShape);
+  setChecked("lqPerGroupShape", settings.lqPerGroupShape);
+  setValue("lqGroupShape1", settings.lqGroupShape1);
+  setValue("lqGroupShape2", settings.lqGroupShape2);
+  setValue("lqGroupShape3", settings.lqGroupShape3);
+  setValue("lqGroupShape4", settings.lqGroupShape4);
+  setValue("lqGroupShape5", settings.lqGroupShape5);
+  setValue("lqGroupShape6", settings.lqGroupShape6);
+
+  // Scatter shape settings
+  setChecked("scatterGrouped", settings.scatterGrouped);
+  setChecked("scatterPerGroupShape", settings.scatterPerGroupShape);
+  if (Array.isArray(settings.scatterGroupShapes)) {
+    settings.scatterGroupShapes.forEach((val, idx) => {
+      setValue(`scatterShape${idx + 1}`, val);
+    });
+  }
+
+  // IC50 per-group shape checkbox
+  setChecked("ic50PerGroupShape", settings.ic50PerGroupShape);
+
+  // Custom stat symbols
+  setValue("customSymbol05", settings.customSymbol05);
+  setValue("customSymbol01", settings.customSymbol01);
+  setValue("customSymbol001", settings.customSymbol001);
+  setValue("customSymbolNS", settings.customSymbolNS);
+
+  // statSymbolType (may differ from symbolType key used above)
+  if (settings.statSymbolType) setValue("statSymbolType", settings.statSymbolType);
+
+  // showBrackets checkbox
+  if (settings.showBrackets !== undefined) setChecked("showBrackets", settings.showBrackets);
+
+  // Statistical test mode, data type, control group
+  if (settings.statisticalTestMode) setValue("statisticalTestMode", settings.statisticalTestMode);
+  if (settings.dataType) setValue("dataTypeSelect", settings.dataType);
+  if (settings.controlGroup) setValue("dunnettControl", settings.controlGroup);
+
+  // VBracket position preset
+  if (settings.vbracketPosition) setValue("vbracketPosition", settings.vbracketPosition);
 
   // Trigger numGroups change event to update UI
   const numGroupsEl = el("numGroups");
@@ -20601,7 +20712,7 @@ ${SHARED_STAT_HELPERS_R}
       variance_test="levene", stat_symbol_type="stars",
       stat_symbol_size=5, comparison_mode="significant",
       post_hoc_test="tukey", custom_comparisons="[]",
-      vbracket_timepoint="", vbracket_position="bottomleft", vbracket_x=0.15, vbracket_y=0.27,
+      vbracket_timepoint="", vbracket_position="bottomleft", vbracket_x=0.05, vbracket_y=0.55,
       vbracket_text_size=10, vbracket_sig_size=14,
       vbracket_margin=0.06, vbracket_line_width=3,
       vbracket_legend_line_length=0.05, vbracket_legend_line_width=2,
@@ -21002,7 +21113,29 @@ ${SHARED_STAT_HELPERS_R}
 
               group_labels <- levels(factor(summary_data$grp, levels=groups))
               legend_colors <- line_colors[seq_along(group_labels)]
-              cat(sprintf("Using vbracket position: x=%.2f, y=%.2f\\n", vbracket_x, vbracket_y))
+
+              # For preset positions, compute x/y here (vbracket_x/y from UI are meaningless
+              # for LQ since those controls are hidden — the hidden input defaults are 0.05/0.99).
+              if (vbracket_position != "custom") {
+                lq_vbx <- switch(vbracket_position,
+                  "topleft"     = 0.05,
+                  "topright"    = 0.75,
+                  "bottomleft"  = 0.05,
+                  "bottomright" = 0.75,
+                  0.05
+                )
+                lq_vby <- switch(vbracket_position,
+                  "topleft"     = 0.92,
+                  "topright"    = 0.92,
+                  "bottomleft"  = 0.55,
+                  "bottomright" = 0.55,
+                  0.55
+                )
+              } else {
+                lq_vbx <- vbracket_x
+                lq_vby <- vbracket_y
+              }
+              cat(sprintf("Using vbracket position: %s (x=%.2f, y=%.2f)\\n", vbracket_position, lq_vbx, lq_vby))
 
               # Use annotation_custom with explicit log scale detection from y_scale parameter.
               is_log_y_scale <- y_scale %in% c("log10", "log2", "log")
@@ -21016,7 +21149,7 @@ ${SHARED_STAT_HELPERS_R}
                 comparisons = if (length(groups1) > 0) {
                   data.frame(group1=groups1, group2=groups2, label=labels, stringsAsFactors=FALSE)
                 } else NULL,
-                x=vbracket_x, y=vbracket_y,
+                x=lq_vbx, y=lq_vby,
                 text_size=vbracket_text_size, sig_size=vbracket_sig_size,
                 bracket_margin=vbracket_margin,
                 line_length=vbracket_legend_line_length,
