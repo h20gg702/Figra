@@ -1,7 +1,7 @@
 // ========= その他の既存機能群（ファイル保存、テンプレート等）=========
 
 // Add-in version (update this when making breaking changes)
-const ADDIN_VERSION = "1.0.0";
+const ADDIN_VERSION = "1.1.0";
 
 // Grouped chart types constant (used throughout the file)
 const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw", "ic50_grouped_dose_response", "lq_survival_grouped"];
@@ -23835,6 +23835,7 @@ async function insertIntoExcelFixed() {
     // Collect metadata
     const metadata = {
       version: 1,
+      addinVersion: ADDIN_VERSION,
       generator: "Figra",
       created_utc: new Date().toISOString(),
 
