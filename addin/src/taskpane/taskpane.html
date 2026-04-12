@@ -2555,39 +2555,7 @@
         <div id="vcDoneMsg" style="display:none; padding:7px 10px; background:#eaf4ea; border:1px solid #a8d5a8; border-radius:4px; font-size:12px; color:#2d6e2d; margin-bottom:8px;"></div>
       </div><!-- End Visual Converter -->
 
-      <hr style="border:none; border-top:1px solid #e5e7eb; margin:12px 0;">
-
-      <div style="font-weight:bold; font-size:11px; color:#888; margin-bottom:8px;">Classic Converter</div>
-
-        <div style="font-weight:bold; font-size:13px; margin-bottom:4px;">Data Table Converter</div>
-        <div style="font-size:11px; color:#666; margin-bottom:10px;">
-          Convert wide-format data (one column per group) to long format (one row per measurement) required by Figra.
-        </div>
-        <div style="margin-bottom:8px;">
-          <button id="conversionLoadBtn" style="font-size:12px; width:100%;">Load Your Data</button>
-        </div>
-        <div style="font-size:11px; color:#666; margin-bottom:8px;">Check ID columns to keep as-is (e.g. Sample). The rest will be stacked into rows. If your data has no ID column, leave all unchecked.</div>
-        <div id="conversionColumnList" style="max-height:140px; overflow-y:auto; border:1px solid #ddd; padding:6px; border-radius:4px; background:#fff; margin-bottom:8px; font-size:12px;">
-          <div style="color:#999; font-size:11px;">Load data first</div>
-        </div>
-        <div style="display:flex; flex-direction:column; gap:5px; margin-bottom:8px;">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <label style="font-size:12px; width:130px;">Variable column name:</label>
-            <input type="text" id="conversionVarName" value="Category" style="width:110px; font-size:12px;">
-          </div>
-          <div style="display:flex; align-items:center; gap:8px;">
-            <label style="font-size:12px; width:130px;">Value column name:</label>
-            <input type="text" id="conversionValueName" value="Value" style="width:110px; font-size:12px;">
-          </div>
-        </div>
-        <div id="conversionPreview" style="display:none; margin-bottom:8px; border:1px solid #d0d0d0; border-radius:4px; max-height:140px; overflow:auto;"></div>
-        <div style="display:flex; gap:6px;">
-          <button id="conversionPreviewBtn" style="font-size:12px;">Preview Conversion</button>
-          <button id="conversionWriteBtn" style="font-size:12px;">Convert & Write to New Sheet</button>
-        </div>
-        <div id="conversionDoneMsg" style="display:none; margin-top:8px; padding:7px 10px; background:#eaf4ea; border:1px solid #a8d5a8; border-radius:4px; font-size:11px; color:#2d6e2d;">
-          ✅ Data converted and loaded! Go to <b>Data & Chart</b> tab, choose your chart type and click <b>Preview</b>.
-        </div>
+      <!-- Classic Converter hidden (superseded by beta converter above) -->
 
     </div><!-- End Tab 6: Converter -->
 

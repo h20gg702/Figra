@@ -8783,6 +8783,32 @@ Office.onReady(() => {
             outputRows.push(outRow);
           }
         }
+      } else if (groupIsHorizontal && xIsHeaderRowInRowBranch) {
+        // Both Factor 1 (group) and Factor 2 (X) are horizontal header rows.
+        // e.g. Row 0 = cell line (HCT/lovo), Row 1 = genotype (WT/KO),
+        // data rows below = replicates going down each column.
+        const xLabelForColH = {};
+        for (const xc of xCells) xLabelForColH[xc.c] = xc.val !== null && xc.val !== undefined ? String(xc.val) : "";
+        const grpLabelForColH = {};
+        for (const gc of groupCells) grpLabelForColH[gc.c] = String(gc.val ?? "");
+        const header = [groupColName, xColName];
+        if (numFactors >= 3) header.push(factor3ColName);
+        if (numFactors >= 4) header.push(factor4ColName);
+        header.push(valueColName);
+        outputRows = [header];
+        // Iterate columns first so same-group rows stay together in output
+        for (const col of valCols) {
+          const grpLabel = grpLabelForColH[col] !== undefined ? grpLabelForColH[col] : (groupLabelForCol[col] ?? "");
+          const xLabel = xLabelForColH[col] ?? "";
+          for (const row of valRows) {
+            if (autoSkipRows.has(row)) continue;
+            const outRow = [grpLabel, xLabel];
+            if (numFactors >= 3) outRow.push(getF3(row, col));
+            if (numFactors >= 4) outRow.push(getF4(row, col));
+            outRow.push(vcData[row][col]);
+            outputRows.push(outRow);
+          }
+        }
       } else {
         const groupLabelForRow = {};
         for (const gc of groupCells) groupLabelForRow[gc.r] = String(gc.val ?? "");
