@@ -2746,8 +2746,8 @@ p <- ggplot(dat, aes(x = conc, y = resp, color = group${ic50PerGroupShape ? ', s
 ${xScaleGrouped === 'log10' ? (showLog10LabelsGrouped ? `conc_pos <- dat$conc[is.finite(dat$conc) & dat$conc > 0]\nif (length(conc_pos) > 0) {\n  x_breaks_log <- 10^(seq(floor(log10(min(conc_pos))), ceiling(log10(max(conc_pos))), by=1))\n  p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)\n} else {\n  p <- p + scale_x_log10(labels = function(x) log10(x))\n}\np <- p +` : (useDecimalLabelsGrouped ? `  scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#")) +\n  annotation_logticks(sides = 'b') +` : `  scale_x_log10() +\n  annotation_logticks(sides = 'b') +`)) : xScaleGrouped === 'log2' ? `  scale_x_continuous(trans = 'log2') +` : ''}
   labs(
     title = ${settings.showTitle !== false ? `'${settings.title || 'Grouped Dose-Response'}'` : 'NULL'},
-    x = ${settings.showXLabel !== false ? `'${settings.xLabel || 'Concentration'}'` : 'NULL'},
-    y = ${settings.showYLabel !== false ? `'${settings.yLabel || 'Response (%)'}'` : 'NULL'}
+    x = ${settings.showXLabel !== false ? `'${settings.xlab || 'Concentration'}'` : 'NULL'},
+    y = ${settings.showYLabel !== false ? `'${settings.ylab || 'Response (%)'}'` : 'NULL'}
   ) +
   theme_${settings.themeName}(base_family = '${settings.fontFamily}') +
   theme(
@@ -2911,8 +2911,8 @@ p <- ggplot(dat, aes(x = conc, y = response)) +
 `}${xScaleSingle === 'log10' ? (showLog10LabelsSingle ? `conc_pos <- dat$conc[is.finite(dat$conc) & dat$conc > 0]\nif (length(conc_pos) > 0) {\n  x_breaks_log <- 10^(seq(floor(log10(min(conc_pos))), ceiling(log10(max(conc_pos))), by=1))\n  p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)\n} else {\n  p <- p + scale_x_log10(labels = function(x) log10(x))\n}\np <- p +` : (useDecimalLabelsSingle ? `  scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#")) +\n  annotation_logticks(sides = 'b') +` : `  scale_x_log10() +\n  annotation_logticks(sides = 'b') +`)) : xScaleSingle === 'log2' ? `  scale_x_continuous(trans = 'log2') +` : ''}
   labs(
     title = ${settings.showTitle !== false ? `'${settings.title || 'Dose-Response Curve'}'` : 'NULL'},
-    x = ${settings.showXLabel !== false ? `'${settings.xLabel || 'Concentration'}'` : 'NULL'},
-    y = ${settings.showYLabel !== false ? `'${settings.yLabel || 'Response (%)'}'` : 'NULL'}
+    x = ${settings.showXLabel !== false ? `'${settings.xlab || 'Concentration'}'` : 'NULL'},
+    y = ${settings.showYLabel !== false ? `'${settings.ylab || 'Response (%)'}'` : 'NULL'}
   ) +
   theme_${settings.themeName}(base_family = '${settings.fontFamily}') +
   theme(
