@@ -2435,10 +2435,10 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
       geomCode = `geom_point(color = '${settings.fillColor || '#4C78A8'}', size = 3, alpha = ${settings.fillAlpha || 0.9})`;
     }
 
-    // Generate labels with plotmath support
-    const titleLabel = settings.showTitle !== false ? convertToRPlotmath(settings.title || '') : "''";
-    const xLabel = convertToRPlotmath(xLabelOrig);
-    const yLabel = convertToRPlotmath(yLabelOrig);
+    // Generate labels with plotmath support — respect show/hide checkboxes
+    const titleLabel = settings.showTitle !== false ? convertToRPlotmath(settings.title || '') : 'NULL';
+    const xLabel = settings.showXLabel !== false ? convertToRPlotmath(xLabelOrig) : 'NULL';
+    const yLabel = settings.showYLabel !== false ? convertToRPlotmath(yLabelOrig) : 'NULL';
 
     // Add factor ordering for single-group charts to preserve category order
     const xColName = `col${settings.xColIndex || 1}`;
@@ -2599,12 +2599,19 @@ ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
     const halfMaxLineColor = settings.ic50HalfLineColor || '#808080';
     const halfMaxLineWidth = settings.ic50HalfLineWidth || 0.5;
     const halfMaxLineAlpha = settings.ic50HalfLineAlpha ?? 1;
+    const ic50PerGroupShape = settings.ic50PerGroupShape || false;
+    const defaultShapes = [16, 17, 15, 18, 1, 2];
+    const ic50GroupShapes = Array.isArray(settings.ic50GroupShapes)
+      ? settings.ic50GroupShapes
+      : [1,2,3,4,5,6].map((i, idx) => Number(settings[`ic50GroupShape${i}`]) || defaultShapes[idx]);
+    const shapeVecR = ic50GroupShapes.slice(0, numGroups).join(', ');
+    const singleShape = ic50PerGroupShape ? ic50GroupShapes[0] : (Number(settings.ic50PointShape) || 16);
 
     let groupedFitSection;
     if (fittingMethod === 'drc') {
       groupedFitSection = `
 # Fit all groups using drc (4PL log-logistic, recommended)
-# install.packages('drc')
+if (!requireNamespace('drc', quietly = TRUE)) install.packages('drc')
 library(drc)
 fit_drc <- tryCatch(drm(resp ~ conc, curveid = group, data = dat, fct = LL.4()), error = function(e) NULL)
 
@@ -2663,7 +2670,7 @@ all_curves$group <- factor(all_curves$group, levels = groups)`;
       control = list(maxiter = 500, warnOnly = TRUE)
     ), error = function(e) NULL)`;
 
-      const extraLib = fittingMethod === 'nlsLM' ? `# install.packages('minpack.lm')\nlibrary(minpack.lm)\n` : '';
+      const extraLib = fittingMethod === 'nlsLM' ? `if (!requireNamespace('minpack.lm', quietly = TRUE)) install.packages('minpack.lm')\nlibrary(minpack.lm)\n` : '';
 
       groupedFitSection = `${extraLib}
 # Fit 4PL model for each group
@@ -2721,20 +2728,26 @@ sm <- do.call(data.frame, sm)
 colnames(sm) <- c('group', 'conc', 'mean', 'error')
 sm$group <- factor(sm$group, levels = groups)
 
-p <- ggplot(sm, aes(x = conc, y = mean, color = group)) +
+shape_vec <- c(${shapeVecR})
+names(shape_vec) <- groups
+
+p <- ggplot(sm, aes(x = conc, y = mean, color = group${ic50PerGroupShape ? ', shape = group' : ''})) +
   geom_errorbar(aes(ymin = mean - error, ymax = mean + error),
                 width = 0.1, linewidth = 0.5) +
-  geom_point(size = ${pointSize}, alpha = ${pointAlpha}) +
-` : `p <- ggplot(dat, aes(x = conc, y = resp, color = group)) +
-  geom_point(size = ${pointSize}, alpha = ${pointAlpha}) +
+  geom_point(size = ${pointSize}, alpha = ${pointAlpha}${ic50PerGroupShape ? '' : `, shape = ${singleShape}`}) +
+` : `shape_vec <- c(${shapeVecR})
+names(shape_vec) <- groups
+
+p <- ggplot(dat, aes(x = conc, y = resp, color = group${ic50PerGroupShape ? ', shape = group' : ''})) +
+  geom_point(size = ${pointSize}, alpha = ${pointAlpha}${ic50PerGroupShape ? '' : `, shape = ${singleShape}`}) +
 `}  geom_line(data = all_curves, aes(x = conc, y = resp, color = group),
              linewidth = ${curveWidth}) +
-  scale_color_manual(values = color_vec) +
+  scale_color_manual(values = color_vec, name = '${settings.selectedGroupColumn || 'Group'}')${(xScaleGrouped === 'log10' && showLog10LabelsGrouped) ? '' : ' +'}
 ${xScaleGrouped === 'log10' ? (showLog10LabelsGrouped ? `conc_pos <- dat$conc[is.finite(dat$conc) & dat$conc > 0]\nif (length(conc_pos) > 0) {\n  x_breaks_log <- 10^(seq(floor(log10(min(conc_pos))), ceiling(log10(max(conc_pos))), by=1))\n  p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)\n} else {\n  p <- p + scale_x_log10(labels = function(x) log10(x))\n}\np <- p +` : (useDecimalLabelsGrouped ? `  scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#")) +\n  annotation_logticks(sides = 'b') +` : `  scale_x_log10() +\n  annotation_logticks(sides = 'b') +`)) : xScaleGrouped === 'log2' ? `  scale_x_continuous(trans = 'log2') +` : ''}
   labs(
-    title = '${settings.title || 'Grouped Dose-Response'}',
-    x = '${settings.xLabel || 'Concentration'}',
-    y = '${settings.yLabel || 'Response (%)'}'
+    title = ${settings.showTitle !== false ? `'${settings.title || 'Grouped Dose-Response'}'` : 'NULL'},
+    x = ${settings.showXLabel !== false ? `'${settings.xLabel || 'Concentration'}'` : 'NULL'},
+    y = ${settings.showYLabel !== false ? `'${settings.yLabel || 'Response (%)'}'` : 'NULL'}
   ) +
   theme_${settings.themeName}(base_family = '${settings.fontFamily}') +
   theme(
@@ -2745,10 +2758,12 @@ ${xScaleGrouped === 'log10' ? (showLog10LabelsGrouped ? `conc_pos <- dat$conc[is
     axis.title.y  = element_text(size = ${settings.yAxisTitleSize}),
     axis.text.x   = element_text(size = ${settings.xAxisTextSize}, color = 'black'),
     axis.text.y   = element_text(size = ${settings.yAxisTextSize}, color = 'black'),
-    legend.text   = element_text(size = ${settings.legendTextSize})
+    legend.text   = element_text(size = ${settings.legendTextSize}),
+    legend.title  = element_text(size = ${settings.legendTextSize})
   )
 
-${showIC50Line ? `# Add vertical IC50 reference lines (one per group, using group color)
+${ic50PerGroupShape ? `p <- p + scale_shape_manual(values = shape_vec, name = '${settings.selectedGroupColumn || 'Group'}')
+` : ''}${showIC50Line ? `# Add vertical IC50 reference lines (one per group, using group color)
 for (grp in groups) {
   if (!is.na(ic50_values[grp])) {
     p <- p + geom_vline(xintercept = ic50_values[grp], linetype = 'dashed',
@@ -2793,7 +2808,7 @@ print(p)
     if (fittingMethod === 'drc') {
       fitSection = `
 # Fit using drc package (4PL log-logistic, recommended)
-# install.packages('drc')
+if (!requireNamespace('drc', quietly = TRUE)) install.packages('drc')
 library(drc)
 fit <- tryCatch(drm(response ~ conc, data = dat, fct = LL.4()), error = function(e) NULL)
 
@@ -2889,15 +2904,15 @@ summary_data$error <- summary_data$${dataDisplay === 'mean_sd' ? 'sd' : 'se'}
 p <- ggplot(summary_data, aes(x = conc, y = mean)) +
   geom_errorbar(aes(ymin = mean - error, ymax = mean + error),
                 width = 0.1, linewidth = 0.5, color = '${pointColor}') +
-  geom_point(size = ${pointSize}, color = '${pointColor}', alpha = ${pointAlpha}) +
+  geom_point(size = ${pointSize}, color = '${pointColor}', alpha = ${pointAlpha})${(xScaleSingle === 'log10' && showLog10LabelsSingle) ? '' : ' +'}
 ` : `# Create the plot with all data points
 p <- ggplot(dat, aes(x = conc, y = response)) +
-  geom_point(size = ${pointSize}, color = '${pointColor}', alpha = ${pointAlpha}) +
+  geom_point(size = ${pointSize}, color = '${pointColor}', alpha = ${pointAlpha})${(xScaleSingle === 'log10' && showLog10LabelsSingle) ? '' : ' +'}
 `}${xScaleSingle === 'log10' ? (showLog10LabelsSingle ? `conc_pos <- dat$conc[is.finite(dat$conc) & dat$conc > 0]\nif (length(conc_pos) > 0) {\n  x_breaks_log <- 10^(seq(floor(log10(min(conc_pos))), ceiling(log10(max(conc_pos))), by=1))\n  p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)\n} else {\n  p <- p + scale_x_log10(labels = function(x) log10(x))\n}\np <- p +` : (useDecimalLabelsSingle ? `  scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#")) +\n  annotation_logticks(sides = 'b') +` : `  scale_x_log10() +\n  annotation_logticks(sides = 'b') +`)) : xScaleSingle === 'log2' ? `  scale_x_continuous(trans = 'log2') +` : ''}
   labs(
-    title = '${settings.title || 'Dose-Response Curve'}',
-    x = '${settings.xLabel || 'Concentration'}',
-    y = '${settings.yLabel || 'Response (%)'}'
+    title = ${settings.showTitle !== false ? `'${settings.title || 'Dose-Response Curve'}'` : 'NULL'},
+    x = ${settings.showXLabel !== false ? `'${settings.xLabel || 'Concentration'}'` : 'NULL'},
+    y = ${settings.showYLabel !== false ? `'${settings.yLabel || 'Response (%)'}'` : 'NULL'}
   ) +
   theme_${settings.themeName}(base_family = '${settings.fontFamily}') +
   theme(
@@ -7808,8 +7823,13 @@ Office.onReady(() => {
       }
     }
 
-    // Group Colors: Show for grouped charts (already handled by handleChartTypeChange)
-    // We don't need to change it here as it's managed elsewhere
+    // Group Colors: Show for all grouped chart types; hide for single-group charts
+    // Scatter is excluded (managed by updateScatterGroupVisibility)
+    // Per-category charts (bar_error_dot etc.) are excluded (managed by fillMode radio)
+    const isPerCat = ["bar_error_dot", "bar", "bar_error", "box", "box_dot", "violin", "violin_dot", "dot"].includes(chartType);
+    if (groupColorRow && chartType !== 'scatter' && !isPerCat) {
+      groupColorRow.style.display = GROUPED_CHART_TYPES.includes(chartType) ? "flex" : "none";
+    }
 
     // Line Width: Show for all chart types except IC50 (IC50 has its own curve width)
     if (lineWidthRow) {
@@ -22475,7 +22495,7 @@ ${SHARED_STAT_HELPERS_R}
     ic50CurveColor, ic50CurveWidth,
     ic50LineColor, ic50LineWidth, ic50LineAlpha,
     ic50HalfLineColor, ic50HalfLineWidth, ic50HalfLineAlpha,
-    ic50PointSize, ic50PointShape, ic50GroupShapes, ic50PointColor, ic50PointAlpha,
+    ic50PointSize, ic50PointShape, ic50PerGroupShape, ic50GroupShapes, ic50PointColor, ic50PointAlpha,
     ic50DataDisplay, ic50FittingMethod, ic50XisLog10, ic50ShowLog10Labels, ic50DecimalLabels,
     // Scatter plot settings
     scatterGrouped: document.getElementById("scatterGrouped")?.checked || false,
