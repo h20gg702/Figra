@@ -7391,6 +7391,11 @@ function applySettingsToUI(settings) {
     numGroupsEl.dispatchEvent(new Event('change'));
   }
 
+  // Trigger chart type change to update all tab visibility (Colors & Style, Statistics, etc.)
+  if (typeof handleChartTypeChange === 'function') {
+    handleChartTypeChange();
+  }
+
   console.log("✅ Settings applied to UI");
 }
 
