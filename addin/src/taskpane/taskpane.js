@@ -2745,9 +2745,9 @@ p <- ggplot(dat, aes(x = conc, y = resp, color = group${ic50PerGroupShape ? ', s
   scale_color_manual(values = color_vec, name = '${settings.selectedGroupColumn || 'Group'}')${(xScaleGrouped === 'log10' && showLog10LabelsGrouped) ? '' : ' +'}
 ${xScaleGrouped === 'log10' ? (showLog10LabelsGrouped ? `conc_pos <- dat$conc[is.finite(dat$conc) & dat$conc > 0]\nif (length(conc_pos) > 0) {\n  x_breaks_log <- 10^(seq(floor(log10(min(conc_pos))), ceiling(log10(max(conc_pos))), by=1))\n  p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)\n} else {\n  p <- p + scale_x_log10(labels = function(x) log10(x))\n}\np <- p +` : (useDecimalLabelsGrouped ? `  scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#")) +\n  annotation_logticks(sides = 'b') +` : `  scale_x_log10() +\n  annotation_logticks(sides = 'b') +`)) : xScaleGrouped === 'log2' ? `  scale_x_continuous(trans = 'log2') +` : ''}
   labs(
-    title = ${settings.showTitle !== false ? `'${settings.title || 'Grouped Dose-Response'}'` : 'NULL'},
-    x = ${settings.showXLabel !== false ? `'${settings.xlab || 'Concentration'}'` : 'NULL'},
-    y = ${settings.showYLabel !== false ? `'${settings.ylab || 'Response (%)'}'` : 'NULL'}
+    title = ${settings.showTitle !== false ? convertToRPlotmath(settings.title || 'Grouped Dose-Response') : 'NULL'},
+    x = ${settings.showXLabel !== false ? convertToRPlotmath(settings.xlab || 'Concentration') : 'NULL'},
+    y = ${settings.showYLabel !== false ? convertToRPlotmath(settings.ylab || 'Response (%)') : 'NULL'}
   ) +
   theme_${settings.themeName}(base_family = '${settings.fontFamily}') +
   theme(
@@ -2910,9 +2910,9 @@ p <- ggplot(dat, aes(x = conc, y = response)) +
   geom_point(size = ${pointSize}, color = '${pointColor}', alpha = ${pointAlpha})${(xScaleSingle === 'log10' && showLog10LabelsSingle) ? '' : ' +'}
 `}${xScaleSingle === 'log10' ? (showLog10LabelsSingle ? `conc_pos <- dat$conc[is.finite(dat$conc) & dat$conc > 0]\nif (length(conc_pos) > 0) {\n  x_breaks_log <- 10^(seq(floor(log10(min(conc_pos))), ceiling(log10(max(conc_pos))), by=1))\n  p <- p + scale_x_log10(labels = function(x) log10(x), breaks = x_breaks_log)\n} else {\n  p <- p + scale_x_log10(labels = function(x) log10(x))\n}\np <- p +` : (useDecimalLabelsSingle ? `  scale_x_log10(labels = function(x) formatC(x, format = "fg", flag = "#")) +\n  annotation_logticks(sides = 'b') +` : `  scale_x_log10() +\n  annotation_logticks(sides = 'b') +`)) : xScaleSingle === 'log2' ? `  scale_x_continuous(trans = 'log2') +` : ''}
   labs(
-    title = ${settings.showTitle !== false ? `'${settings.title || 'Dose-Response Curve'}'` : 'NULL'},
-    x = ${settings.showXLabel !== false ? `'${settings.xlab || 'Concentration'}'` : 'NULL'},
-    y = ${settings.showYLabel !== false ? `'${settings.ylab || 'Response (%)'}'` : 'NULL'}
+    title = ${settings.showTitle !== false ? convertToRPlotmath(settings.title || 'Dose-Response Curve') : 'NULL'},
+    x = ${settings.showXLabel !== false ? convertToRPlotmath(settings.xlab || 'Concentration') : 'NULL'},
+    y = ${settings.showYLabel !== false ? convertToRPlotmath(settings.ylab || 'Response (%)') : 'NULL'}
   ) +
   theme_${settings.themeName}(base_family = '${settings.fontFamily}') +
   theme(
@@ -3173,9 +3173,9 @@ ${showPts === 'raw' ? `  geom_point(data=dat[dat$${yCol} > 0 & !is.na(dat$${yCol
 ${yScaleLine}
   scale_color_manual(values=color_vec) +
   scale_shape_manual(values=shape_vec) +
-  labs(title=${settings.showTitle !== false ? `'${settings.title || 'Clonogenic Survival'}'` : 'NULL'},
-       x=${settings.showXLabel !== false ? `'${settings.xlab || 'Dose (Gy)'}'` : 'NULL'},
-       y=${settings.showYLabel !== false ? `'${settings.ylab || 'Surviving Fraction'}'` : 'NULL'},
+  labs(title=${settings.showTitle !== false ? convertToRPlotmath(settings.title || 'Clonogenic Survival') : 'NULL'},
+       x=${settings.showXLabel !== false ? convertToRPlotmath(settings.xlab || 'Dose (Gy)') : 'NULL'},
+       y=${settings.showYLabel !== false ? convertToRPlotmath(settings.ylab || 'Surviving Fraction') : 'NULL'},
        color=NULL, shape=NULL) +
   theme_${theme}(base_size = ${settings.xAxisTextSize || 12}, base_family = '${settings.fontFamily || 'Arial'}') +
   theme(
