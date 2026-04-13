@@ -2957,7 +2957,11 @@ print(p)
     const yCol      = `col${settings.yColIndex || 3}`;
     const numGroups = settings.numGroups || 2;
     const colors    = (settings.groupColors || ['#333333','#4C78A8','#E15759','#76B7B2','#F28E2B','#B07AA1']).slice(0, numGroups).map(c => `'${c}'`).join(', ');
-    const shapes    = [16, 17, 15, 18, 1, 2].slice(0, numGroups).join(', ');
+    const lqPerGroupShape = settings.lqPerGroupShape || false;
+    const defaultShapesLQ = [1, 2, 0, 5, 3, 4];
+    const lqGroupShapes = [1,2,3,4,5,6].map((i, idx) => { const n = Number(settings[`lqGroupShape${i}`]); return isNaN(n) ? defaultShapesLQ[idx] : n; });
+    const singleShapeLQ = lqPerGroupShape ? lqGroupShapes[0] : (() => { const n = Number(settings.lqPointShape); return isNaN(n) ? 1 : n; })();
+    const shapes    = lqGroupShapes.slice(0, numGroups).join(', ');
     const lw        = settings.lineWidth || 1.5;
     const dotSz     = settings.dotSize   || 3;
     const dotAlp    = settings.dotAlpha  ?? 0.6;
@@ -3122,8 +3126,33 @@ if (nrow(stat_at_dose) > 0) {
   }, error = function(e) invisible(NULL))
 }` : '';
 
+    // Determine group order (same logic as other grouped chart types)
+    let actualGroupsLQ = [];
+    if (window.lastProcessedData && window.lastProcessedData.length > 1) {
+      const grpIdx = (settings.groupColIndex || 1) - 1;
+      actualGroupsLQ = [...new Set(window.lastProcessedData.slice(1).map(row => row[grpIdx]).filter(v => v !== null && v !== undefined && v !== ''))];
+    }
+
+    let groupOrderR = '';
+    if (actualGroupsLQ.length > 0) {
+      const dataOrder = settings.dataOrder || 'original';
+      let finalGroupsLQ = [];
+      if (dataOrder === 'custom' && settings.customOrderGroup) {
+        const cg = Array.isArray(settings.customOrderGroup)
+          ? settings.customOrderGroup
+          : settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g);
+        finalGroupsLQ = cg.length > 0 && cg.every(g => actualGroupsLQ.includes(g)) ? cg : actualGroupsLQ;
+      } else if (dataOrder === 'alphabetical' || dataOrder === 'default') {
+        finalGroupsLQ = [...actualGroupsLQ].sort((a, b) => String(a).localeCompare(String(b)));
+      } else {
+        finalGroupsLQ = actualGroupsLQ;
+      }
+      const lvls = finalGroupsLQ.map(g => `'${g}'`).join(', ');
+      groupOrderR = `dat$${groupCol} <- factor(dat$${groupCol}, levels = c(${lvls}))\n`;
+    }
+
     code += `# ---- Data preparation ----
-groups <- levels(factor(dat$${groupCol}))
+${groupOrderR}groups <- levels(dat$${groupCol})
 color_vec <- setNames(c(${colors}), groups)
 shape_vec <- setNames(c(${shapes}), groups)
 
@@ -3161,30 +3190,32 @@ fit_data <- do.call(rbind, lapply(groups, function(g) {
 fit_data$group <- factor(fit_data$group, levels=groups)
 
 # ---- Plot ----
-p <- ggplot(summary_data, aes(x=dose, y=sf_mean, color=group, shape=group)) +
+p <- ggplot(summary_data, aes(x=dose, y=sf_mean, color=group${lqPerGroupShape ? ', shape=group' : ''})) +
 ${showPts === 'raw' ? `  geom_point(data=dat[dat$${yCol} > 0 & !is.na(dat$${yCol}), ],
              aes(x=${xCol}, y=${yCol}, color=${groupCol}),
-             size=${dotSz}, alpha=${dotAlp}, shape=16, inherit.aes=FALSE) +` : ''}
+             size=${dotSz}, alpha=${dotAlp}, shape=${singleShapeLQ}, inherit.aes=FALSE) +` : ''}
   geom_errorbar(aes(ymin=pmax(sf_mean - sf_err, 1e-10), ymax=sf_mean + sf_err),
                 width=${errBarW}, linewidth=${lw * 0.5}) +
-  geom_point(size=${dotSz * 1.4}, alpha=0.95) +
+  geom_point(size=${dotSz * 1.4}, alpha=0.95${lqPerGroupShape ? '' : `, shape=${singleShapeLQ}`}) +
   geom_line(data=fit_data, aes(x=dose, y=sf_pred, color=group),
             linewidth=${lw}, inherit.aes=FALSE) +
 ${yScaleLine}
-  scale_color_manual(values=color_vec) +
-  scale_shape_manual(values=shape_vec) +
+  scale_color_manual(values=color_vec, name='${settings.selectedGroupColumn || 'Group'}') +
+${lqPerGroupShape ? `  scale_shape_manual(values=shape_vec, name='${settings.selectedGroupColumn || 'Group'}') +` : ''}
   labs(title=${settings.showTitle !== false ? convertToRPlotmath(settings.title || 'Clonogenic Survival') : 'NULL'},
        x=${settings.showXLabel !== false ? convertToRPlotmath(settings.xlab || 'Dose (Gy)') : 'NULL'},
-       y=${settings.showYLabel !== false ? convertToRPlotmath(settings.ylab || 'Surviving Fraction') : 'NULL'},
-       color=NULL, shape=NULL) +
-  theme_${theme}(base_size = ${settings.xAxisTextSize || 12}, base_family = '${settings.fontFamily || 'Arial'}') +
+       y=${settings.showYLabel !== false ? convertToRPlotmath(settings.ylab || 'Surviving Fraction') : 'NULL'}) +
+  theme_${theme}(base_family = '${settings.fontFamily || 'Arial'}') +
   theme(
-    plot.title = element_text(size = ${settings.titleSize || 14}, face = '${settings.titleWeight || 'plain'}'),
+    plot.background  = element_rect(fill = 'white', color = NA),
+    panel.background = element_rect(fill = 'white', color = NA),
+    plot.title = element_text(size = ${settings.titleSize || 14}, hjust = 0.5, face = '${settings.titleWeight || 'plain'}'),
     axis.title.x = element_text(size = ${settings.xAxisTitleSize || 12}, face = '${settings.axisTitleWeight || 'plain'}'),
     axis.title.y = element_text(size = ${settings.yAxisTitleSize || 12}, face = '${settings.axisTitleWeight || 'plain'}'),
     axis.text.x = element_text(size = ${settings.xAxisTextSize || 10}, color = 'black', face = '${settings.axisTextWeight || 'plain'}'),
     axis.text.y = element_text(size = ${settings.yAxisTextSize || 10}, color = 'black', face = '${settings.axisTextWeight || 'plain'}'),
-    legend.text = element_text(size = ${settings.legendTextSize || 10})
+    legend.text  = element_text(size = ${settings.legendTextSize || 10}),
+    legend.title = element_text(size = ${settings.legendTextSize || 10})
   )
 ${statBlock2}${statBlock3}
 
@@ -6930,14 +6961,14 @@ function collectCurrentSettings() {
     ic50XisLog10: el("ic50XisLog10")?.checked ? "true" : "false",
     ic50ShowLog10Labels: el("ic50ShowLog10Labels")?.checked ? "true" : "false",
     ic50DecimalLabels: el("ic50DecimalLabels")?.checked !== false ? "true" : "false",
-    lqPointShape: el("lqPointShape")?.value || "16",
+    lqPointShape: el("lqPointShape")?.value || "1",
     lqPerGroupShape: el("lqPerGroupShape")?.checked || false,
-    lqGroupShape1: el("lqGroupShape1")?.value || "16",
-    lqGroupShape2: el("lqGroupShape2")?.value || "17",
-    lqGroupShape3: el("lqGroupShape3")?.value || "15",
-    lqGroupShape4: el("lqGroupShape4")?.value || "18",
-    lqGroupShape5: el("lqGroupShape5")?.value || "1",
-    lqGroupShape6: el("lqGroupShape6")?.value || "2"
+    lqGroupShape1: el("lqGroupShape1")?.value || "1",
+    lqGroupShape2: el("lqGroupShape2")?.value || "2",
+    lqGroupShape3: el("lqGroupShape3")?.value || "0",
+    lqGroupShape4: el("lqGroupShape4")?.value || "5",
+    lqGroupShape5: el("lqGroupShape5")?.value || "3",
+    lqGroupShape6: el("lqGroupShape6")?.value || "4"
   };
 
   // Collect group colors dynamically
@@ -7464,10 +7495,12 @@ Office.onReady(() => {
   const helpTabVersion = document.getElementById("helpTabVersion");
   if (helpTabVersion) helpTabVersion.textContent = ADDIN_VERSION;
 
-  // Hide 💾 Save Figure button for Mac desktop users (they use Insert Figure to Sheet)
+  // Hide 💾 Save Figure and Download R Code buttons for Mac desktop users
   if (Office.context?.platform === "Mac") {
     const saveFigureBtn = document.getElementById("saveFigure");
     if (saveFigureBtn) saveFigureBtn.style.display = "none";
+    const downloadRCodeBtn = document.getElementById("downloadRCode");
+    if (downloadRCodeBtn) downloadRCodeBtn.style.display = "none";
   }
 
   // === Advanced 決め打ちトグル（確実表示） ===
@@ -7553,12 +7586,15 @@ Office.onReady(() => {
 
     const pairedRow = document.getElementById("pairedSamplesDataTabRow");
     const subjectColRow = document.getElementById("subjectColRow");
+    const addStatisticsDataTabRow = document.getElementById("addStatisticsDataTabRow");
+    const addStatisticsDataTabCb = document.getElementById("addStatisticsDataTab");
 
     if (isSupported) {
       // Show controls, hide message
       statsControlsContainer.style.display = "flex";
       statsUnsupportedMessage.style.display = "none";
       if (pairedRow) pairedRow.style.display = "";
+      if (addStatisticsDataTabRow) addStatisticsDataTabRow.style.display = "";
       // subjectColRow visibility handled by updatePairedModeUI
     } else {
       // Hide controls, show message, and UNCHECK the checkbox
@@ -7566,11 +7602,11 @@ Office.onReady(() => {
       statsUnsupportedMessage.style.display = "block";
       if (pairedRow) pairedRow.style.display = "none";
       if (subjectColRow) subjectColRow.style.display = "none";
+      if (addStatisticsDataTabRow) addStatisticsDataTabRow.style.display = "none";
 
-      // Uncheck the statistics checkbox to prevent auto-export attempts
-      if (addStatisticsCheckbox) {
-        addStatisticsCheckbox.checked = false;
-      }
+      // Uncheck both statistics checkboxes
+      if (addStatisticsCheckbox) addStatisticsCheckbox.checked = false;
+      if (addStatisticsDataTabCb) addStatisticsDataTabCb.checked = false;
     }
   }
 
@@ -20753,6 +20789,7 @@ ${SHARED_STAT_HELPERS_R}
       title_size=14, x_axis_title_size=12, y_axis_title_size=12,
       x_axis_text_size=10, y_axis_text_size=10, legend_text_size=10,
       title_text="Clonogenic Survival", x_text="Dose (Gy)", y_text="Surviving Fraction",
+      group_name="",
       show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
       theme_name="classic",
       x_axis_rotation=0, y_axis_rotation=0,
@@ -20931,13 +20968,14 @@ ${SHARED_STAT_HELPERS_R}
             scale_y_continuous()
           }
         } +
-        scale_color_manual(values=line_colors[1:n_groups]) +
-        scale_shape_manual(values=shapes_vec[1:n_groups]) +
+        scale_color_manual(values=line_colors[1:n_groups],
+                           name=if(nchar(trimws(group_name))>0) group_name else waiver()) +
+        scale_shape_manual(values=shapes_vec[1:n_groups],
+                           name=if(nchar(trimws(group_name))>0) group_name else waiver()) +
         labs(
           title = if (show_title)  title_text else NULL,
           x     = if (show_x_label) x_text else NULL,
-          y     = if (show_y_label) y_text else NULL,
-          color = NULL, shape = NULL
+          y     = if (show_y_label) y_text else NULL
         )
 
       theme_func <- switch(theme_name,
@@ -22373,6 +22411,7 @@ ${SHARED_STAT_HELPERS_R}
         x_axis_text_size = ${xAxisTextSize},
         y_axis_text_size = ${yAxisTextSize},
         legend_text_size = ${legendTextSize},
+        group_name = "${(selectedGroupColumn || '').replace(/"/g, '\\"')}",
         show_title = ${showTitle},
         show_x_label = ${showXLabel},
         show_y_label = ${showYLabel},
@@ -22528,6 +22567,11 @@ ${SHARED_STAT_HELPERS_R}
     ic50HalfLineColor, ic50HalfLineWidth, ic50HalfLineAlpha,
     ic50PointSize, ic50PointShape, ic50PerGroupShape, ic50GroupShapes, ic50PointColor, ic50PointAlpha,
     ic50DataDisplay, ic50FittingMethod, ic50XisLog10, ic50ShowLog10Labels, ic50DecimalLabels,
+    // LQ survival settings
+    lqPointShape, lqPerGroupShape,
+    lqGroupShape1: lqShapesVec[0], lqGroupShape2: lqShapesVec[1], lqGroupShape3: lqShapesVec[2],
+    lqGroupShape4: lqShapesVec[3], lqGroupShape5: lqShapesVec[4], lqGroupShape6: lqShapesVec[5],
+    lqCurvePoints,
     // Scatter plot settings
     scatterGrouped: document.getElementById("scatterGrouped")?.checked || false,
     scatterPerGroupShape: document.getElementById("scatterPerGroupShape")?.checked || false,
