@@ -3112,7 +3112,7 @@ if (nrow(stat_at_dose) > 0) {
     bracket_margin = ${vbMar},
     line_length = ${vbLl}, line_width = ${vbLw},
     item_spacing = ${vbIs},
-    output_width = 6, output_height = 4
+    output_width = ${settings.expWidth || 6}, output_height = ${settings.expHeight || 4}
   )
   # Fix for log scale: vbracket's has_log_y detection fails in ggplot2 >= 3.5.0.
   # Re-add annotation_custom grob with ymin=0 so the legend is visible.
