@@ -1,7 +1,7 @@
 // ========= その他の既存機能群（ファイル保存、テンプレート等）=========
 
 // Add-in version (update this when making breaking changes)
-const ADDIN_VERSION = "1.1.0";
+const ADDIN_VERSION = "1.0.0";
 
 // Grouped chart types constant (used throughout the file)
 const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw", "ic50_grouped_dose_response", "lq_survival_grouped"];
@@ -7309,14 +7309,20 @@ function applySettingsToUI(settings) {
     }
   }
 
-  // Fill mode (radio buttons - for bar_error_dot)
+  // Fill mode (radio buttons - for bar_error_dot and per-category color charts only)
   if (settings.fillMode) {
+    const fillModeChartTypes = ["bar_error_dot", "bar", "bar_error", "box", "box_dot", "violin", "violin_dot", "dot"];
+    const currentChartType = document.getElementById("chartType")?.value || settings.chartType || "";
     const fillModeRadio = document.getElementById(
       settings.fillMode === 'per_category' ? 'fillModePerCategory' : 'fillModeSingle'
     );
     if (fillModeRadio) {
       fillModeRadio.checked = true;
-      fillModeRadio.dispatchEvent(new Event('change'));
+      // Only dispatch change event for chart types that use fill mode toggle
+      // (avoids hiding groupColorRow for grouped/IC50 chart types)
+      if (fillModeChartTypes.includes(currentChartType)) {
+        fillModeRadio.dispatchEvent(new Event('change'));
+      }
     }
   }
 
