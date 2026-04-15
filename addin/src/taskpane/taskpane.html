@@ -2756,6 +2756,17 @@
     </div>
 
     <div id="status" style="margin-top: 12px; margin-left: 12px;"></div>
+
+    <!-- Version Compatibility Notice (shown after Load from Figure when new features exist) -->
+    <div id="compatibilityNotice" style="display:none; margin: 8px 12px 0; padding: 10px 12px; background: #eff6ff; border: 1px solid #3b82f6; border-radius: 6px; font-size: 12px; line-height: 1.5;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:6px;">
+        <strong style="color:#1d4ed8;">ℹ️ Compatibility Notice</strong>
+        <button onclick="document.getElementById('compatibilityNotice').style.display='none'"
+          style="background:none; border:none; cursor:pointer; font-size:15px; line-height:1; color:#6b7280; padding:0; margin-left:8px;" title="Dismiss">✕</button>
+      </div>
+      <div id="compatibilityNoticeContent"></div>
+    </div>
+
     <!-- Persistent Debug Panel -->
     <div id="debugPanel" style="background: #ffe8a3; border: 2px solid #e4c769; padding: 10px; margin: 10px 0; border-radius: 6px; font-family: monospace; font-size: 12px; display: none;">
       <strong>🔥 DEBUG INFO:</strong>

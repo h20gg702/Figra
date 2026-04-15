@@ -3,6 +3,172 @@
 // Add-in version (update this when making breaking changes)
 const ADDIN_VERSION = "1.0.0";
 
+// ========= Version Compatibility Registry =========
+// Each entry describes a UI feature and the settings key(s) that represent it.
+// If the primary key (keys[0]) is absent from a saved figure's settings,
+// the feature is reported as "new since this figure was created".
+const FEATURE_REGISTRY = [
+  // ----- Text & Font -----
+  {
+    keys: ["axisTitleWeight", "axisTextWeight"],
+    label: "Separate axis-title / axis-text font weights",
+    tab: "Text & Font",
+    description: "Independent bold/plain control for axis titles vs. tick labels."
+  },
+  // ----- Colors & Style -----
+  {
+    keys: ["lqPerGroupShape", "lqGroupShape1"],
+    label: "LQ survival – per-group point shapes",
+    tab: "Colors & Style",
+    description: "Assign a different marker shape to each group in LQ survival curves."
+  },
+  {
+    keys: ["ic50PerGroupShape", "ic50GroupShape1"],
+    label: "IC50 – per-group point shapes",
+    tab: "Colors & Style",
+    description: "Assign a different marker shape to each group in IC50 dose-response curves."
+  },
+  // ----- Theme & Layout -----
+  {
+    keys: ["tableStyleLabels"],
+    label: "Table-style axis labels",
+    tab: "Theme & Layout",
+    description: "Display axis tick labels in a table/grid style."
+  },
+  {
+    keys: ["xBreaksMode"],
+    label: "X-axis break control (auto / manual)",
+    tab: "Theme & Layout",
+    description: "Choose whether x-axis tick marks are placed automatically or manually."
+  },
+  // ----- Statistics -----
+  {
+    keys: ["pairedSamples", "subjectColumn"],
+    label: "Paired statistical tests",
+    tab: "Statistics",
+    description: "Mark samples as paired and specify the subject-ID column for paired tests."
+  },
+  {
+    keys: ["statisticalTestMode", "dataType"],
+    label: "Statistical test mode (auto / manual)",
+    tab: "Statistics",
+    description: "Switch between automatic test selection and manual parametric/non-parametric choice."
+  },
+  {
+    keys: ["customSymbol05", "customSymbol01"],
+    label: "Custom significance symbols",
+    tab: "Statistics",
+    description: "Replace default *, **, *** with any text (e.g. #, ##, ###)."
+  },
+  {
+    keys: ["significanceLevel"],
+    label: "Custom significance threshold (α)",
+    tab: "Statistics",
+    description: "Change the p-value cut-off (default 0.05) for significance."
+  },
+  {
+    keys: ["statLineSize", "statTipLength", "symbolGap", "bracketSpacing"],
+    label: "Fine bracket style controls",
+    tab: "Statistics",
+    description: "Line thickness, tip length, gap, and spacing for statistical bracket annotations."
+  },
+  {
+    keys: ["vbracketLegendLineLength", "vbracketLegendLineWidth"],
+    label: "VBracket legend line customization",
+    tab: "Statistics",
+    description: "Control the length and width of the colored dashes in the VBracket legend."
+  },
+  {
+    keys: ["vbracketSigSize"],
+    label: "VBracket significance label size",
+    tab: "Statistics",
+    description: "Font size for *, **, *** labels inside the VBracket legend."
+  },
+  {
+    keys: ["vbracketItemSpacing"],
+    label: "VBracket item spacing",
+    tab: "Statistics",
+    description: "Vertical gap between items in the VBracket legend."
+  },
+  // ----- IC50 Analysis -----
+  {
+    keys: ["ic50XisLog10", "ic50ShowLog10Labels"],
+    label: "IC50 – log₁₀ x-axis display options",
+    tab: "Statistics (IC50)",
+    description: "Treat x-axis as log₁₀ concentration and choose label format (decimal vs. powers)."
+  },
+  {
+    keys: ["ic50DataDisplay"],
+    label: "IC50 – data display mode (mean±SD / SE / all points)",
+    tab: "Statistics (IC50)",
+    description: "Choose how raw replicate data is summarised on the IC50 curve."
+  },
+  // ----- Scatter -----
+  {
+    keys: ["scatterGrouped", "scatterPerGroupShape"],
+    label: "Scatter plot group & shape options",
+    tab: "Data & Chart",
+    description: "Enable groups and per-group marker shapes for scatter plots."
+  },
+  // ----- Labels -----
+  {
+    keys: ["showLegendTitle", "legendTitle"],
+    label: "Legend title show/hide + custom text",
+    tab: "Text & Font",
+    description: "Toggle the legend title and set its text independently from axis labels."
+  },
+];
+
+/**
+ * Compare saved figure settings against the current FEATURE_REGISTRY.
+ * Returns an array of feature objects whose primary key is absent from savedSettings.
+ * A missing primary key means the feature didn't exist when the figure was created.
+ */
+function checkSettingsCompatibility(savedSettings) {
+  if (!savedSettings || typeof savedSettings !== "object") return [];
+  const savedKeys = new Set(Object.keys(savedSettings));
+  return FEATURE_REGISTRY.filter(f => !savedKeys.has(f.keys[0]));
+}
+
+/**
+ * Show the compatibility notice panel with a list of new features.
+ * Pass an empty array to hide the panel.
+ */
+function showCompatibilityNotice(savedVersion, missingFeatures) {
+  const panel = document.getElementById("compatibilityNotice");
+  const content = document.getElementById("compatibilityNoticeContent");
+  if (!panel || !content) return;
+
+  if (!missingFeatures || missingFeatures.length === 0) {
+    panel.style.display = "none";
+    return;
+  }
+
+  const versionLine = savedVersion && savedVersion !== "Unknown"
+    ? `Figure saved with Figra <strong>v${savedVersion}</strong> → current <strong>v${ADDIN_VERSION}</strong>.`
+    : `Figure saved with an <strong>older version</strong> of Figra (before version tracking) → current <strong>v${ADDIN_VERSION}</strong>.`;
+
+  // Group by tab
+  const byTab = {};
+  for (const f of missingFeatures) {
+    if (!byTab[f.tab]) byTab[f.tab] = [];
+    byTab[f.tab].push(f);
+  }
+
+  let html = `<div style="margin-bottom:6px;">${versionLine} The following options were added after this figure was created — defaults will be used for them:</div>`;
+  for (const [tab, features] of Object.entries(byTab)) {
+    html += `<div style="margin-top:5px;"><strong style="color:#1e40af;">${tab}</strong><ul style="margin:2px 0 0 16px;padding:0;">`;
+    for (const f of features) {
+      html += `<li style="margin:2px 0;" title="${f.description}"><strong>${f.label}</strong> <span style="color:#6b7280;font-size:11px;">— ${f.description}</span></li>`;
+    }
+    html += `</ul></div>`;
+  }
+  html += `<div style="margin-top:6px;color:#6b7280;font-size:11px;">Review these settings before clicking Preview to make sure your figure looks as intended.</div>`;
+
+  content.innerHTML = html;
+  panel.style.display = "block";
+}
+
 // Grouped chart types constant (used throughout the file)
 const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw", "ic50_grouped_dose_response", "lq_survival_grouped"];
 
@@ -762,19 +928,12 @@ async function loadFromFigure() {
         }
 
         // Check version compatibility
-        const savedVersion = metadata.addinVersion || "Unknown";
-        let versionMessage = "";
-
-        if (!metadata.addinVersion) {
-          versionMessage = `⚠️ Version info: This figure was created with an older version of Figra (before version tracking).\nCurrent version: ${ADDIN_VERSION}\n\nThe figure may not reproduce exactly. Proceed with caution.\n\n`;
-          console.warn("⚠️ No version info in metadata - created with older add-in");
-        } else if (savedVersion === ADDIN_VERSION) {
-          versionMessage = `✅ Version match: Figure created with same version (${ADDIN_VERSION})\n\n`;
-          console.log(`✅ Version match: ${savedVersion}`);
-        } else {
-          versionMessage = `⚠️ Version mismatch!\nFigure version: ${savedVersion}\nCurrent version: ${ADDIN_VERSION}\n\nSettings and appearance may differ. Consider recreating the figure with the current version.\n\n`;
-          console.warn(`⚠️ Version mismatch: Figure=${savedVersion}, Current=${ADDIN_VERSION}`);
-        }
+        const savedVersion = metadata.addinVersion || null;
+        console.log(savedVersion
+          ? (savedVersion === ADDIN_VERSION
+              ? `✅ Version match: ${savedVersion}`
+              : `⚠️ Version mismatch: Figure=${savedVersion}, Current=${ADDIN_VERSION}`)
+          : "⚠️ No version info in metadata - created with older add-in");
 
         // Restore data
         window.lastProcessedData = [metadata.data.headers, ...metadata.data.rows];
@@ -986,7 +1145,7 @@ async function loadFromFigure() {
           // Don't fail the whole operation if auto-load fails
         }
 
-        // Show success message with version info
+        // Show success message
         const createdDate = new Date(metadata.created_utc).toLocaleString();
         const hasStats = metadata.statisticalResults &&
                         !metadata.statisticalResults.includes("No statistical") &&
@@ -994,7 +1153,11 @@ async function loadFromFigure() {
         const statMsg = hasStats ? " (with statistical results)" : "";
         const rowCount = metadata.data.rows.length;
         const colCount = metadata.data.headers.length;
-        setStatus(`${versionMessage}✅ Loaded from ${file.name} (created: ${createdDate})\n📋 Data loaded and ready: ${rowCount} rows × ${colCount} columns${statMsg}\n🎯 Click Preview to verify reproducibility`);
+        setStatus(`✅ Loaded from ${file.name} (created: ${createdDate})\n📋 Data: ${rowCount} rows × ${colCount} columns${statMsg}\n🎯 Generating preview…`);
+
+        // Show compatibility notice for new features not present in saved settings
+        const missingFeatures = checkSettingsCompatibility(metadata.settings);
+        showCompatibilityNotice(savedVersion, missingFeatures);
 
         console.log("Metadata loaded:", metadata);
         console.log("📋 Metadata settings:", metadata.settings);
@@ -9306,7 +9469,11 @@ Office.onReady(() => {
   window.__SATO_HANDLERS_BOUND__ = true;
 
   // 基本操作 - 修正版ハンドラーを使用
-  document.getElementById("load")?.addEventListener("click", loadHeadersFromSelection);
+  document.getElementById("load")?.addEventListener("click", () => {
+    // Clear any compatibility notice when loading fresh data
+    showCompatibilityNotice(null, []);
+    loadHeadersFromSelection();
+  });
 
   // Figure save/load with metadata
   document.getElementById("saveFigure")?.addEventListener("click", saveFigureWithMetadata);
