@@ -677,6 +677,52 @@ async function saveFigureWithMetadata() {
       }
     }
 
+    // 2c. Collect IC50 results if applicable
+    metadata.ic50Results = null;
+    if (chartType === "ic50_dose_response" || chartType === "ic50_grouped_dose_response") {
+      debugLog("Step 5c: Collecting IC50 results...");
+      try {
+        await initWebR();
+        const isGroupedIC50 = chartType === "ic50_grouped_dose_response";
+        if (isGroupedIC50) {
+          const groupsR = await webR.evalR(`if(exists("ic50_grouped_results")&&!is.null(ic50_grouped_results)) as.character(ic50_grouped_results$Group) else character(0)`);
+          const groups = await groupsR.toArray().catch(() => []);
+          const ic50sR = await webR.evalR(`if(exists("ic50_grouped_results")&&!is.null(ic50_grouped_results)) as.numeric(ic50_grouped_results$IC50) else numeric(0)`);
+          const ic50s = await ic50sR.toArray().catch(() => []);
+          const cgR = await webR.evalR(`if(exists("ic50_grouped_curve_data")&&!is.null(ic50_grouped_curve_data)) as.character(ic50_grouped_curve_data$group) else character(0)`);
+          const curveGroups = await cgR.toArray().catch(() => []);
+          const ccR = await webR.evalR(`if(exists("ic50_grouped_curve_data")&&!is.null(ic50_grouped_curve_data)) as.numeric(ic50_grouped_curve_data$conc) else numeric(0)`);
+          const curveConc = await ccR.toArray().catch(() => []);
+          const crR = await webR.evalR(`if(exists("ic50_grouped_curve_data")&&!is.null(ic50_grouped_curve_data)) as.numeric(ic50_grouped_curve_data$resp) else numeric(0)`);
+          const curveResp = await crR.toArray().catch(() => []);
+          if (groups.length > 0) {
+            metadata.ic50Results = { isGrouped: true, groups, ic50s, curveGroups, curveConc, curveResp };
+            debugLog("Step 5c: ✅ Grouped IC50 results saved (" + groups.length + " groups)");
+          }
+        } else {
+          const ic50R = await webR.evalR(`if(exists("ic50_result")&&!is.na(ic50_result)) as.numeric(ic50_result) else NA_real_`);
+          const ic50Value = await ic50R.toNumber().catch(() => NaN);
+          const ccR = await webR.evalR(`if(exists("ic50_curve_data")&&!is.null(ic50_curve_data)) as.numeric(ic50_curve_data$conc) else numeric(0)`);
+          const curveConc = await ccR.toArray().catch(() => []);
+          const crR = await webR.evalR(`if(exists("ic50_curve_data")&&!is.null(ic50_curve_data)) as.numeric(ic50_curve_data$response) else numeric(0)`);
+          const curveResp = await crR.toArray().catch(() => []);
+          const pnR = await webR.evalR(`if(exists("ic50_model_params")&&length(ic50_model_params)>0) names(ic50_model_params) else character(0)`);
+          const paramNames = await pnR.toArray().catch(() => []);
+          const pvR = await webR.evalR(`if(exists("ic50_model_params")&&length(ic50_model_params)>0) as.numeric(unlist(ic50_model_params)) else numeric(0)`);
+          const paramValues = await pvR.toArray().catch(() => []);
+          const modelParams = {};
+          for (let i = 0; i < paramNames.length; i++) modelParams[paramNames[i]] = paramValues[i];
+          if (!isNaN(ic50Value) && curveConc.length > 0) {
+            metadata.ic50Results = { isGrouped: false, ic50Value, modelParams, curveConc, curveResp };
+            debugLog("Step 5c: ✅ Single IC50 result saved (IC50=" + ic50Value + ")");
+          }
+        }
+      } catch (e) {
+        console.error("Error collecting IC50 results for metadata:", e);
+        debugLog("Step 5c: ❌ Error: " + e.message);
+      }
+    }
+
     // 3. Embed metadata into PNG iTXt chunk
     const pngWithMetadata = await embedPngMetadata(pngBlob, metadata);
     debugLog("Step 6: Metadata embedded (" + pngWithMetadata.size + " bytes)");
@@ -981,19 +1027,22 @@ async function loadFromFigure() {
         console.log("  axisTextWeight element value:", document.getElementById("axisTextWeight")?.value);
 
         // Update visibility based on restored settings
-        if (typeof updateStatsDetailedControlsVisibility === 'function') {
-          updateStatsDetailedControlsVisibility();
+        if (typeof window.updateStatisticsAvailability === 'function') {
+          window.updateStatisticsAvailability();
         }
-        if (typeof updateVbracketVisibility === 'function') {
-          updateVbracketVisibility();
+        if (typeof window.updateStatsDetailedControlsVisibility === 'function') {
+          window.updateStatsDetailedControlsVisibility();
         }
-        if (typeof updateGroupColorVisibility === 'function') {
-          updateGroupColorVisibility();
+        if (typeof window.updateVbracketVisibility === 'function') {
+          window.updateVbracketVisibility();
+        }
+        if (typeof window.updateGroupColorVisibility === 'function') {
+          window.updateGroupColorVisibility();
         }
         // Sync paired mode UI: show/hide subjectColRow, sync Data-tab checkbox,
         // update auto mode description
-        if (typeof updatePairedModeUI === 'function') {
-          updatePairedModeUI();
+        if (typeof window.updatePairedModeUI === 'function') {
+          window.updatePairedModeUI();
         }
 
         // Display statistical results if available
@@ -1105,6 +1154,57 @@ async function loadFromFigure() {
               console.log(`Statistical results added to sheet: ${sheetName}`);
             }
 
+            // Add IC50 results if stored in metadata
+            if (metadata.ic50Results) {
+              const ic50Data = metadata.ic50Results;
+              const ic50StartCol = numCols + 1; // one blank column gap after data
+              const outputRows = [];
+              if (ic50Data.isGrouped) {
+                outputRows.push(["Grouped IC50 Analysis Results", ""]);
+                outputRows.push(["", ""]);
+                outputRows.push(["Group", "IC50 Value"]);
+                for (let i = 0; i < ic50Data.groups.length; i++) {
+                  outputRows.push([ic50Data.groups[i], ic50Data.ic50s[i] !== undefined && !isNaN(ic50Data.ic50s[i]) ? ic50Data.ic50s[i] : "Could not fit"]);
+                }
+                if (ic50Data.curveConc && ic50Data.curveConc.length > 0) {
+                  outputRows.push(["", ""]);
+                  outputRows.push(["Fitted Curve Data:", ""]);
+                  outputRows.push(["Group", "Concentration", "Fitted Response"]);
+                  for (let i = 0; i < ic50Data.curveConc.length; i++) {
+                    outputRows.push([ic50Data.curveGroups[i] || "", ic50Data.curveConc[i], ic50Data.curveResp[i]]);
+                  }
+                }
+              } else {
+                outputRows.push(["IC50 Analysis Results", ""]);
+                outputRows.push(["", ""]);
+                outputRows.push(["IC50 Value:", !isNaN(ic50Data.ic50Value) ? ic50Data.ic50Value : "Could not fit"]);
+                outputRows.push(["", ""]);
+                if (ic50Data.modelParams && Object.keys(ic50Data.modelParams).length > 0) {
+                  outputRows.push(["Model Parameters:", ""]);
+                  for (const [key, value] of Object.entries(ic50Data.modelParams)) {
+                    outputRows.push([`  ${key}:`, value]);
+                  }
+                  outputRows.push(["", ""]);
+                }
+                outputRows.push(["Fitted Curve Data:", ""]);
+                outputRows.push(["Concentration", "Fitted Response"]);
+                for (let i = 0; i < ic50Data.curveConc.length; i++) {
+                  outputRows.push([ic50Data.curveConc[i], ic50Data.curveResp[i]]);
+                }
+              }
+              const maxCols = (ic50Data.isGrouped && ic50Data.curveConc?.length > 0) ? 3 : 2;
+              const ic50Range = newSheet.getRangeByIndexes(0, ic50StartCol, outputRows.length, maxCols);
+              ic50Range.values = outputRows.map(row => {
+                const padded = [...row];
+                while (padded.length < maxCols) padded.push("");
+                return padded.slice(0, maxCols);
+              });
+              newSheet.getRangeByIndexes(0, ic50StartCol, 1, 1).format.font.bold = true;
+              newSheet.getRangeByIndexes(0, ic50StartCol, 1, 1).format.font.size = 14;
+              ic50Range.format.autofitColumns();
+              console.log("IC50 results written from metadata to sheet");
+            }
+
             await context.sync();
 
             // Select the data range (NOT including stats) so it's ready for loading
@@ -1117,9 +1217,18 @@ async function loadFromFigure() {
         }
 
         // Auto-load the data into UI so it's ready for preview
+        // NOTE: We use the metadata data directly (already set in window.lastProcessedData above)
+        // and populate column selectors from it, rather than re-reading from Excel via
+        // cacheDataFromSelection — which would overwrite lastProcessedData with Excel round-trip
+        // values that may have precision differences, causing IC50 and other fits to change.
         try {
           console.log("Auto-loading data into UI...");
-          await loadHeadersFromSelection();
+          const metaHeaders = metadata.data.headers;
+          populateColumnSelectors(metaHeaders);
+          // Also send data to webR so R has the correct dat frame
+          await initWebR();
+          const csv = toCSV(window.lastProcessedData);
+          await webR.evalR(`con <- textConnection(${JSON.stringify(csv)}); dat <- utils::read.csv(con, header=TRUE, check.names=FALSE, stringsAsFactors=FALSE, na.strings=c("","NA")); close(con); assign("dat", dat, envir=.GlobalEnv)`);
           console.log("✅ Data auto-loaded into UI");
 
           // IMPORTANT: Re-apply column values from metadata AFTER loadHeadersFromSelection
@@ -1138,7 +1247,7 @@ async function loadFromFigure() {
           // IMPORTANT: Re-apply all settings that might have been affected by loadHeadersFromSelection
           // This ensures font, weight, title, labels, etc. are correctly restored
           applySettingsToUI(metadata.settings);
-          if (typeof updatePairedModeUI === 'function') updatePairedModeUI();
+          if (typeof window.updatePairedModeUI === 'function') window.updatePairedModeUI();
           console.log("✅ Settings re-applied after loadHeadersFromSelection");
         } catch (err) {
           console.error('Error auto-loading data:', err);
@@ -1338,20 +1447,20 @@ function applySettings(settings) {
   }
 
   // Trigger visibility updates
-  if (typeof handleChartTypeChange === 'function') {
-    handleChartTypeChange();
+  if (typeof window.handleChartTypeChange === 'function') {
+    window.handleChartTypeChange();
   }
-  if (typeof updateStatisticsAvailability === 'function') {
-    updateStatisticsAvailability();
+  if (typeof window.updateStatisticsAvailability === 'function') {
+    window.updateStatisticsAvailability();
   }
-  if (typeof updateVbracketVisibility === 'function') {
-    updateVbracketVisibility();
+  if (typeof window.updateVbracketVisibility === 'function') {
+    window.updateVbracketVisibility();
   }
-  if (typeof updateStatsDetailedControlsVisibility === 'function') {
-    updateStatsDetailedControlsVisibility();
+  if (typeof window.updateStatsDetailedControlsVisibility === 'function') {
+    window.updateStatsDetailedControlsVisibility();
   }
-  if (typeof updateGroupColorVisibility === 'function') {
-    updateGroupColorVisibility();
+  if (typeof window.updateGroupColorVisibility === 'function') {
+    window.updateGroupColorVisibility();
   }
 }
 
@@ -2686,8 +2795,8 @@ ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
     plot.title = element_text(size = ${settings.titleSize}, face = '${settings.titleWeight}', hjust = 0.5),
     axis.title.x = element_text(size = ${settings.xAxisTitleSize}, face = '${settings.axisTitleWeight}'),
     axis.title.y = element_text(size = ${settings.yAxisTitleSize}, face = '${settings.axisTitleWeight}'),
-    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
-    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
+    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.xAxisRotation && settings.xAxisRotation != 0) ? `, angle = ${settings.xAxisRotation}, hjust = ${settings.xAxisHjust}, vjust = ${settings.xAxisVjust}` : ''}),
+    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.yAxisRotation && settings.yAxisRotation != 0) ? `, angle = ${settings.yAxisRotation}, hjust = ${settings.yAxisHjust}, vjust = ${settings.yAxisVjust}` : ''}),
     legend.text = element_text(size = ${settings.legendTextSize}),
     legend.title = element_text(size = ${settings.legendTextSize})
   )
@@ -3084,8 +3193,8 @@ p <- ggplot(dat, aes(x = conc, y = response)) +
     plot.title = element_text(size = ${settings.titleSize}, hjust = 0.5),
     axis.title.x = element_text(size = ${settings.xAxisTitleSize}),
     axis.title.y = element_text(size = ${settings.yAxisTitleSize}),
-    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black'),
-    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black')
+    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black'${(settings.xAxisRotation && settings.xAxisRotation != 0) ? `, angle = ${settings.xAxisRotation}, hjust = ${settings.xAxisHjust}, vjust = ${settings.xAxisVjust}` : ''}),
+    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black'${(settings.yAxisRotation && settings.yAxisRotation != 0) ? `, angle = ${settings.yAxisRotation}, hjust = ${settings.yAxisHjust}, vjust = ${settings.yAxisVjust}` : ''})
   )
 
 # Add fitted curve
@@ -3099,8 +3208,11 @@ if (!is.na(ic50_value)) {
   p <- p +
     geom_vline(xintercept = ic50_value, linetype = 'dashed', color = '${lineColor}', linewidth = ${lineWidth}, alpha = ${lineAlpha})
 }
-` : ''}${showHalfMaxLine ? `# Add 50% response line
-p <- p + geom_hline(yintercept = 50, linetype = 'dashed', color = '${halfLineColor}', linewidth = ${halfLineWidth}, alpha = ${halfLineAlpha})
+` : ''}${showHalfMaxLine ? `# Add 50% response line (midpoint of fitted curve: (bottom + top) / 2)
+if (!is.null(fit)) {
+  half_max_y <- (coef(fit)[2] + coef(fit)[3]) / 2
+  p <- p + geom_hline(yintercept = half_max_y, linetype = 'dashed', color = '${halfLineColor}', linewidth = ${halfLineWidth}, alpha = ${halfLineAlpha})
+}
 ` : ''}
 ${showIC50Value ? `# Add IC50 annotation
 if (!is.na(ic50_value)) {
@@ -3701,8 +3813,8 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
     plot.title = element_text(size = ${settings.titleSize}, face = '${settings.titleWeight}', hjust = 0.5),
     axis.title.x = element_text(size = ${settings.xAxisTitleSize}, face = '${settings.axisTitleWeight}'),
     axis.title.y = element_text(size = ${settings.yAxisTitleSize}, face = '${settings.axisTitleWeight}'),
-    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
-    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
+    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.xAxisRotation && settings.xAxisRotation != 0) ? `, angle = ${settings.xAxisRotation}, hjust = ${settings.xAxisHjust}, vjust = ${settings.xAxisVjust}` : ''}),
+    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.yAxisRotation && settings.yAxisRotation != 0) ? `, angle = ${settings.yAxisRotation}, hjust = ${settings.yAxisHjust}, vjust = ${settings.yAxisVjust}` : ''}),
     legend.text = element_text(size = ${settings.legendTextSize}),
     legend.title = element_text(size = ${settings.legendTextSize})
   )
@@ -6064,8 +6176,8 @@ p <- ggplot(dat, aes(x = ${xColName}, y = ${yColName}, fill = ${groupColName})) 
     plot.title = element_text(size = ${settings.titleSize}, face = '${settings.titleWeight}', hjust = 0.5),
     axis.title.x = element_text(size = ${settings.xAxisTitleSize}, face = '${settings.axisTitleWeight}'),
     axis.title.y = element_text(size = ${settings.yAxisTitleSize}, face = '${settings.axisTitleWeight}'),
-    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
-    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
+    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.xAxisRotation && settings.xAxisRotation != 0) ? `, angle = ${settings.xAxisRotation}, hjust = ${settings.xAxisHjust}, vjust = ${settings.xAxisVjust}` : ''}),
+    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.yAxisRotation && settings.yAxisRotation != 0) ? `, angle = ${settings.yAxisRotation}, hjust = ${settings.yAxisHjust}, vjust = ${settings.yAxisVjust}` : ''}),
     legend.text = element_text(size = ${settings.legendTextSize}),
     legend.title = element_text(size = ${settings.legendTextSize})
   )
@@ -6258,8 +6370,8 @@ p <- ggplot(dat, aes(x = ${xColName}, y = ${yColName}, fill = ${groupColName})) 
     plot.title = element_text(size = ${settings.titleSize}, face = '${settings.titleWeight}', hjust = 0.5),
     axis.title.x = element_text(size = ${settings.xAxisTitleSize}, face = '${settings.axisTitleWeight}'),
     axis.title.y = element_text(size = ${settings.yAxisTitleSize}, face = '${settings.axisTitleWeight}'),
-    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
-    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
+    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.xAxisRotation && settings.xAxisRotation != 0) ? `, angle = ${settings.xAxisRotation}, hjust = ${settings.xAxisHjust}, vjust = ${settings.xAxisVjust}` : ''}),
+    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.yAxisRotation && settings.yAxisRotation != 0) ? `, angle = ${settings.yAxisRotation}, hjust = ${settings.yAxisHjust}, vjust = ${settings.yAxisVjust}` : ''}),
     legend.text = element_text(size = ${settings.legendTextSize}),
     legend.title = element_text(size = ${settings.legendTextSize})
   )
@@ -6461,8 +6573,8 @@ p <- ggplot(summary_data, aes(x = TimePoint_num, y = Mean, color = Group, group 
     plot.title = element_text(size = ${settings.titleSize}, face = '${settings.titleWeight}', hjust = 0.5, margin = margin(b = 6)),
     axis.title.x = element_text(size = ${settings.xAxisTitleSize}, face = '${settings.axisTitleWeight}', margin = margin(t = 6)),
     axis.title.y = element_text(size = ${settings.yAxisTitleSize}, face = '${settings.axisTitleWeight}', margin = margin(r = 6)),
-    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
-    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'),
+    axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.xAxisRotation && settings.xAxisRotation != 0) ? `, angle = ${settings.xAxisRotation}, hjust = ${settings.xAxisHjust}, vjust = ${settings.xAxisVjust}` : ''}),
+    axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.yAxisRotation && settings.yAxisRotation != 0) ? `, angle = ${settings.yAxisRotation}, hjust = ${settings.yAxisHjust}, vjust = ${settings.yAxisVjust}` : ''}),
     legend.text = element_text(size = ${settings.legendTextSize})
   )
 
@@ -7592,8 +7704,8 @@ function applySettingsToUI(settings) {
   }
 
   // Trigger chart type change to update all tab visibility (Colors & Style, Statistics, etc.)
-  if (typeof handleChartTypeChange === 'function') {
-    handleChartTypeChange();
+  if (typeof window.handleChartTypeChange === 'function') {
+    window.handleChartTypeChange();
   }
 
   console.log("✅ Settings applied to UI");
@@ -9395,14 +9507,14 @@ Office.onReady(() => {
   document.getElementById("pairedSamples")?.addEventListener("change", function() {
     const dataTabCb = document.getElementById("pairedSamplesDataTab");
     if (dataTabCb) dataTabCb.checked = this.checked;
-    updatePairedModeUI();
+    window.updatePairedModeUI();
   });
 
   // Sync: Data tab → Stats tab
   document.getElementById("pairedSamplesDataTab")?.addEventListener("change", function() {
     const statsCb = document.getElementById("pairedSamples");
     if (statsCb) statsCb.checked = this.checked;
-    updatePairedModeUI();
+    window.updatePairedModeUI();
   });
 
   // Set up scatter "Color by group" checkbox listener
@@ -10001,8 +10113,17 @@ Office.onReady(() => {
     }
   }
   
+  // Expose visibility functions on window so external callers (applySettingsToUI, loadFromFigure) can reach them
+  window.handleChartTypeChange = handleChartTypeChange;
+  window.updateStatisticsAvailability = updateStatisticsAvailability;
+  window.updateStatsDetailedControlsVisibility = updateStatsDetailedControlsVisibility;
+  window.updateVbracketVisibility = updateVbracketVisibility;
+  window.updateGroupColorVisibility = updateGroupColorVisibility;
+  window.updatePairedModeUI = updatePairedModeUI;
+  window.updateColorsStyleControlsVisibility = updateColorsStyleControlsVisibility;
+
   // Initial visibility setup
-  updateGroupColorVisibility();
+  window.updateGroupColorVisibility();
   
   // Initial bar width setup based on chart type
   function updateBarWidthDefault() {
@@ -12739,6 +12860,17 @@ async function exportStatisticalResultsToNewSheet() {
 
 // ========= IC50 Curve Data Export Function =========
 
+function columnIndexToLetter(index) {
+  // index is 0-based
+  let letter = "";
+  let n = index;
+  while (n >= 0) {
+    letter = String.fromCharCode((n % 26) + 65) + letter;
+    n = Math.floor(n / 26) - 1;
+  }
+  return letter;
+}
+
 async function exportIC50CurveDataToExcel() {
   try {
     console.log("exportIC50CurveDataToExcel called");
@@ -12800,11 +12932,12 @@ async function exportIC50CurveDataToExcel() {
       const curveResp = await curveRespR.toArray().catch(() => []);
 
       await Excel.run(async (context) => {
-        const sheets = context.workbook.worksheets;
-        const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
-        const sheetName = `IC50_Results_${timestamp}`;
-        const newSheet = sheets.add(sheetName);
-        newSheet.activate();
+        const sheet = context.workbook.worksheets.getActiveSheet();
+        const usedRange = sheet.getUsedRange();
+        usedRange.load("columnCount");
+        await context.sync();
+
+        const startCol = usedRange.columnCount + 1;
 
         // Section 1: IC50 summary table
         const outputData = [
@@ -12826,22 +12959,23 @@ async function exportIC50CurveDataToExcel() {
           }
         }
 
-        // Write summary section (cols A-B) and curve section (cols A-C)
         const maxCols = curveConc.length > 0 ? 3 : 2;
-        const range = newSheet.getRange(`A1:${maxCols === 3 ? 'C' : 'B'}${outputData.length}`);
+        const startColLetter = columnIndexToLetter(startCol);
+        const endColLetter = columnIndexToLetter(startCol + maxCols - 1);
+        const range = sheet.getRange(`${startColLetter}1:${endColLetter}${outputData.length}`);
         range.values = outputData.map(row => {
           const padded = [...row];
           while (padded.length < maxCols) padded.push("");
           return padded.slice(0, maxCols);
         });
 
-        newSheet.getRange("A1").format.font.bold = true;
-        newSheet.getRange("A1").format.font.size = 14;
-        newSheet.getRange("A3:B3").format.font.bold = true;
-        newSheet.getUsedRange().format.autofitColumns();
+        sheet.getRange(`${startColLetter}1`).format.font.bold = true;
+        sheet.getRange(`${startColLetter}1`).format.font.size = 14;
+        sheet.getRange(`${startColLetter}3:${columnIndexToLetter(startCol + 1)}3`).format.font.bold = true;
+        sheet.getUsedRange().format.autofitColumns();
 
         await context.sync();
-        setStatus(`✅ IC50 results exported to sheet: "${sheetName}"`);
+        setStatus(`✅ IC50 results written to current sheet (column ${startColLetter})`);
       });
 
     } else {
@@ -12907,11 +13041,13 @@ async function exportIC50CurveDataToExcel() {
       }
 
       await Excel.run(async (context) => {
-        const sheets = context.workbook.worksheets;
-        const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
-        const sheetName = `IC50_Results_${timestamp}`;
-        const newSheet = sheets.add(sheetName);
-        newSheet.activate();
+        const sheet = context.workbook.worksheets.getActiveSheet();
+        const usedRange = sheet.getUsedRange();
+        usedRange.load("columnCount");
+        await context.sync();
+
+        // Write results after the last used column (with one blank column gap)
+        const startCol = usedRange.columnCount + 1;
 
         const outputData = [];
         outputData.push(["IC50 Analysis Results"]);
@@ -12933,17 +13069,18 @@ async function exportIC50CurveDataToExcel() {
           outputData.push([conc[i], response[i]]);
         }
 
-        const range = newSheet.getRange(`A1:B${outputData.length}`);
+        const startColLetter = columnIndexToLetter(startCol);
+        const endColLetter = columnIndexToLetter(startCol + 1);
+        const range = sheet.getRange(`${startColLetter}1:${endColLetter}${outputData.length}`);
         range.values = outputData.map(row => row.length === 1 ? [row[0], ""] : row.slice(0, 2));
 
-        newSheet.getRange("A1").format.font.bold = true;
-        newSheet.getRange("A1").format.font.size = 14;
-        newSheet.getRange("A3").format.font.bold = true;
-        newSheet.getUsedRange().format.autofitColumns();
+        sheet.getRange(`${startColLetter}1`).format.font.bold = true;
+        sheet.getRange(`${startColLetter}1`).format.font.size = 14;
+        sheet.getRange(`${startColLetter}3`).format.font.bold = true;
+        sheet.getUsedRange().format.autofitColumns();
 
         await context.sync();
-        setStatus(`✅ IC50 results exported to sheet: "${sheetName}"`);
-        console.log(`IC50 curve data exported to sheet: ${sheetName}`);
+        setStatus(`✅ IC50 results written to current sheet (column ${startColLetter})`);
       });
     }
 
@@ -13685,7 +13822,15 @@ async function initWebR() {
           library(ggpubr)
 
           # Create dynamic ggpubr data frame based on actual group names
-          y_max <- max(data[[value_col]], na.rm = TRUE)
+          y_max_raw <- max(data[[value_col]], na.rm = TRUE)
+          # Use robust y_max (whisker top of all data) for bracket positioning.
+          # Extreme outliers otherwise force brackets to the top of the chart.
+          tmp_vals <- data[[value_col]]
+          tmp_q3   <- quantile(tmp_vals, 0.75, na.rm = TRUE)
+          tmp_iqr  <- IQR(tmp_vals, na.rm = TRUE)
+          tmp_robust <- tmp_vals[tmp_vals <= tmp_q3 + 1.5 * tmp_iqr]
+          y_max <- if (length(tmp_robust) > 0) max(tmp_robust, na.rm = TRUE) else y_max_raw
+          cat("🔥 y_max_raw=", y_max_raw, " y_max(robust)=", y_max, "🔥\\n")
 
           # Get actual group names from the data
           actual_groups <- unique(data[[group_col]])
@@ -14457,41 +14602,34 @@ async function initWebR() {
                     first_g2_len <- length(g2_values)
                   }
 
+                  # Helper: whisker top = max(values <= Q3 + 1.5*IQR)
+                  # Matches how ggplot2 draws the box upper whisker.
+                  # Robust to outliers — extreme dots appear ABOVE the bracket (standard).
+                  whisker_top <- function(vals) {
+                    vals <- vals[!is.na(vals)]
+                    if (length(vals) == 0) return(NA)
+                    q3  <- quantile(vals, 0.75)
+                    iqr <- IQR(vals)
+                    fence <- q3 + 1.5 * iqr
+                    non_outliers <- vals[vals <= fence]
+                    if (length(non_outliers) == 0) return(max(vals))
+                    max(non_outliers)
+                  }
+
                   # Check for empty values
                   if (length(g1_values) == 0 || length(g2_values) == 0) {
                     cat("🔥 WARNING: Empty values for", g1, "or", g2, "- using y_max as fallback 🔥\\n")
                     baseHeight <- y_max
                   } else {
-                    cat("\\n🔥🔥🔥 NEW BASE HEIGHT CALCULATION CODE RUNNING! 🔥🔥🔥\\n")
+                    # Use whisker top as base height so extreme outlier dots don't
+                    # push the bracket off the chart.
+                    g1_top <- whisker_top(g1_values)
+                    g2_top <- whisker_top(g2_values)
+                    baseHeight <- max(g1_top, g2_top, na.rm = TRUE)
 
-                    # CRITICAL FIX: The chart displays mean ± SD (error bars), not raw data!
-                    # So baseHeight must be the TOP of the error bar = mean + SD
-                    g1_mean <- mean(g1_values, na.rm = TRUE)
-                    g2_mean <- mean(g2_values, na.rm = TRUE)
-                    g1_sd <- if(length(g1_values) > 1) sd(g1_values, na.rm = TRUE) else 0
-                    g2_sd <- if(length(g2_values) > 1) sd(g2_values, na.rm = TRUE) else 0
-
-                    # Top of error bar for each group
-                    g1_error_top <- g1_mean + g1_sd
-                    g2_error_top <- g2_mean + g2_sd
-
-                    # Also get max data point for comparison
-                    g1_max_data <- max(g1_values, na.rm = TRUE)
-                    g2_max_data <- max(g2_values, na.rm = TRUE)
-
-                    # Use the higher of: (error bar top) or (max data point)
-                    g1_top <- max(g1_error_top, g1_max_data)
-                    g2_top <- max(g2_error_top, g2_max_data)
-
-                    # baseHeight = max of both groups' tops
-                    baseHeight <- max(g1_top, g2_top)
-
-                    cat("🔥 CALCULATED: baseHeight =", round(baseHeight, 2), "(from error_bar_tops) 🔥\\n")
-                    cat("🔥", g1, ": values=", paste(g1_values, collapse=","), "🔥\\n")
-                    cat("🔥", g1, ": mean=", round(g1_mean,1), ", sd=", round(g1_sd,1), ", max_data=", g1_max_data, ", error_top=", round(g1_error_top,1), ", final_top=", round(g1_top,1), "🔥\\n")
-                    cat("🔥", g2, ": values=", paste(g2_values, collapse=","), "🔥\\n")
-                    cat("🔥", g2, ": mean=", round(g2_mean,1), ", sd=", round(g2_sd,1), ", max_data=", g2_max_data, ", error_top=", round(g2_error_top,1), ", final_top=", round(g2_top,1), "🔥\\n")
-                    cat("🔥 baseHeight (max of both groups) =", round(baseHeight,1), "🔥\\n")
+                    cat("🔥 CALCULATED: baseHeight =", round(baseHeight, 2), "(whisker top) 🔥\\n")
+                    cat("🔥", g1, ": whisker_top=", round(g1_top, 2), "🔥\\n")
+                    cat("🔥", g2, ": whisker_top=", round(g2_top, 2), "🔥\\n")
                   }
 
                   # Store baseHeight for debug annotation
@@ -14500,29 +14638,30 @@ async function initWebR() {
 
                   # Calculate bracket position (scale-aware)
                   if (y_scale %in% c("log", "log10", "log2")) {
-                    # LOG SCALE: Work in log-transformed coordinate space
-                    # When scale_y_log2() is applied, coordinates are in log2 space
-                    # E.g., data value 12 appears at coordinate log2(12) ≈ 3.585
-
-                    # Transform baseHeight to log coordinate space
+                    # LOG SCALE: y.position must be in DATA coordinates (not log-transformed).
+                    # Step size = 4% of the visible log range, so spacing looks consistent
+                    # regardless of log base (log2 vs log10) or data spread.
+                    effective_y_min <- max(y_min, 1e-10)
                     if (y_scale == "log2") {
-                      base_coord <- log2(baseHeight)
+                      log_range <- max(log2(y_max) - log2(effective_y_min), 0.5)
+                      scale_factor <- 2^(log_range * 0.04)
                     } else if (y_scale == "log10") {
-                      base_coord <- log10(baseHeight)
-                    } else {  # "log" = natural log
-                      base_coord <- log(baseHeight)
-                    }
-
-                    # Add small increment in log space (0.15 for first, 0.15 for subsequent)
-                    if (idx == 1) {
-                      y_positions[idx] <- base_coord + 0.15
+                      log_range <- max(log10(y_max) - log10(effective_y_min), 0.5)
+                      scale_factor <- 10^(log_range * 0.04)
                     } else {
-                      y_positions[idx] <- y_positions[idx-1] + 0.15
+                      log_range <- max(log(y_max) - log(effective_y_min), 0.5)
+                      scale_factor <- exp(log_range * 0.04)
+                    }
+                    scale_factor <- min(max(scale_factor, 1.02), 1.30)
+
+                    if (idx == 1) {
+                      y_positions[idx] <- baseHeight * scale_factor
+                    } else {
+                      y_positions[idx] <- max(baseHeight, y_positions[idx-1]) * scale_factor
                     }
 
-                    cat("🔥 LOG SCALE bracket: baseHeight=", baseHeight,
-                        "→ log_coord=", base_coord,
-                        "→ bracket_coord=", y_positions[idx], "🔥\\n")
+                    cat("🔥 LOG SCALE bracket: log_range=", log_range, "scale_factor=", scale_factor,
+                        "baseHeight=", baseHeight, "→ y_pos=", y_positions[idx], "🔥\\n")
                   } else {
                     # LINEAR SCALE: Use additive spacing in data space
                     if (idx == 1) {
@@ -14605,34 +14744,36 @@ async function initWebR() {
                       g1_values_f <- data[[value_col]][data_groups_char == g1_filtered]
                       g2_values_f <- data[[value_col]][data_groups_char == g2_filtered]
 
-                      # Calculate baseHeight
+                      # Calculate baseHeight using whisker top (robust to outliers)
                       if (length(g1_values_f) > 0 && length(g2_values_f) > 0) {
-                        g1_mean_f <- mean(g1_values_f, na.rm = TRUE)
-                        g2_mean_f <- mean(g2_values_f, na.rm = TRUE)
-                        g1_sd_f <- if(length(g1_values_f) > 1) sd(g1_values_f, na.rm = TRUE) else 0
-                        g2_sd_f <- if(length(g2_values_f) > 1) sd(g2_values_f, na.rm = TRUE) else 0
-                        g1_top_f <- max(g1_mean_f + g1_sd_f, max(g1_values_f, na.rm = TRUE))
-                        g2_top_f <- max(g2_mean_f + g2_sd_f, max(g2_values_f, na.rm = TRUE))
-                        baseHeight_f <- max(g1_top_f, g2_top_f)
+                        g1_top_f <- whisker_top(g1_values_f)
+                        g2_top_f <- whisker_top(g2_values_f)
+                        baseHeight_f <- max(g1_top_f, g2_top_f, na.rm = TRUE)
                       } else {
                         baseHeight_f <- y_max
                       }
 
                       # Calculate position with consistent spacing - scale-aware
                       if (y_scale %in% c("log", "log10", "log2")) {
-                        # LOG SCALE: Work in log-transformed coordinate space
+                        # LOG SCALE: y.position must be in data coordinates
+                        # Step = 4% of visible log range (same logic as initial calculation)
+                        effective_y_min_f <- max(y_min, 1e-10)
                         if (y_scale == "log2") {
-                          base_coord_f <- log2(baseHeight_f)
+                          log_range_f <- max(log2(y_max) - log2(effective_y_min_f), 0.5)
+                          scale_factor_f <- 2^(log_range_f * 0.04)
                         } else if (y_scale == "log10") {
-                          base_coord_f <- log10(baseHeight_f)
+                          log_range_f <- max(log10(y_max) - log10(effective_y_min_f), 0.5)
+                          scale_factor_f <- 10^(log_range_f * 0.04)
                         } else {
-                          base_coord_f <- log(baseHeight_f)
+                          log_range_f <- max(log(y_max) - log(effective_y_min_f), 0.5)
+                          scale_factor_f <- exp(log_range_f * 0.04)
                         }
+                        scale_factor_f <- min(max(scale_factor_f, 1.02), 1.30)
 
                         if (i == 1) {
-                          new_y_positions[i] <- base_coord_f + 0.15
+                          new_y_positions[i] <- baseHeight_f * scale_factor_f
                         } else {
-                          new_y_positions[i] <- new_y_positions[i-1] + 0.15
+                          new_y_positions[i] <- max(baseHeight_f, new_y_positions[i-1]) * scale_factor_f
                         }
                       } else {
                         # LINEAR SCALE: Use data space
@@ -14705,12 +14846,19 @@ async function initWebR() {
               cat("🔥 Error in real statistical analysis:", e$message, "🔥\\n")
               # Fallback to combinations without statistical analysis
               combinations <- combn(actual_groups, 2, simplify = FALSE)
+              # Use robust y-max (whisker top of all data) to avoid extreme outliers
+              all_vals <- data[[value_col]]
+              all_q3  <- quantile(all_vals, 0.75, na.rm = TRUE)
+              all_iqr <- IQR(all_vals, na.rm = TRUE)
+              robust_vals <- all_vals[all_vals <= all_q3 + 1.5 * all_iqr]
+              y_max_robust <- if (length(robust_vals) > 0) max(robust_vals, na.rm = TRUE) else y_max
+              cat("🔥 Fallback: y_max_robust =", y_max_robust, "(raw y_max =", y_max, ") 🔥\\n")
               pairwise_data <- data.frame(
                 group1 = sapply(combinations, function(x) x[1]),
                 group2 = sapply(combinations, function(x) x[2]),
                 p.adj = rep(1.0, length(combinations)),
                 p.signif = rep("n.s.", length(combinations)),
-                y.position = y_max * (1.3 + (0:(length(combinations)-1)) * 0.15)
+                y.position = y_max_robust * (1.3 + (0:(length(combinations)-1)) * 0.15)
               )
             })
           } else {
@@ -14969,6 +15117,14 @@ async function initWebR() {
       tryCatch({
         cat("\\n🔥🔥🔥 CUSTOM STATISTICAL FUNCTION CALLED 🔥🔥🔥\\n")
         cat("🔥🔥🔥 THIS FUNCTION SHOULD ADD CUSTOM ANNOTATIONS 🔥🔥🔥\\n")
+        # Compute robust y_max once (whisker top) for all annotation positioning in this block.
+        # Prevents extreme outliers from pushing brackets/symbols to the top of the chart.
+        ann_vals <- data[[value_col]]
+        ann_q3   <- quantile(ann_vals, 0.75, na.rm = TRUE)
+        ann_iqr  <- IQR(ann_vals, na.rm = TRUE)
+        ann_rob  <- ann_vals[ann_vals <= ann_q3 + 1.5 * ann_iqr]
+        y_max_robust_ann <- if (length(ann_rob) > 0) max(ann_rob, na.rm = TRUE) else max(ann_vals, na.rm = TRUE)
+        cat("🔥 y_max_robust_ann =", y_max_robust_ann, "(raw =", max(ann_vals, na.rm=TRUE), ") 🔥\\n")
         cat("🔥🔥🔥 PARAMETERS: group_col=", group_col, ", value_col=", value_col, ", test_type=", test_type, ", symbol_size=", symbol_size, "🔥🔥🔥\\n")
         cat("🔥🔥🔥 UI OPTIONS: show_main_symbol=", show_main_symbol, ", show_pairwise=", show_pairwise, "🔥🔥🔥\\n")
         cat("🔥🔥🔥 CRITICAL: show_pairwise type =", typeof(show_pairwise), ", value =", show_pairwise, "🔥🔥🔥\\n")
@@ -15068,7 +15224,14 @@ async function initWebR() {
             if (our_significance != "ns") {
               cat("  CREATING CUSTOM ANNOTATION\\n")
               # Use direct annotation instead of stat_compare_means to ensure our significance is displayed
-              y_max <- max(data[[value_col]], na.rm = TRUE)
+              # Use robust y_max (whisker top) to prevent extreme outliers from pushing bracket off chart
+              {
+                b2_vals <- data[[value_col]]
+                b2_q3 <- quantile(b2_vals, 0.75, na.rm = TRUE)
+                b2_iqr <- IQR(b2_vals, na.rm = TRUE)
+                b2_rob <- b2_vals[b2_vals <= b2_q3 + 1.5 * b2_iqr]
+                y_max <- if (length(b2_rob) > 0) max(b2_rob, na.rm = TRUE) else max(b2_vals, na.rm = TRUE)
+              }
               y_min <- min(data[[value_col]], na.rm = TRUE)
 
               # Calculate y_pos (multiplicative for all scales - log scales display as powers)
@@ -15104,8 +15267,14 @@ async function initWebR() {
 
               if (sig_symbol != "ns") {
                 cat("🔥🔥🔥 ADDING OVERALL SYMBOL IN GGPUBR PATH 🔥🔥🔥\\n")
-                # Get y-axis max for positioning
-                y_max <- max(data[[value_col]], na.rm = TRUE)
+                # Get y-axis max for positioning (robust: whisker top to avoid extreme outliers)
+                {
+                  b3_vals <- data[[value_col]]
+                  b3_q3 <- quantile(b3_vals, 0.75, na.rm = TRUE)
+                  b3_iqr <- IQR(b3_vals, na.rm = TRUE)
+                  b3_rob <- b3_vals[b3_vals <= b3_q3 + 1.5 * b3_iqr]
+                  y_max <- if (length(b3_rob) > 0) max(b3_rob, na.rm = TRUE) else max(b3_vals, na.rm = TRUE)
+                }
                 y_min <- min(data[[value_col]], na.rm = TRUE)
 
                 # Calculate y_pos (multiplicative for all scales)
@@ -15159,8 +15328,8 @@ async function initWebR() {
           cat("🔥🔥🔥 CHECKING IF SHOULD ADD ANNOTATION: sig_symbol='", sig_symbol, "', not ns?", sig_symbol != "ns", ", show_main_symbol=", show_main_symbol, "🔥🔥🔥\\n")
           if (sig_symbol != "ns" && show_main_symbol) {
             cat("🔥🔥🔥 ENTERING ANNOTATION BLOCK - WILL ADD MAIN SYMBOL 🔥🔥🔥\\n")
-            # Get y-axis max for positioning
-            y_max <- max(data[[value_col]], na.rm = TRUE)
+            # Get y-axis max for positioning (robust)
+            y_max <- y_max_robust_ann
             y_min <- min(data[[value_col]], na.rm = TRUE)
 
             # Calculate y_pos (ggplot2 will apply log transformation if needed)
@@ -15208,7 +15377,7 @@ async function initWebR() {
             # Check if we have ggpubr brackets - use data-driven limit
             if (exists("max_bracket_y") && !is.null(max_bracket_y) && max_bracket_y > y_axis_limit) {
               data_y_min <- min(data[[value_col]], na.rm = TRUE)
-              data_y_max <- max(data[[value_col]], na.rm = TRUE)
+              data_y_max <- y_max_robust_ann
               data_y_range <- data_y_max - data_y_min
 
               # Calculate y-axis limit - same for all scales
@@ -15279,8 +15448,8 @@ async function initWebR() {
           if (!show_main_symbol && show_pairwise && n_groups > 1) {
             cat("🔥🔥🔥 MAIN SYMBOL DISABLED BUT PAIRWISE ENABLED - ADDING PAIRWISE ONLY 🔥🔥🔥\\n")
 
-            # Get y-axis max for positioning
-            y_max <- max(data[[value_col]], na.rm = TRUE)
+            # Get y-axis max for positioning (robust)
+            y_max <- y_max_robust_ann
 
             # Calculate y-axis expansion for pairwise lines only
             max_annotation_y <- y_max * (1.1 + 0.04 * (n_groups - 1))
@@ -15289,7 +15458,7 @@ async function initWebR() {
             # Check if we have ggpubr brackets - use data-driven limit
             if (exists("max_bracket_y") && !is.null(max_bracket_y) && max_bracket_y > y_axis_limit) {
               data_y_min <- min(data[[value_col]], na.rm = TRUE)
-              data_y_max <- max(data[[value_col]], na.rm = TRUE)
+              data_y_max <- y_max_robust_ann
               data_y_range <- data_y_max - data_y_min
 
               # Calculate y-axis limit - same for all scales
@@ -19151,10 +19320,17 @@ async function initWebR() {
         stop("No valid data points after filtering. Check that: (1) X column contains concentration values (not text), (2) Y column contains response values, and (3) if X values are log10-transformed, the 'X values are log10-transformed' checkbox is checked.")
       }
 
-      cat("IC50 Analysis: ", nrow(plot_data), " data points\\n")
-      cat("Data display mode: ", data_display, "\\n")
-      cat("Concentration range: ", min(plot_data$conc), " - ", max(plot_data$conc), "\\n")
-      cat("Response range: ", min(plot_data$response), " - ", max(plot_data$response), "\\n")
+      cat("=== IC50 DIAGNOSTIC ===\\n")
+      cat("  x_col:", x_col, "  y_col:", y_col, "  x_is_log10:", x_is_log10, "\\n")
+      cat("  dat dimensions:", nrow(dat), "rows x", ncol(dat), "cols\\n")
+      cat("  dat column names:", paste(colnames(dat), collapse=", "), "\\n")
+      cat("  All raw X (conc) values:", paste(as.numeric(dat[[x_col]]), collapse=", "), "\\n")
+      cat("  All raw Y (response) values:", paste(as.numeric(dat[[y_col]]), collapse=", "), "\\n")
+      cat("  After filtering — n rows:", nrow(plot_data), "\\n")
+      cat("  Concentration range:", min(plot_data$conc), "-", max(plot_data$conc), "\\n")
+      cat("  Response range:", min(plot_data$response), "-", max(plot_data$response), "\\n")
+      cat("  Data display mode:", data_display, "\\n")
+      cat("======================\\n")
 
       # Dose-response model fitting
       ic50_value <- NA
@@ -19162,19 +19338,38 @@ async function initWebR() {
       fit_success <- FALSE
 
       if (fitting_method == "drc") {
-        # drc: 4-parameter log-logistic (LL.4) — most robust, no manual start values needed
+        # drc: 4-parameter log-logistic (LL.4) with explicit start values to avoid wrong local minimum
         cat("Fitting method: drc LL.4 (4-parameter log-logistic)\\n")
         if (!requireNamespace("drc", quietly = TRUE)) webr::install("drc")
         library(drc)
         tryCatch({
-          fit <- drm(response ~ conc, data = plot_data, fct = LL.4())
+          # Determine curve direction
+          # In drc LL.4: f(x) = c + (d-c)/(1 + (x/e)^b)
+          # b > 0 => decreasing from d to c (inhibition); b < 0 => increasing (activation)
+          sorted_data <- plot_data[order(plot_data$conc), ]
+          resp_low <- mean(head(sorted_data$response, max(1, floor(nrow(sorted_data) * 0.2))))
+          resp_high <- mean(tail(sorted_data$response, max(1, floor(nrow(sorted_data) * 0.2))))
+          is_decreasing <- resp_low > resp_high
+          b_start <- if (is_decreasing) 1 else -1
+          c_start <- max(0, min(plot_data$response))
+          d_start <- max(plot_data$response)
+          e_start <- exp(mean(log(plot_data$conc)))
+          cat("  Curve direction:", if(is_decreasing) "decreasing (inhibition)" else "increasing (activation)", "\\n")
+          cat("  Start values — b:", b_start, " c:", c_start, " d:", d_start, " e:", e_start, "\\n")
+          # lowerl constrains c >= 0 to prevent negative bottom asymptote (wrong local minimum)
+          fit <- drm(response ~ conc, data = plot_data, fct = LL.4(),
+                     start = c(b_start, c_start, d_start, e_start),
+                     lowerl = c(-Inf, 0, 0, 0))
           ic50_value <- ED(fit, 50, display = FALSE)[1, "Estimate"]
           fit_success <- TRUE
+          fitted_params <- coef(fit)
+          cat("=== IC50 FIT RESULT ===\\n")
+          cat("  IC50 (drc LL.4) =", ic50_value, "\\n")
+          cat("  Fitted params — b:", fitted_params[1], " c:", fitted_params[2], " d:", fitted_params[3], " e:", fitted_params[4], "\\n")
           if (x_is_log10) {
-            cat("IC50 (drc LL.4) =", ic50_value, "(linear) = log10:", log10(ic50_value), "\\n")
-          } else {
-            cat("IC50 (drc LL.4) =", ic50_value, "\\n")
+            cat("  (linear scale — log10 IC50 =", log10(ic50_value), ")\\n")
           }
+          cat("======================\\n")
         }, error = function(e) {
           cat("drc fitting failed:", e$message, "\\n")
         })
@@ -19328,8 +19523,12 @@ async function initWebR() {
           geom_vline(xintercept = ic50_value, linetype = "dashed", color = ic50_line_color,
                      linewidth = ic50_line_width, alpha = ic50_line_alpha)
       }
-      if (show_half_max_line) {
-        p <- p + geom_hline(yintercept = 50, linetype = "dashed", color = ic50_half_line_color,
+      if (show_half_max_line && fit_success && !is.na(ic50_value)) {
+        # LL.4: at x = e (IC50), response = (c + d) / 2 by definition
+        fitted_c <- coef(fit)[2]  # bottom asymptote
+        fitted_d <- coef(fit)[3]  # top asymptote
+        half_max_y <- (fitted_c + fitted_d) / 2
+        p <- p + geom_hline(yintercept = half_max_y, linetype = "dashed", color = ic50_half_line_color,
                             linewidth = ic50_half_line_width, alpha = ic50_half_line_alpha)
       }
 
@@ -19639,8 +19838,15 @@ async function initWebR() {
                               color = color_vec[grp], linewidth = ic50_line_width, alpha = ic50_line_alpha)
         }
       }
-      if (show_half_max_line) {
-        p <- p + geom_hline(yintercept = 50, linetype = "dashed", color = ic50_half_line_color,
+      if (show_half_max_line && length(ic50_values[!is.na(ic50_values)]) > 0) {
+        half_max_y <- tryCatch({
+          valid_ic50 <- ic50_values[!is.na(ic50_values)]
+          mean(sapply(names(valid_ic50), function(grp) {
+            gfit <- fit_list[[grp]]
+            as.numeric(predict(gfit, newdata = data.frame(conc = valid_ic50[grp])))
+          }))
+        }, error = function(e) 50)
+        p <- p + geom_hline(yintercept = half_max_y, linetype = "dashed", color = ic50_half_line_color,
                             linewidth = ic50_half_line_width, alpha = ic50_half_line_alpha)
       }
 
@@ -22765,13 +22971,21 @@ ${SHARED_STAT_HELPERS_R}
   let b64;
   
   // SVG経由でcanvgを使用（サイズ指定を確実に）
+  // IC50 debug: log column indices and data state before R execution
+  if (chartType === 'ic50_dose_response' || chartType === 'ic50_grouped_dose_response') {
+    console.log('🔍 IC50 JS DEBUG: xColIndex=', xColIndex, ', yColIndex=', yColIndex, ', ic50XisLog10=', ic50XisLog10);
+    console.log('🔍 IC50 JS DEBUG: lastProcessedData headers:', window.lastProcessedData?.[0]);
+    console.log('🔍 IC50 JS DEBUG: lastProcessedData row[1]:', window.lastProcessedData?.[1]);
+    console.log('🔍 IC50 JS DEBUG: selectedXColumn="'+selectedXColumn+'", selectedYColumn="'+selectedYColumn+'"');
+  }
+
   try {
     const rSvg = `
       if (!requireNamespace("svglite", quietly = TRUE)) {
         webr::install("svglite")
         library(svglite)
       }
-      
+
       tf <- tempfile(fileext = ".svg")
       
       # SVGサイズを明示的に指定（シンプル版）
