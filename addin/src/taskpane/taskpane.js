@@ -2629,8 +2629,10 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
     console.log('🔍 Before escape - rawYHeader:', rawYHeader);
     console.log('🔍 rawYHeader char codes:', Array.from(String(rawYHeader)).map((c, i) => `[${i}]='${c}'(${c.charCodeAt(0)})`).join(' '));
 
-    const xLabelOrig = originalHeaders[settings.xColIndex - 1] ? escapeForRLabel(originalHeaders[settings.xColIndex - 1]) : (settings.xLabel || 'X');
-    const yLabelOrig = originalHeaders[settings.yColIndex - 1] ? escapeForRLabel(originalHeaders[settings.yColIndex - 1]) : (settings.yLabel || 'Y');
+    const xLabelOrig = settings.xlab ? escapeForRLabel(settings.xlab) :
+                       (originalHeaders[settings.xColIndex - 1] ? escapeForRLabel(originalHeaders[settings.xColIndex - 1]) : 'X');
+    const yLabelOrig = settings.ylab ? escapeForRLabel(settings.ylab) :
+                       (originalHeaders[settings.yColIndex - 1] ? escapeForRLabel(originalHeaders[settings.yColIndex - 1]) : 'Y');
 
     console.log('📋 After escapeForRLabel - xLabelOrig:', xLabelOrig);
     console.log('📋 After escapeForRLabel - yLabelOrig:', yLabelOrig);
@@ -2711,6 +2713,15 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
     const titleLabel = settings.showTitle !== false ? convertToRPlotmath(settings.title || '') : 'NULL';
     const xLabel = settings.showXLabel !== false ? convertToRPlotmath(xLabelOrig) : 'NULL';
     const yLabel = settings.showYLabel !== false ? convertToRPlotmath(yLabelOrig) : 'NULL';
+
+    // Apply y-scale pre-transformation for -log10/-log2 (must be before ggplot)
+    const yColNameScale = `col${settings.yColIndex || 2}`;
+    const yScaleSg = settings.yScale || 'linear';
+    if (yScaleSg === '-log10') {
+      code += `# Apply -log10 transformation to Y axis (matches add-in behavior)\ndat$${yColNameScale} <- -log10(dat$${yColNameScale})\n\n`;
+    } else if (yScaleSg === '-log2') {
+      code += `# Apply -log2 transformation to Y axis (matches add-in behavior)\ndat$${yColNameScale} <- -log2(dat$${yColNameScale})\n\n`;
+    }
 
     // Add factor ordering for single-group charts to preserve category order
     const xColName = `col${settings.xColIndex || 1}`;
@@ -2801,6 +2812,16 @@ ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
     legend.title = element_text(size = ${settings.legendTextSize})
   )
 `;
+
+    // Add y-axis scale (log10/log2/log — after ggplot creation, before stat brackets)
+    if (yScaleSg === 'log10') {
+      code += `p <- p + scale_y_log10()\n`;
+    } else if (yScaleSg === 'log2') {
+      code += `p <- p + scale_y_continuous(trans = 'log2')\n`;
+    } else if (yScaleSg === 'log') {
+      code += `p <- p + scale_y_continuous(trans = 'log')\n`;
+    }
+    // -log10/-log2: data already pre-transformed above; linear scale used automatically
 
     // Add statistical comparisons for single-group charts
     if (settings.addStatistics && (chartType === 'bar_error_dot' || chartType === 'box' ||
@@ -3263,6 +3284,8 @@ print(p)
     const vbLl      = settings.vbracketLegendLineLength || 0.05;
     const vbLwl     = settings.vbracketLegendLineWidth  || 2;
     const vbIs      = settings.vbracketItemSpacing || 0.1;
+    const vbLegendTitle = (settings.showLegendTitle && settings.legendTitle && settings.legendTitle.trim())
+      ? `"${settings.legendTitle.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : 'NULL';
     const compMode  = settings.comparisonMode || 'significant';
     const yScaleVal = settings.yScale || 'log10';
     const yScaleLine = yScaleVal === 'log10'
@@ -3383,6 +3406,7 @@ if (nrow(stat_at_dose) > 0) {
     comparisons = stat_at_dose,
     x = ${lbX},
     y = ${lbY},
+    title = ${vbLegendTitle},
     text_size = ${vbTs}, sig_size = ${vbSig},
     bracket_margin = ${vbMar},
     line_length = ${vbLl}, line_width = ${vbLw},
@@ -5833,8 +5857,37 @@ print(stat_results)
     .map(row => parseFloat(row[yColIndex]))
     .filter(v => !isNaN(v));
 
-  const yMax = allYValues.length > 0 ? Math.max(...allYValues) : 10;
-  const yRange = yMax - Math.min(...allYValues);
+  // Robust max: exclude extreme outliers (same logic as position input defaults)
+  const allYSorted = [...allYValues].sort((a, b) => a - b);
+  const q3edu = allYSorted[Math.floor(allYSorted.length * 0.75)] || allYSorted[allYSorted.length - 1];
+  const q1edu = allYSorted[Math.floor(allYSorted.length * 0.25)] || allYSorted[0];
+  const iqrEdu = q3edu - q1edu;
+  const yMax = allYValues.length > 0 ? Math.max(...allYValues.filter(v => v <= q3edu + 3 * iqrEdu)) : 10;
+  const yMin = allYValues.length > 0 ? Math.min(...allYValues.filter(v => v >= q1edu - 3 * iqrEdu)) : 0;
+  const yRange = yMax - yMin;
+  // Log-scale bracket position helper
+  const yScaleEdu = settings.yScale || 'linear';
+  const isLogEdu    = (yScaleEdu === 'log10' || yScaleEdu === 'log2' || yScaleEdu === 'log');
+  const isNegLogEdu = (yScaleEdu === '-log10' || yScaleEdu === '-log2');
+  function logBracketPos(pairIdx) {
+    if (isLogEdu && yMax > 0 && yMin > 0) {
+      const logBase = yScaleEdu === 'log2' ? 2 : (yScaleEdu === 'log' ? Math.E : 10);
+      const logFn   = yScaleEdu === 'log2' ? Math.log2 : (yScaleEdu === 'log' ? Math.log : Math.log10);
+      const logMax  = logFn(yMax);
+      const logRange = Math.max(logMax - logFn(Math.max(yMin, 1e-10)), 0.5);
+      return Math.pow(logBase, logMax + logRange * (0.35 + 0.15 * pairIdx)).toFixed(4);
+    }
+    if (isNegLogEdu && yMax > 0 && yMin > 0) {
+      // Data is pre-transformed to -log(y); bar tops sit at 0. Clamp baseHeight to ≥ 0.
+      const logFn = yScaleEdu === '-log2' ? Math.log2 : Math.log10;
+      const transformedMax = -logFn(Math.max(yMin, 1e-10)); // highest point in transformed space
+      const transformedMin = -logFn(Math.max(yMax, 1e-10)); // lowest point in transformed space
+      const transformedRange = Math.max(transformedMax - transformedMin, 0.1);
+      const baseHeightNeg = Math.max(0, transformedMax);
+      return (baseHeightNeg + transformedRange * 0.35 * (pairIdx + 1)).toFixed(4);
+    }
+    return (yMax + yRange * (0.15 + 0.25 * pairIdx)).toFixed(2);
+  }
 
   // Parse custom positions if available
   let customPositions = {};
@@ -5876,7 +5929,7 @@ print(stat_results)
         } else {
           const bracketLevel = pairIdx + 1;
           // Matches add-in: first bracket at 0.15*y_range, +0.25*y_range each subsequent
-          yBracketPos = (yMax + yRange * (0.15 + 0.25 * (bracketLevel - 1))).toFixed(2);
+          yBracketPos = logBracketPos(bracketLevel - 1);
         }
       }
       return yBracketPos;
@@ -5938,7 +5991,7 @@ ${hasAddInBrackets ? '# Note: Y positions below are the exact values from the ad
           // Last resort: Calculate automatically (stack multiple brackets)
           const bracketLevel = pairIdx + 1;
           // Matches add-in: first bracket at 0.15*y_range, +0.25*y_range each subsequent
-          yBracketPos = (yMax + yRange * (0.15 + 0.25 * (bracketLevel - 1))).toFixed(2);
+          yBracketPos = logBracketPos(bracketLevel - 1);
         }
       }
 
@@ -5968,8 +6021,41 @@ ${hasAddInBrackets ? '# Note: Y positions below are the exact values from the ad
     });
   }
 
-  // Add the ggpubr stat_pvalue_manual call
-  code += `
+  // Add the bracket drawing code — annotate() for log/-log scale, stat_pvalue_manual for linear
+  if (isLogEdu || isNegLogEdu) {
+    // For -log scale: tip goes downward (additive, not multiplicative) since y_pos is near 0
+    const tipExpr = isNegLogEdu
+      ? `y_pos - ${(settings.statTipLength || 0.04)} * abs(range(dat$${yColName}, na.rm=TRUE)[2] - range(dat$${yColName}, na.rm=TRUE)[1])`
+      : `y_pos * (1 - ${settings.statTipLength || 0.04})`;
+    // expand_limits: log scale multiplies up; -log scale adds small positive headroom above bracket
+    const expandExpr = isNegLogEdu
+      ? `max(comparison_df$y.position) + 0.1`
+      : `max(comparison_df$y.position) * 1.3`;
+    code += `
+# Add comparison brackets (log/-log scale: annotate instead of stat_pvalue_manual)
+if (nrow(comparison_df) > 0) {
+  grp_order <- levels(factor(dat$${xColName}))
+  for (i in seq_len(nrow(comparison_df))) {
+    y_pos <- comparison_df$y.position[i]
+    tip_y  <- ${tipExpr}
+    x1 <- match(comparison_df$group1[i], grp_order)
+    x2 <- match(comparison_df$group2[i], grp_order)
+    sig <- comparison_df$p.signif[i]
+    p <- p + annotate('segment', x = x1, xend = x2, y = y_pos, yend = y_pos,
+                      color = 'black', linewidth = ${settings.statLineSize || 0.5})
+    p <- p + annotate('segment', x = x1, xend = x1, y = tip_y, yend = y_pos,
+                      color = 'black', linewidth = ${settings.statLineSize || 0.5})
+    p <- p + annotate('segment', x = x2, xend = x2, y = tip_y, yend = y_pos,
+                      color = 'black', linewidth = ${settings.statLineSize || 0.5})
+    p <- p + annotate('text', x = (x1 + x2) / 2, y = y_pos, label = sig,
+                      size = ${settings.statSymbolSize || 7}, vjust = -0.3, hjust = 0.5)
+  }
+  p <- p + expand_limits(y = ${expandExpr})
+}
+
+`;
+  } else {
+    code += `
 # Add comparison brackets using ggpubr
 if (nrow(comparison_df) > 0) {
   p <- p + stat_pvalue_manual(
@@ -5985,6 +6071,7 @@ if (nrow(comparison_df) > 0) {
 }
 
 `;
+  }
 
   // Add appropriate note based on comparison mode
   if (settings.comparisonMode === 'all') {
@@ -6581,13 +6668,13 @@ p <- ggplot(summary_data, aes(x = TimePoint_num, y = Mean, color = Group, group 
 `;
 
   if (settings.showTitle) {
-    code += `p <- p + ggtitle('${settings.title}')\n`;
+    code += `p <- p + ggtitle(${convertToRPlotmath(settings.title)})\n`;
   }
   if (settings.showXLabel) {
-    code += `p <- p + xlab('${settings.xlab}')\n`;
+    code += `p <- p + xlab(${convertToRPlotmath(settings.xlab)})\n`;
   }
   if (settings.showYLabel) {
-    code += `p <- p + ylab('${settings.ylab}')\n`;
+    code += `p <- p + ylab(${convertToRPlotmath(settings.ylab)})\n`;
   }
 
   // Axis scale transformations
@@ -6641,6 +6728,8 @@ p <- ggplot(summary_data, aes(x = TimePoint_num, y = Mean, color = Group, group 
     // which can fail to detect log10 scale and produce ymin=-Inf warning)
     const lbX = parseFloat(settings.vbracketX) || 0.05;
     const lbY = parseFloat(settings.vbracketY) || 0.99;
+    const vbLegendTitle = (settings.showLegendTitle && settings.legendTitle && settings.legendTitle.trim())
+      ? `"${settings.legendTitle.trim().replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` : 'NULL';
 
     // Determine which test to use based on settings
     const isAutoMode = settings.statisticalTest === 'auto';
@@ -6964,6 +7053,7 @@ ${isPaired && subjectColNameR ? `        # Paired pairwise t-test with ${pairedP
         comparisons = vb_comparisons,
         x = ${lbX},
         y = ${lbY},
+        title = ${vbLegendTitle},
         text_size = ${vbracketTextSize},
         sig_size = ${vbracketSigSize},
         bracket_margin = ${vbracketMargin},
@@ -6978,6 +7068,7 @@ ${isPaired && subjectColNameR ? `        # Paired pairwise t-test with ${pairedP
         colors = group_colors,
         x = ${lbX},
         y = ${lbY},
+        title = ${vbLegendTitle},
         text_size = ${vbracketTextSize},
         line_width = ${vbracketLineWidth},
         output_width = ${settings.expWidth || 6},
@@ -10557,6 +10648,7 @@ function populateComparisonCheckboxes() {
     // Calculate default absolute Y position
     // Improved fallback: calculate from actual data range if available
     let defaultAbsoluteY = 100 + index * 15; // Fallback: Start at 100, increment by 15
+    let defaultMaxY = 0; // Track data max for restore logic below
 
     // Try to calculate better fallback from data
     if (window.lastProcessedData && window.lastProcessedData.length > 1) {
@@ -10568,14 +10660,42 @@ function populateComparisonCheckboxes() {
         const allYValues = [];
         for (let i = 1; i < window.lastProcessedData.length; i++) {
           const yVal = parseFloat(window.lastProcessedData[i][yIdx]);
-          if (!isNaN(yVal)) allYValues.push(yVal);
+          if (!isNaN(yVal) && isFinite(yVal)) allYValues.push(yVal);
         }
 
         if (allYValues.length > 0) {
-          const maxY = Math.max(...allYValues);
-          const range = Math.max(...allYValues) - Math.min(...allYValues);
-          // Start 20% above max, stack with 10% spacing
-          defaultAbsoluteY = Math.round((maxY + (range * 0.20) + (index * range * 0.10)) * 100) / 100;
+          // Robust max: exclude extreme outliers (Q3 + 3×IQR)
+          const sorted = [...allYValues].sort((a, b) => a - b);
+          const q3 = sorted[Math.floor(sorted.length * 0.75)];
+          const q1 = sorted[Math.floor(sorted.length * 0.25)];
+          const iqr = q3 - q1;
+          const robustMax = Math.max(...allYValues.filter(v => v <= q3 + 3 * iqr));
+          const robustMin = Math.min(...allYValues.filter(v => v >= q1 - 3 * iqr));
+          defaultMaxY = robustMax;
+
+          const yScale = document.getElementById("yScale")?.value || "linear";
+          if ((yScale === "log10" || yScale === "log2" || yScale === "log") && robustMax > 0 && robustMin > 0) {
+            // Log scale: use multiplicative steps so bracket clearly clears all dots
+            const logBase = yScale === "log2" ? 2 : (yScale === "log" ? Math.E : 10);
+            const logFn  = yScale === "log2" ? Math.log2 : (yScale === "log" ? Math.log : Math.log10);
+            const logMax = logFn(robustMax);
+            const logMin = logFn(robustMin);
+            const logRange = Math.max(logMax - logMin, 0.5);
+            defaultAbsoluteY = Math.round(Math.pow(logBase, logMax + logRange * (0.35 + index * 0.15)) * 100) / 100;
+          } else if ((yScale === "-log10" || yScale === "-log2") && robustMax > 0 && robustMin > 0) {
+            // Negative log scale: data is pre-transformed to -log(y), so axis is inverted.
+            // "Above" the bars means a MORE POSITIVE transformed value (above -logFn(robustMin)).
+            const logFn = yScale === "-log2" ? Math.log2 : Math.log10;
+            const transformedMax = -logFn(robustMin); // highest point on chart (smallest original value)
+            const transformedMin = -logFn(robustMax); // lowest point on chart (largest original value)
+            const transformedRange = Math.max(transformedMax - transformedMin, 0.2);
+            defaultAbsoluteY = Math.round((transformedMax + transformedRange * (0.35 + index * 0.15)) * 100) / 100;
+          } else {
+
+            const range = robustMax - robustMin;
+            // Start 20% above max, stack with 10% spacing
+            defaultAbsoluteY = Math.round((robustMax + (range * 0.20) + (index * range * 0.10)) * 100) / 100;
+          }
         }
       }
     }
@@ -10631,19 +10751,50 @@ function populateComparisonCheckboxes() {
           });
 
           if (maxBarTop > 0) {
-            // Position ABOVE the tallest bar + error with spacing (20% above + stacking)
-            const dataRange = maxBarTop - Math.min(...Array.from(allGroups).map(group => {
-              const dataPoints = [];
+            const yScaleCat = document.getElementById("yScale")?.value || "linear";
+            if ((yScaleCat === "log10" || yScaleCat === "log2" || yScaleCat === "log") && maxBarTop > 0) {
+              // Log scale: multiplicative steps above the tallest bar top
+              const logBaseCat = yScaleCat === "log2" ? 2 : (yScaleCat === "log" ? Math.E : 10);
+              const logFnCat   = yScaleCat === "log2" ? Math.log2 : (yScaleCat === "log" ? Math.log : Math.log10);
+              const logMaxCat  = logFnCat(maxBarTop);
+              const allMinVals = [];
               for (let i = 1; i < window.lastProcessedData.length; i++) {
-                const row = window.lastProcessedData[i];
-                if (String(row[groupIdx]) === group && String(row[xIdx]) === String(xValue)) {
-                  const yVal = parseFloat(row[yIdx]);
-                  if (!isNaN(yVal)) dataPoints.push(yVal);
-                }
+                const yVal = parseFloat(window.lastProcessedData[i][yIdx]);
+                if (!isNaN(yVal) && isFinite(yVal) && yVal > 0) allMinVals.push(yVal);
               }
-              return dataPoints.length > 0 ? Math.min(...dataPoints) : Infinity;
-            }));
-            defaultAbsoluteY = Math.round((maxBarTop + (dataRange * 0.20) + (index * dataRange * 0.10)) * 100) / 100;
+              const globalMin = allMinVals.length > 0 ? Math.min(...allMinVals) : maxBarTop * 0.01;
+              const logMinCat  = logFnCat(Math.max(globalMin, 1e-10));
+              const logRangeCat = Math.max(logMaxCat - logMinCat, 0.5);
+              defaultAbsoluteY = Math.round(Math.pow(logBaseCat, logMaxCat + logRangeCat * (0.35 + index * 0.15)) * 100) / 100;
+            } else if ((yScaleCat === "-log10" || yScaleCat === "-log2") && maxBarTop > 0) {
+              // Negative log scale: data pre-transformed; find overall min to get transformed max
+              const logFnCat = yScaleCat === "-log2" ? Math.log2 : Math.log10;
+              const allVals = [];
+              for (let i = 1; i < window.lastProcessedData.length; i++) {
+                const yVal = parseFloat(window.lastProcessedData[i][yIdx]);
+                if (!isNaN(yVal) && isFinite(yVal) && yVal > 0) allVals.push(yVal);
+              }
+              const globalMin = allVals.length > 0 ? Math.min(...allVals) : 1;
+              const globalMax = allVals.length > 0 ? Math.max(...allVals) : globalMin * 10;
+              const transformedMax = -logFnCat(globalMin);
+              const transformedMin = -logFnCat(globalMax);
+              const transformedRange = Math.max(transformedMax - transformedMin, 0.2);
+              defaultAbsoluteY = Math.round((transformedMax + transformedRange * (0.35 + index * 0.15)) * 100) / 100;
+            } else {
+              // Position ABOVE the tallest bar + error with spacing (20% above + stacking)
+              const dataRange = maxBarTop - Math.min(...Array.from(allGroups).map(group => {
+                const dataPoints = [];
+                for (let i = 1; i < window.lastProcessedData.length; i++) {
+                  const row = window.lastProcessedData[i];
+                  if (String(row[groupIdx]) === group && String(row[xIdx]) === String(xValue)) {
+                    const yVal = parseFloat(row[yIdx]);
+                    if (!isNaN(yVal)) dataPoints.push(yVal);
+                  }
+                }
+                return dataPoints.length > 0 ? Math.min(...dataPoints) : Infinity;
+              }));
+              defaultAbsoluteY = Math.round((maxBarTop + (dataRange * 0.20) + (index * dataRange * 0.10)) * 100) / 100;
+            }
           }
         } else {
           // For line plots: position below the line (original logic for group2)
@@ -10672,10 +10823,21 @@ function populateComparisonCheckboxes() {
       }
     }
 
-    // Restore previous position or use calculated default
-    positionInput.value = currentPositions.hasOwnProperty(checkbox.value) ?
-                         currentPositions[checkbox.value] :
-                         defaultAbsoluteY;
+    // Restore previous position or use calculated default.
+    // On log scale, ignore stored values that sit below the data max — they came from
+    // a linear-scale calculation and would place the bracket inside the data cloud.
+    {
+      const yScaleNow = document.getElementById("yScale")?.value || "linear";
+      const isLogNow = (yScaleNow === "log10" || yScaleNow === "log2" || yScaleNow === "log");
+      const storedVal = currentPositions.hasOwnProperty(checkbox.value)
+                        ? parseFloat(currentPositions[checkbox.value]) : null;
+      // On log scale: always use recalculated default so bracket clears data + error bars.
+      // On linear scale: restore stored value so user adjustments persist.
+      const isNegLogNow = (yScaleNow === "-log10" || yScaleNow === "-log2");
+      const tooLow  = isLogNow    && storedVal !== null && storedVal < defaultAbsoluteY;
+      const tooHigh = isNegLogNow && storedVal !== null && storedVal > defaultAbsoluteY;
+      positionInput.value = (storedVal !== null && !tooLow && !tooHigh) ? storedVal : defaultAbsoluteY;
+    }
 
     positionInput.style.cssText = "width: 50px; font-size: 9px; padding: 1px;";
     positionInput.title = "Bracket Y position (absolute chart value)";
@@ -10851,6 +11013,12 @@ async function getStatisticalResultsText() {
     # NOTE: sato_perform_statistical_test function is already defined earlier in the R code
     # (lines 2325-2418), so we don't need to redefine it here
 
+    # Helper: format p-value with full precision for small values
+    fmt_p <- function(p) {
+      if (is.null(p) || is.na(p) || !is.finite(p)) return("NA")
+      format(p, scientific=FALSE)
+    }
+
     # Perform the statistical analysis
     if (exists("dat") && is.data.frame(dat) && ncol(dat) >= max(${xColIndex}, ${yColIndex})) {
       group_col <- dat[[${xColIndex}]]  # Use selected X column (categories)
@@ -10899,7 +11067,7 @@ async function getStatisticalResultsText() {
             paired_stat_text <- paste0("W = ", as.numeric(res$statistic))
           }
 
-          diff_norm_label <- if (!is.na(diff_normality_p)) paste0("Normality of differences (Shapiro-Wilk): p=", sprintf("%.4f", diff_normality_p), " (", if(use_ttest) "normal" else "non-normal", ")") else ""
+          diff_norm_label <- if (!is.na(diff_normality_p)) paste0("Normality of differences (Shapiro-Wilk): p=", fmt_p(diff_normality_p), " (", if(use_ttest) "normal" else "non-normal", ")") else ""
 
           stat_result <- list(p_value = res$p.value, test_used = paired_test_name,
                               normality_result = NULL, variance_test = NULL,
@@ -10930,7 +11098,7 @@ async function getStatisticalResultsText() {
               sw3 <- shapiro.test(gd3)
               is_norm3 <- sw3$p.value >= 0.05
               if (!is_norm3) all_norm_3 <- FALSE
-              norm_texts_3 <- c(norm_texts_3, paste0(g3, ": p=", sprintf("%.4f", sw3$p.value), " (", if(is_norm3) "normal" else "non-normal", ")"))
+              norm_texts_3 <- c(norm_texts_3, paste0(g3, ": p=", fmt_p(sw3$p.value), " (", if(is_norm3) "normal" else "non-normal", ")"))
             }
           }
           n_subj_3 <- length(unique(stat_df_3$subject_id))
@@ -11034,7 +11202,7 @@ async function getStatisticalResultsText() {
               if (!is.null(gr$note)) {
                 normality_text <- paste0(normality_text, "\\n    ", gr$group, " (n=", gr$n, "): ", gr$note)
               } else if (!is.null(gr$is_normal)) {
-                normality_text <- paste0(normality_text, "\\n    ", gr$group, " (n=", gr$n, "): p=", sprintf("%.4f", gr$p_value), " (", if (gr$is_normal) "normal" else "non-normal", ")")
+                normality_text <- paste0(normality_text, "\\n    ", gr$group, " (n=", gr$n, "): p=", fmt_p(gr$p_value), " (", if (gr$is_normal) "normal" else "non-normal", ")")
               }
             }
           }
@@ -11044,14 +11212,14 @@ async function getStatisticalResultsText() {
         variance_text <- ""
         if (length(groups) == 2 && !is.null(stat_result$variance_test) && !is.na(stat_result$variance_p_value)) {
           variance_status <- if (stat_result$equal_variances) "equal variances" else "unequal variances"
-          variance_text <- paste0("\\nVariance Test (", stat_result$variance_test, "): p=", sprintf("%.4f", stat_result$variance_p_value), " (", variance_status, ")")
+          variance_text <- paste0("\\nVariance Test (", stat_result$variance_test, "): p=", fmt_p(stat_result$variance_p_value), " (", variance_status, ")")
         }
 
         # Create main test result (FOURTH - Overall statistical test)
         if (!is.null(stat_result$paired_stat_text)) {
-          main_result <- paste0("\\n\\n", test_name, ": ", stat_result$paired_stat_text, ", p=", sprintf("%.4f", p_val), " (", sig, ")")
+          main_result <- paste0("\\n\\n", test_name, ": ", stat_result$paired_stat_text, ", p=", fmt_p(p_val), " (", sig, ")")
         } else {
-          main_result <- paste0("\\n\\n", test_name, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
+          main_result <- paste0("\\n\\n", test_name, ": p=", fmt_p(p_val), " (", sig, ")")
         }
 
         # Add post-hoc results with detailed pairwise comparisons
@@ -11128,7 +11296,7 @@ async function getStatisticalResultsText() {
                   else if (p_val < 0.05) sig <- "*"
                   else sig <- "ns"
 
-                  posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
+                  posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", fmt_p(p_val), " (", sig, ")")
                 }
               }
             }  # end of actual_posthoc == "steel"
@@ -11162,7 +11330,7 @@ async function getStatisticalResultsText() {
                   else if (p_adj < 0.05) sig <- "*"
                   else sig <- "ns"
 
-                  posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", sprintf("%.4f", p_adj), " (", sig, ")")
+                  posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", fmt_p(p_adj), " (", sig, ")")
                 }
               }
             }
@@ -11203,7 +11371,7 @@ async function getStatisticalResultsText() {
                   sig <- "ns"
                 }
 
-                posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": diff=", round(diff, 2), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
+                posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": diff=", round(diff, 2), ", p=", fmt_p(ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
               }
             } else if (selected_posthoc_test == "dunnett") {
               # Dunnett test - parametric vs control comparisons
@@ -11241,7 +11409,7 @@ async function getStatisticalResultsText() {
                   sig <- "ns"
                 }
 
-                posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": diff=", round(diff, 3), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
+                posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": diff=", round(diff, 3), ", p=", fmt_p(ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
               }
             } else if (selected_posthoc_test == "bonferroni" || selected_posthoc_test == "holm") {
               # Pairwise t-tests with correction
@@ -11263,7 +11431,7 @@ async function getStatisticalResultsText() {
                     else if (p_adj < 0.05) sig <- "*"
                     else sig <- "ns"
 
-                    posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", sprintf("%.4f", p_adj), " (", sig, ")")
+                    posthoc_results <- paste0(posthoc_results, "\\n  ", comparison, ": p=", fmt_p(p_adj), " (", sig, ")")
                   }
                 }
               }
@@ -11295,7 +11463,7 @@ async function getStatisticalResultsText() {
                   p_adj3 <- pm3[i3, j3]
                   comp3 <- paste0(rownames(pm3)[i3], " vs ", colnames(pm3)[j3])
                   sig3 <- if (p_adj3 < 0.001) "***" else if (p_adj3 < 0.01) "**" else if (p_adj3 < 0.05) "*" else "ns"
-                  posthoc_results <- paste0(posthoc_results, "\\n  ", comp3, ": p=", sprintf("%.4f", p_adj3), " (", sig3, ")")
+                  posthoc_results <- paste0(posthoc_results, "\\n  ", comp3, ": p=", fmt_p(p_adj3), " (", sig3, ")")
                 }
               }
             }
@@ -11759,10 +11927,16 @@ async function exportStatisticalResults() {
           group2_data <- group2_data[!is.na(group2_data)]
 
           if (test_type == "t.test") {
-            result <- t.test(group1_data, group2_data)
+            eq_var_sp2 <- tryCatch({
+              cd_sp2 <- data.frame(values=c(group1_data,group2_data), group=factor(c(rep("g1",length(group1_data)),rep("g2",length(group2_data)))))
+              gm_sp2 <- tapply(cd_sp2$values, cd_sp2$group, mean)
+              ad_sp2 <- abs(cd_sp2$values - gm_sp2[cd_sp2$group])
+              anova(lm(ad_sp2 ~ cd_sp2$group))[["Pr(>F)"]][1] >= 0.05
+            }, error=function(e) TRUE)
+            result <- t.test(group1_data, group2_data, var.equal=eq_var_sp2)
             return(list(
               p_value = result$p.value,
-              test_used = "t-test",
+              test_used = if (eq_var_sp2) "Student's t-test" else "Welch's t-test",
               normality_result = normality_result
             ))
           } else {
@@ -11860,7 +12034,7 @@ async function exportStatisticalResults() {
                   diff_sw <- shapiro.test(g1 - g2)
                   use_paired_ttest <- diff_sw$p.value >= 0.05
                   pair_normality_text <- paste0("Normality test by Shapiro-Wilk test (differences): p=",
-                    sprintf("%.4f", diff_sw$p.value), " (",
+                    fmt_p(diff_sw$p.value), " (",
                     ifelse(use_paired_ttest, "normal", "non-normal"), ")")
                 }, error = function(e) {})
               }
@@ -11885,7 +12059,7 @@ async function exportStatisticalResults() {
                 else if (p_val < 0.01) sig <- "**"
                 else if (p_val < 0.05) sig <- "*"
                 else sig <- "ns"
-                main_result <- paste0(paired_name, ": ", paired_stat_str, ", p=", sprintf("%.4f", p_val),
+                main_result <- paste0(paired_name, ": ", paired_stat_str, ", p=", fmt_p(p_val),
                   " (", sig, ") [", groups[1], " vs ", groups[2], "]",
                   "\\n  n = ", n_pairs, " pairs")
               }
@@ -11920,12 +12094,12 @@ async function exportStatisticalResults() {
               both_normal <- is_group1_normal && is_group2_normal
               
               cat("Normality test results:\\n")
-              cat("  ", groups[1], ": Shapiro-Wilk p=", sprintf("%.4f", shapiro1$p.value), " (", ifelse(is_group1_normal, "assumed normal", "non-normal"), ")\\n")
-              cat("  ", groups[2], ": Shapiro-Wilk p=", sprintf("%.4f", shapiro2$p.value), " (", ifelse(is_group2_normal, "assumed normal", "non-normal"), ")\\n")
+              cat("  ", groups[1], ": Shapiro-Wilk p=", fmt_p(shapiro1$p.value), " (", ifelse(is_group1_normal, "assumed normal", "non-normal"), ")\\n")
+              cat("  ", groups[2], ": Shapiro-Wilk p=", fmt_p(shapiro2$p.value), " (", ifelse(is_group2_normal, "assumed normal", "non-normal"), ")\\n")
               
-              normality_text <- paste0("Normality test by Shapiro-Wilk test: ", groups[1], " p=", sprintf("%.4f", shapiro1$p.value), 
+              normality_text <- paste0("Normality test by Shapiro-Wilk test: ", groups[1], " p=", fmt_p(shapiro1$p.value), 
                                      " (", ifelse(is_group1_normal, "assumed normal", "non-normal"), "), ",
-                                     groups[2], " p=", sprintf("%.4f", shapiro2$p.value), 
+                                     groups[2], " p=", fmt_p(shapiro2$p.value), 
                                      " (", ifelse(is_group2_normal, "assumed normal", "non-normal"), ")")
               
               # Auto-select test based on normality if requested
@@ -11971,20 +12145,20 @@ async function exportStatisticalResults() {
                 
                 equal_variances <- levene_p > 0.05
                 
-                cat("Variance test: Levene test p=", sprintf("%.4f", levene_p), " (", ifelse(equal_variances, "equal variances", "unequal variances"), ")\\n")
+                cat("Variance test: Levene test p=", fmt_p(levene_p), " (", ifelse(equal_variances, "equal variances", "unequal variances"), ")\\n")
                 
                 # Create variance test text for output
-                variance_text <- paste0("Variance test by Levene test: p=", sprintf("%.4f", levene_p), 
+                variance_text <- paste0("Variance test by Levene test: p=", fmt_p(levene_p), 
                                       " (", ifelse(equal_variances, "equal variances", "unequal variances"), ")")
               } else {
                 # F-test for equality of variances
                 var_test <- var.test(group1_values, group2_values)
                 equal_variances <- var_test$p.value > 0.05
                 
-                cat("Variance test: F-test p=", sprintf("%.4f", var_test$p.value), " (", ifelse(equal_variances, "equal variances", "unequal variances"), ")\\n")
+                cat("Variance test: F-test p=", fmt_p(var_test$p.value), " (", ifelse(equal_variances, "equal variances", "unequal variances"), ")\\n")
                 
                 # Create variance test text for output
-                variance_text <- paste0("Variance test by F-test: p=", sprintf("%.4f", var_test$p.value), 
+                variance_text <- paste0("Variance test by F-test: p=", fmt_p(var_test$p.value), 
                                       " (", ifelse(equal_variances, "equal variances", "unequal variances"), ")")
               }
               
@@ -12010,7 +12184,7 @@ async function exportStatisticalResults() {
               else sig <- "ns"
 
               # Create comprehensive result
-              main_result <- paste0(test_name, ": p=", sprintf("%.4f", p_val), " (", sig, ") [", groups[1], " vs ", groups[2], "]")
+              main_result <- paste0(test_name, ": p=", fmt_p(p_val), " (", sig, ") [", groups[1], " vs ", groups[2], "]")
             }
             
             # Build comprehensive result with all test information
@@ -12050,7 +12224,7 @@ async function exportStatisticalResults() {
                 sw3e <- shapiro.test(gd3e)
                 is_norm3e <- sw3e$p.value >= 0.05
                 if (!is_norm3e) all_norm_3e <- FALSE
-                norm_txts_3e <- c(norm_txts_3e, paste0(g3e, ": p=", sprintf("%.4f", sw3e$p.value), " (", if(is_norm3e) "normal" else "non-normal", ")"))
+                norm_txts_3e <- c(norm_txts_3e, paste0(g3e, ": p=", fmt_p(sw3e$p.value), " (", if(is_norm3e) "normal" else "non-normal", ")"))
               }
             }
             n_subj_3e <- length(unique(stat_df_3e$subject_id))
@@ -12075,7 +12249,7 @@ async function exportStatisticalResults() {
             else if (omnibus_p_3e < 0.05) sig_3e <- "*"
             else sig_3e <- "ns"
 
-            main_result_3e <- paste0(omnibus_name_3e, ": ", omnibus_stat_3e, "p=", sprintf("%.4f", omnibus_p_3e),
+            main_result_3e <- paste0(omnibus_name_3e, ": ", omnibus_stat_3e, "p=", fmt_p(omnibus_p_3e),
               " (", sig_3e, ") [", n_subj_3e, " subjects, ", length(stat_grps_3e), " groups: ", paste(stat_grps_3e, collapse=", "), "]")
 
             grp_stats_3e <- ""
@@ -12105,7 +12279,7 @@ async function exportStatisticalResults() {
                       p_adj3e <- pm3e[i3e, j3e]
                       comp3e <- paste0(rownames(pm3e)[i3e], " vs ", colnames(pm3e)[j3e])
                       sig3e <- if (p_adj3e < 0.001) "***" else if (p_adj3e < 0.01) "**" else if (p_adj3e < 0.05) "*" else "ns"
-                      posthoc_3e <- paste0(posthoc_3e, "\\n  ", comp3e, ": p=", sprintf("%.4f", p_adj3e), " (", sig3e, ")")
+                      posthoc_3e <- paste0(posthoc_3e, "\\n  ", comp3e, ": p=", fmt_p(p_adj3e), " (", sig3e, ")")
                     }
                   }
                 }
@@ -12153,7 +12327,7 @@ async function exportStatisticalResults() {
             }
 
             # Create comprehensive result for multiple groups
-            main_result <- paste0(test_name, ": p=", sprintf("%.4f", p_val), " (", sig, ") [Overall test for ", length(groups), " groups: ", paste(groups, collapse=", "), "]")
+            main_result <- paste0(test_name, ": p=", fmt_p(p_val), " (", sig, ") [Overall test for ", length(groups), " groups: ", paste(groups, collapse=", "), "]")
 
             # Add normality test results
             normality_text <- ""
@@ -12169,7 +12343,7 @@ async function exportStatisticalResults() {
                   if (!is.null(group_result$note)) {
                     normality_text <- paste0(normality_text, "\\n  ", group_result$group, " (n=", group_result$n, "): ", group_result$note)
                   } else if (!is.null(group_result$is_normal)) {
-                    normality_text <- paste0(normality_text, "\\n  ", group_result$group, " (n=", group_result$n, "): p=", sprintf("%.4f", group_result$p_value), " (", ifelse(group_result$is_normal, "normal", "non-normal"), ")")
+                    normality_text <- paste0(normality_text, "\\n  ", group_result$group, " (n=", group_result$n, "): p=", fmt_p(group_result$p_value), " (", ifelse(group_result$is_normal, "normal", "non-normal"), ")")
                   }
                 }
               }
@@ -12221,7 +12395,7 @@ async function exportStatisticalResults() {
                       sig <- "ns"
                     }
 
-                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": diff=", round(diff, 2), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
+                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": diff=", round(diff, 2), ", p=", fmt_p(ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
                   }
 
                   # Make result globally available for plotting
@@ -12291,7 +12465,7 @@ async function exportStatisticalResults() {
                       sig <- "ns"
                     }
 
-                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": diff=", round(diff, 2), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
+                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": diff=", round(diff, 2), ", p=", fmt_p(ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
                   }
 
                 } else if (selected_posthoc_test == "holm") {
@@ -12352,7 +12526,7 @@ async function exportStatisticalResults() {
                       sig <- "ns"
                     }
 
-                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": diff=", round(diff, 2), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
+                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": diff=", round(diff, 2), ", p=", fmt_p(ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
                   }
 
                 } else if (selected_posthoc_test == "dunnett") {
@@ -12406,7 +12580,7 @@ async function exportStatisticalResults() {
                       sig <- "ns"
                     }
 
-                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": diff=", round(diff, 2), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
+                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": diff=", round(diff, 2), ", p=", fmt_p(ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
                   }
 
                 } else if (selected_posthoc_test == "steel") {
@@ -12450,7 +12624,7 @@ async function exportStatisticalResults() {
                       else if (p_val < 0.05) sig <- "*"
                       else sig <- "ns"
 
-                      posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
+                      posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", fmt_p(p_val), " (", sig, ")")
                     }
                   } else {
                     posthoc_results <- "\\n\\n(Note: Steel test not available in webR)"
@@ -12499,7 +12673,7 @@ async function exportStatisticalResults() {
                       sig <- "ns"
                     }
 
-                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": Z=", round(diff, 2), ", p=", sprintf("%.4f", ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
+                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": Z=", round(diff, 2), ", p=", fmt_p(ifelse(is.na(p_adj), 1.0, p_adj)), " (", sig, ")")
                   }
                 } else {
                   posthoc_results <- paste0("\\n\\nUnknown post-hoc test: ", selected_posthoc_test)
@@ -12574,7 +12748,7 @@ async function exportStatisticalResults() {
                       else if (p_val < 0.05) sig <- "*"
                       else sig <- "ns"
 
-                      posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
+                      posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", fmt_p(p_val), " (", sig, ")")
                     }
                   } else {
                     cat("ERROR: kSamples package not available for Steel test. Steel test cannot be performed.\\n")
@@ -12609,7 +12783,7 @@ async function exportStatisticalResults() {
                     else if (p_val < 0.05) sig <- "*"
                     else sig <- "ns"
 
-                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", sprintf("%.4f", p_val), " (", sig, ")")
+                    posthoc_results <- paste0(posthoc_results, "\\n", comparison, ": p=", fmt_p(p_val), " (", sig, ")")
                   }
                 }
 
@@ -13742,28 +13916,22 @@ async function initWebR() {
       }
     }
     
-    sato_get_significance_symbol <- function(p_value) {
-      cat("DEBUGGING sato_get_significance_symbol:\\n")
-      cat("  Input p_value:", p_value, "\\n")
-      cat("  p_value type:", class(p_value), "\\n")
-      cat("  p_value < 0.001:", p_value < 0.001, "\\n")
-      cat("  p_value < 0.01:", p_value < 0.01, "\\n")
-      cat("  p_value < 0.05:", p_value < 0.05, "\\n")
-      
-      if (p_value < 0.001) {
-        cat("  Returning: ***\\n")
-        return("***")
+    sato_get_significance_symbol <- function(p_value, stat_symbol_type_gs="${statSymbolType}",
+                                           custom_symbol_05_gs="${customSymbol05}", custom_symbol_01_gs="${customSymbol01}",
+                                           custom_symbol_001_gs="${customSymbol001}", custom_symbol_ns_gs="${customSymbolNS}") {
+      if (stat_symbol_type_gs == "pvalue") {
+        return(ifelse(p_value < 0.001, sprintf("p=%.2e", p_value), sprintf("p=%.3f", p_value)))
+      } else if (stat_symbol_type_gs == "custom") {
+        if (p_value < 0.001) return(custom_symbol_001_gs)
+        else if (p_value < 0.01) return(custom_symbol_01_gs)
+        else if (p_value < 0.05) return(custom_symbol_05_gs)
+        else return(custom_symbol_ns_gs)
+      } else {
+        if (p_value < 0.001) return("***")
+        else if (p_value < 0.01) return("**")
+        else if (p_value < 0.05) return("*")
+        else return("ns")
       }
-      if (p_value < 0.01) {
-        cat("  Returning: **\\n")
-        return("**")
-      }
-      if (p_value < 0.05) {
-        cat("  Returning: *\\n")
-        return("*")
-      }
-      cat("  Returning: ns\\n")
-      return("ns")
     }
     
     sato_add_statistics_to_plot <- function(p, data, group_col, value_col, test_type="auto", symbol_size=15, show_main_symbol=TRUE, show_pairwise=TRUE, ggpubr_symbol_size=10, ggpubr_line_size=0.5, ggpubr_tip_length=0.04, ggpubr_vjust=-0.3, comparison_mode="significant", custom_comparisons="[]", custom_positions="{}", posthoc_test="tukey", dunnett_control="", y_scale="linear", stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns", paired=FALSE, subject_col=NULL, paired_ph_correction="holm") {
@@ -13778,7 +13946,7 @@ async function initWebR() {
         cat("🔥 get_sig_symbol called - p_val:", p_val, "stat_symbol_type:", stat_symbol_type, "\\n")
         if (stat_symbol_type == "pvalue") {
           # Return p-value formatted
-          result <- sprintf("p=%.3f", p_val)
+          result <- ifelse(p_val < 0.001, paste0("p=", format(p_val, scientific=FALSE)), sprintf("p=%.3f", p_val))
           cat("🔥 Returning p-value:", result, "\\n")
           return(result)
         } else if (stat_symbol_type == "custom") {
@@ -13823,13 +13991,33 @@ async function initWebR() {
 
           # Create dynamic ggpubr data frame based on actual group names
           y_max_raw <- max(data[[value_col]], na.rm = TRUE)
-          # Use robust y_max (whisker top of all data) for bracket positioning.
-          # Extreme outliers otherwise force brackets to the top of the chart.
-          tmp_vals <- data[[value_col]]
-          tmp_q3   <- quantile(tmp_vals, 0.75, na.rm = TRUE)
-          tmp_iqr  <- IQR(tmp_vals, na.rm = TRUE)
-          tmp_robust <- tmp_vals[tmp_vals <= tmp_q3 + 1.5 * tmp_iqr]
-          y_max <- if (length(tmp_robust) > 0) max(tmp_robust, na.rm = TRUE) else y_max_raw
+          # Robust y_max for bracket positioning: use combined MAD + Q1-absolute fence.
+          # Pure MAD fails when outlier count ≈ normal count (e.g. 50/50 split or n=2 groups).
+          # Q1 + 20 log2 units caps anything more than ~1e6-fold above the lower quartile.
+          tmp_vals <- data[[value_col]][!is.na(data[[value_col]])]
+          if (y_scale %in% c("log10", "log2", "log")) {
+            pos_tmp <- tmp_vals[tmp_vals > 0]
+            if (length(pos_tmp) > 0) {
+              lv_tmp <- if (y_scale == "log2") log2(pos_tmp) else if (y_scale == "log10") log10(pos_tmp) else log(pos_tmp)
+              q1_tmp  <- quantile(lv_tmp, 0.25)
+              med_tmp <- median(lv_tmp)
+              mad_tmp <- mad(lv_tmp)
+              if (mad_tmp < 0.01) mad_tmp <- max((max(lv_tmp) - min(lv_tmp)) / 4, 0.01)
+              mad_fence <- med_tmp + 3 * mad_tmp
+              abs_cap  <- if (y_scale == "log2") 20 else if (y_scale == "log10") 6 else 13.86
+              q1_fence <- q1_tmp + abs_cap
+              fence_tmp <- min(mad_fence, q1_fence)
+              inliers_tmp <- pos_tmp[lv_tmp <= fence_tmp]
+              y_max <- if (length(inliers_tmp) > 0) max(inliers_tmp) else y_max_raw
+            } else {
+              y_max <- y_max_raw
+            }
+          } else {
+            tmp_q3  <- quantile(tmp_vals, 0.75, na.rm = TRUE)
+            tmp_iqr <- IQR(tmp_vals, na.rm = TRUE)
+            tmp_robust <- tmp_vals[tmp_vals <= tmp_q3 + 1.5 * tmp_iqr]
+            y_max <- if (length(tmp_robust) > 0) max(tmp_robust, na.rm = TRUE) else y_max_raw
+          }
           cat("🔥 y_max_raw=", y_max_raw, " y_max(robust)=", y_max, "🔥\\n")
 
           # Get actual group names from the data
@@ -13911,8 +14099,19 @@ async function initWebR() {
                     omnibus_test_name <- "Paired t-test"
                   } else {
                     if (paired) cat("⚠️ Unequal group sizes - using unpaired t-test\\n")
-                    test_result <- t.test(group1_data, group2_data)
-                    omnibus_test_name <- "Student's t-test"
+                    # Run Levene test to choose Student's vs Welch's (matches sato_perform_statistical_test)
+                    eq_var_check <- tryCatch({
+                      combined_check <- data.frame(
+                        values = c(group1_data, group2_data),
+                        group = factor(c(rep("g1", length(group1_data)), rep("g2", length(group2_data))))
+                      )
+                      gm_check <- tapply(combined_check$values, combined_check$group, mean)
+                      ad_check <- abs(combined_check$values - gm_check[combined_check$group])
+                      lv_check <- anova(lm(ad_check ~ combined_check$group))
+                      lv_check[["Pr(>F)"]][1] >= 0.05
+                    }, error = function(e) TRUE)
+                    test_result <- t.test(group1_data, group2_data, var.equal = eq_var_check)
+                    omnibus_test_name <- if (eq_var_check) "Student's t-test" else "Welch's t-test"
                   }
                 } else if (two_group_test == "wilcox.test") {
                   if (paired && length(group1_data) == length(group2_data)) {
@@ -13925,7 +14124,7 @@ async function initWebR() {
                   }
                 } else {
                   # Default to t-test for unknown test types
-                  test_result <- t.test(group1_data, group2_data)
+                  test_result <- t.test(group1_data, group2_data, var.equal = TRUE)
                   omnibus_test_name <- "Student's t-test"
                 }
 
@@ -14498,6 +14697,35 @@ async function initWebR() {
               y_positions <- numeric(num_combos)
               base_heights <- numeric(num_combos)  # Store for debug
 
+              # Compute a Q1-based absolute fence across ALL data combined.
+              # Per-group MAD fails even for n=2: [1000, 1e12] → median=midpoint, both
+              # equidistant → neither excluded. 5-MAD global also fails when outlier count
+              # ≈ normal count (median is pulled toward midpoint).
+              # Solution: use Q1 (lower quartile, robust against high outlier %) + absolute cap.
+              # "Q1 + 20 log2 units" = anything more than 2^20 ≈ 1e6 fold above the lower
+              # quartile is an outlier — catches 1e12 vs 1e3 data.
+              global_fence_lv <- NA
+              global_q1_log <- NA
+              if (y_scale %in% c("log10", "log2", "log")) {
+                all_pos_vals <- data[[value_col]][!is.na(data[[value_col]]) & data[[value_col]] > 0]
+                if (length(all_pos_vals) >= 2) {
+                  lv_all <- if (y_scale == "log2") log2(all_pos_vals) else if (y_scale == "log10") log10(all_pos_vals) else log(all_pos_vals)
+                  q1_all  <- quantile(lv_all, 0.25)
+                  med_all <- median(lv_all)
+                  mad_all <- mad(lv_all)
+                  if (mad_all < 0.01) mad_all <- max((max(lv_all) - min(lv_all)) / 4, 0.01)
+                  # MAD-based fence (primary, works when outliers < ~30% of data)
+                  global_fence_lv <- med_all + 5 * mad_all
+                  # Q1-based absolute cap (secondary, works even with 50% outliers):
+                  # anything more than 20 log2 units above Q1 is beyond any biological range.
+                  abs_cap_units <- if (y_scale == "log2") 20 else if (y_scale == "log10") 6 else 13.86
+                  global_q1_fence <- q1_all + abs_cap_units
+                  # Use the STRICTER (smaller) of the two fences
+                  global_fence_lv <- min(global_fence_lv, global_q1_fence)
+                  cat("🔥 global_fence_lv =", global_fence_lv, " (q1=", q1_all, " med=", med_all, " mad=", mad_all, " q1_fence=", global_q1_fence, ") 🔥\\n")
+                }
+              }
+
               # Store first comparison's extracted values for debug
               first_g1_vals <- NULL
               first_g2_vals <- NULL
@@ -14602,18 +14830,47 @@ async function initWebR() {
                     first_g2_len <- length(g2_values)
                   }
 
-                  # Helper: whisker top = max(values <= Q3 + 1.5*IQR)
-                  # Matches how ggplot2 draws the box upper whisker.
-                  # Robust to outliers — extreme dots appear ABOVE the bracket (standard).
+                  # Helper: whisker top = max(values <= Q3 + 1.5*IQR) in the appropriate space.
+                  # For log scales, IQR in linear space fails for small N (n=3): a single outlier
+                  # at 1e+12 makes IQR huge, so the outlier IS within the fence.
+                  # Fix: for log scales, compute whisker_top in log space using MAD,
+                  # which is robust even with n=3.
                   whisker_top <- function(vals) {
                     vals <- vals[!is.na(vals)]
                     if (length(vals) == 0) return(NA)
-                    q3  <- quantile(vals, 0.75)
-                    iqr <- IQR(vals)
-                    fence <- q3 + 1.5 * iqr
-                    non_outliers <- vals[vals <= fence]
-                    if (length(non_outliers) == 0) return(max(vals))
-                    max(non_outliers)
+                    if (y_scale %in% c("log10", "log2", "log")) {
+                      pos_vals <- vals[vals > 0]
+                      if (length(pos_vals) == 0) return(max(vals))
+                      lv <- if (y_scale == "log2") log2(pos_vals) else if (y_scale == "log10") log10(pos_vals) else log(pos_vals)
+                      # Apply the combined MAD + Q1-absolute fence computed from all data.
+                      # This handles n=2 case [normal, 1e12]: per-group MAD fails because
+                      # both values are equidistant from their midpoint, but the global Q1
+                      # fence (Q1_global + 20 log2 units) correctly excludes 1e12.
+                      if (!is.na(global_fence_lv)) {
+                        inliers_global <- pos_vals[lv <= global_fence_lv]
+                        if (length(inliers_global) > 0) {
+                          if (length(inliers_global) < length(pos_vals)) {
+                            cat("🔥 whisker_top: global fence excluded", length(pos_vals) - length(inliers_global), "outlier(s), max inlier =", max(inliers_global), "🔥\\n")
+                          }
+                          return(max(inliers_global))
+                        }
+                      }
+                      # Fallback: per-group MAD
+                      med_lv <- median(lv)
+                      mad_lv <- mad(lv)
+                      if (mad_lv < 0.01) mad_lv <- max((max(lv) - min(lv)) / 4, 0.01)
+                      fence_lv <- med_lv + 3 * mad_lv
+                      inliers <- pos_vals[lv <= fence_lv]
+                      if (length(inliers) == 0) return(if (y_scale == "log2") 2^med_lv else if (y_scale == "log10") 10^med_lv else exp(med_lv))
+                      return(max(inliers))
+                    } else {
+                      q3  <- quantile(vals, 0.75)
+                      iqr <- IQR(vals)
+                      fence <- q3 + 1.5 * iqr
+                      non_outliers <- vals[vals <= fence]
+                      if (length(non_outliers) == 0) return(max(vals))
+                      return(max(non_outliers))
+                    }
                   }
 
                   # Check for empty values
@@ -14621,15 +14878,30 @@ async function initWebR() {
                     cat("🔥 WARNING: Empty values for", g1, "or", g2, "- using y_max as fallback 🔥\\n")
                     baseHeight <- y_max
                   } else {
-                    # Use whisker top as base height so extreme outlier dots don't
-                    # push the bracket off the chart.
-                    g1_top <- whisker_top(g1_values)
-                    g2_top <- whisker_top(g2_values)
-                    baseHeight <- max(g1_top, g2_top, na.rm = TRUE)
-
-                    cat("🔥 CALCULATED: baseHeight =", round(baseHeight, 2), "(whisker top) 🔥\\n")
-                    cat("🔥", g1, ": whisker_top=", round(g1_top, 2), "🔥\\n")
-                    cat("🔥", g2, ": whisker_top=", round(g2_top, 2), "🔥\\n")
+                    if (y_scale %in% c("log", "log10", "log2")) {
+                      # LOG SCALE: use actual group max (capped at robust y_max).
+                      g1_actual_max <- min(max(g1_values, na.rm = TRUE), y_max)
+                      g2_actual_max <- min(max(g2_values, na.rm = TRUE), y_max)
+                      baseHeight <- max(g1_actual_max, g2_actual_max, na.rm = TRUE)
+                      cat("🔥 CALCULATED: baseHeight =", round(baseHeight, 2), "(actual max, log scale) 🔥\\n")
+                    } else if (y_scale %in% c("-log10", "-log2")) {
+                      # NEGATIVE LOG SCALE: data is pre-transformed to -log(y).
+                      # Bars start at 0 and extend downward, so bar top is always at 0.
+                      # Clamp to max(0, ...) so bracket always starts at or above the bar top.
+                      logFn_neg <- if (y_scale == "-log2") log2 else log10
+                      g1_pos <- g1_values[g1_values > 0]
+                      g2_pos <- g2_values[g2_values > 0]
+                      g1_trans_max <- if (length(g1_pos) > 0) max(-logFn_neg(g1_pos), na.rm=TRUE) else 0
+                      g2_trans_max <- if (length(g2_pos) > 0) max(-logFn_neg(g2_pos), na.rm=TRUE) else 0
+                      baseHeight <- max(0, g1_trans_max, g2_trans_max, na.rm = TRUE)
+                      cat("🔥 CALCULATED: baseHeight =", round(baseHeight, 4), "(transformed max clamped to ≥0, -log scale) 🔥\\n")
+                    } else {
+                      # LINEAR SCALE: use whisker top.
+                      g1_top <- whisker_top(g1_values)
+                      g2_top <- whisker_top(g2_values)
+                      baseHeight <- max(g1_top, g2_top, na.rm = TRUE)
+                      cat("🔥 CALCULATED: baseHeight =", round(baseHeight, 2), "(whisker top, linear scale) 🔥\\n")
+                    }
                   }
 
                   # Store baseHeight for debug annotation
@@ -14638,34 +14910,45 @@ async function initWebR() {
 
                   # Calculate bracket position (scale-aware)
                   if (y_scale %in% c("log", "log10", "log2")) {
-                    # LOG SCALE: y.position must be in DATA coordinates (not log-transformed).
-                    # Step size = 4% of the visible log range, so spacing looks consistent
-                    # regardless of log base (log2 vs log10) or data spread.
+                    # LOG SCALE: multiplicative steps in data coordinates.
                     effective_y_min <- max(y_min, 1e-10)
                     if (y_scale == "log2") {
                       log_range <- max(log2(y_max) - log2(effective_y_min), 0.5)
-                      scale_factor <- 2^(log_range * 0.04)
+                      scale_factor <- 2^(log_range * 0.12)
                     } else if (y_scale == "log10") {
                       log_range <- max(log10(y_max) - log10(effective_y_min), 0.5)
-                      scale_factor <- 10^(log_range * 0.04)
+                      scale_factor <- 10^(log_range * 0.12)
                     } else {
                       log_range <- max(log(y_max) - log(effective_y_min), 0.5)
-                      scale_factor <- exp(log_range * 0.04)
+                      scale_factor <- exp(log_range * 0.12)
                     }
-                    scale_factor <- min(max(scale_factor, 1.02), 1.30)
-
+                    scale_factor <- min(max(scale_factor, 1.60), 2.0)
                     if (idx == 1) {
                       y_positions[idx] <- baseHeight * scale_factor
                     } else {
                       y_positions[idx] <- max(baseHeight, y_positions[idx-1]) * scale_factor
                     }
-
                     cat("🔥 LOG SCALE bracket: log_range=", log_range, "scale_factor=", scale_factor,
                         "baseHeight=", baseHeight, "→ y_pos=", y_positions[idx], "🔥\\n")
-                  } else {
-                    # LINEAR SCALE: Use additive spacing in data space
+                  } else if (y_scale %in% c("-log10", "-log2")) {
+                    # NEGATIVE LOG SCALE: additive steps in transformed (linear) coordinate space.
+                    logFn_neg2 <- if (y_scale == "-log2") log2 else log10
+                    all_pos <- c(g1_values, g2_values)
+                    all_pos <- all_pos[all_pos > 0]
+                    trans_all <- -logFn_neg2(all_pos)
+                    trans_range <- max(max(trans_all) - min(trans_all), 0.1)
+                    step_neg <- trans_range * 0.35
                     if (idx == 1) {
-                      y_positions[idx] <- baseHeight + (unit_step * 0.6)  # First bracket closer to data
+                      y_positions[idx] <- baseHeight + step_neg
+                    } else {
+                      y_positions[idx] <- max(baseHeight + step_neg, y_positions[idx-1] + step_neg)
+                    }
+                    cat("🔥 NEG LOG SCALE bracket: trans_range=", round(trans_range,3), "baseHeight=", round(baseHeight,4),
+                        "→ y_pos=", round(y_positions[idx],4), "🔥\\n")
+                  } else {
+                    # LINEAR SCALE: additive spacing in data space.
+                    if (idx == 1) {
+                      y_positions[idx] <- baseHeight + (unit_step * 0.6)
                     } else {
                       y_positions[idx] <- max(baseHeight + unit_step, y_positions[idx-1] + unit_step)
                     }
@@ -14755,25 +15038,40 @@ async function initWebR() {
 
                       # Calculate position with consistent spacing - scale-aware
                       if (y_scale %in% c("log", "log10", "log2")) {
-                        # LOG SCALE: y.position must be in data coordinates
-                        # Step = 4% of visible log range (same logic as initial calculation)
+                        # LOG SCALE: use same 12% / 1.60 clamp as initial bracket calculation
                         effective_y_min_f <- max(y_min, 1e-10)
                         if (y_scale == "log2") {
                           log_range_f <- max(log2(y_max) - log2(effective_y_min_f), 0.5)
-                          scale_factor_f <- 2^(log_range_f * 0.04)
+                          scale_factor_f <- 2^(log_range_f * 0.12)
                         } else if (y_scale == "log10") {
                           log_range_f <- max(log10(y_max) - log10(effective_y_min_f), 0.5)
-                          scale_factor_f <- 10^(log_range_f * 0.04)
+                          scale_factor_f <- 10^(log_range_f * 0.12)
                         } else {
                           log_range_f <- max(log(y_max) - log(effective_y_min_f), 0.5)
-                          scale_factor_f <- exp(log_range_f * 0.04)
+                          scale_factor_f <- exp(log_range_f * 0.12)
                         }
-                        scale_factor_f <- min(max(scale_factor_f, 1.02), 1.30)
-
+                        scale_factor_f <- min(max(scale_factor_f, 1.60), 2.0)
                         if (i == 1) {
                           new_y_positions[i] <- baseHeight_f * scale_factor_f
                         } else {
                           new_y_positions[i] <- max(baseHeight_f, new_y_positions[i-1]) * scale_factor_f
+                        }
+                      } else if (y_scale %in% c("-log10", "-log2")) {
+                        # NEGATIVE LOG SCALE: baseHeight_f is already in transformed space.
+                        # Re-compute using transformed values of g1/g2.
+                        logFn_rf <- if (y_scale == "-log2") log2 else log10
+                        g1_rf <- g1_values_f[g1_values_f > 0]; g2_rf <- g2_values_f[g2_values_f > 0]
+                        all_rf <- c(g1_rf, g2_rf)
+                        trans_rf <- -logFn_rf(all_rf[all_rf > 0])
+                        trans_range_f <- max(max(trans_rf) - min(trans_rf), 0.1)
+                        g1_trans_max_f <- if (length(g1_rf) > 0) max(-logFn_rf(g1_rf)) else 0
+                        g2_trans_max_f <- if (length(g2_rf) > 0) max(-logFn_rf(g2_rf)) else 0
+                        baseHeight_neg_f <- max(0, g1_trans_max_f, g2_trans_max_f, na.rm=TRUE)
+                        step_rf <- trans_range_f * 0.35
+                        if (i == 1) {
+                          new_y_positions[i] <- baseHeight_neg_f + step_rf
+                        } else {
+                          new_y_positions[i] <- max(baseHeight_neg_f + step_rf, new_y_positions[i-1] + step_rf)
                         }
                       } else {
                         # LINEAR SCALE: Use data space
@@ -14914,21 +15212,40 @@ async function initWebR() {
 
           # Calculate y-axis limit - coordinate system aware
           if (y_scale %in% c("log", "log10", "log2")) {
-            # LOG SCALE: Work in log coordinate space
-            # Need MUCH MORE expansion for log scales to show asterisk symbols
-            # Add fixed amount (1.5) plus proportional expansion
+            # LOG SCALE: expand in log space then convert back to data space.
+            # Formula: limit = base * (headroom_above_bracket + range_term)
+            # headroom_above_bracket: fixed 0.15 log-units for symbol rendering + 0.05 per extra bracket
+            # range_term: 0.03 * actual_range — tiny scaling with data spread, no minimum clamping
+            # Previous "0.6 + expansion * clamped_range" caused y-axis to extend 4-10x above
+            # bracket for narrow data (e.g. pre-log2 values 5–12 on log10 axis).
+            safe_max_bracket <- max(max_bracket_y, 1e-10)
+            headroom <- 0.15 + 0.05 * (num_bracket_pairs - 1)  # ~0.15 for 1 pair, grows slightly
             if (y_scale == "log2") {
-              y_range_log <- log2(y_max) - log2(y_min)
+              actual_range_log <- max(log2(y_max) - log2(max(y_min, 1e-10)), 0.01)
+              log_max_bracket <- log2(safe_max_bracket)
+              y_axis_upper_limit <- 2^(log_max_bracket + headroom + 0.03 * actual_range_log)
             } else if (y_scale == "log10") {
-              y_range_log <- log10(y_max) - log10(y_min)
-            } else {  # "log"
-              y_range_log <- log(y_max) - log(y_min)
+              actual_range_log <- max(log10(y_max) - log10(max(y_min, 1e-10)), 0.01)
+              log_max_bracket <- log10(safe_max_bracket)
+              y_axis_upper_limit <- 10^(log_max_bracket + headroom + 0.03 * actual_range_log)
+            } else {  # "log" (natural log)
+              actual_range_log <- max(log(y_max) - log(max(y_min, 1e-10)), 0.01)
+              log_max_bracket <- log(safe_max_bracket)
+              y_axis_upper_limit <- exp(log_max_bracket + headroom + 0.03 * actual_range_log)
             }
-            # For log scales, add 2.5 units in log space to show symbols with better spacing
-            y_axis_upper_limit <- max_bracket_y + 2.5 + (expansion_factor * y_range_log)
-            cat("🔥 LOG SCALE Y-axis limit: max_bracket=", max_bracket_y,
-                " + 2.5 + ", expansion_factor, "*y_range_log(", y_range_log, ") = ",
+            cat("🔥 LOG SCALE Y-axis limit: log(max_bracket)=", log_max_bracket,
+                " + headroom(", headroom, ") + 0.03*range(", actual_range_log, ") → data limit =",
                 y_axis_upper_limit, "🔥\\n")
+          } else if (y_scale %in% c("-log10", "-log2")) {
+            # NEGATIVE LOG SCALE: max_bracket_y is in transformed linear space.
+            # Add a small fixed headroom above the bracket (headroom in transformed units).
+            # Transformed range ≈ log(y_max/y_min); clamp to at least 0.1.
+            safe_ymin_neg <- max(y_min, 1e-10); safe_ymax_neg <- max(y_max, safe_ymin_neg * 10)
+            logFn_clip <- if (y_scale == "-log2") log2 else log10
+            trans_range_clip <- max(abs(logFn_clip(safe_ymax_neg) - logFn_clip(safe_ymin_neg)), 0.1)
+            y_axis_upper_limit <- max_bracket_y + (0.15 + 0.05 * (num_bracket_pairs - 1)) * trans_range_clip
+            cat("🔥 NEG LOG SCALE Y-axis limit: max_bracket=", round(max_bracket_y,4),
+                " + headroom → ", round(y_axis_upper_limit,4), "🔥\\n")
           } else {
             # LINEAR SCALE: Use data space
             y_axis_upper_limit <- max_bracket_y + expansion_factor * y_range
@@ -14938,7 +15255,17 @@ async function initWebR() {
           }
 
           p <- p + expand_limits(y = y_axis_upper_limit)
+          # Store for coord_cartesian clipping in outer template.
+          # expand_limits() only expands — it cannot restrict the y-axis when an outlier
+          # data point (e.g. 1e+12) forces ggplot to auto-scale up. clip_y_upper lets
+          # the outer template add coord_cartesian(ylim=c(NA, clip_y_upper)) to restrict
+          # the visible range to the relevant data range.
+          # NA for the lower bound: ggplot2 replaces NA with the scale's natural lower bound
+          # (computed from data), so bars keep their correct baseline (do NOT use a specific
+          # number like min(pos)*0.9 — that clips the bar bottoms making bars look truncated).
+          clip_y_upper <<- y_axis_upper_limit
           cat("🔥 Expansion factor scales with", num_bracket_pairs, "bracket pairs 🔥\\n")
+          cat("🔥 clip_y_upper set to:", clip_y_upper, " (max_bracket_y was:", max_bracket_y, ") 🔥\\n")
 
           # Get parameter values from function parameters
           bracket_size <- ggpubr_symbol_size
@@ -14957,39 +15284,82 @@ async function initWebR() {
           asterisk_data <- pairwise_data[pairwise_data$p.signif != "n.s.", ]
           ns_data <- pairwise_data[pairwise_data$p.signif == "n.s.", ]
 
-          if (show_brackets) {
-            # Add asterisk symbols with full size
-            if (nrow(asterisk_data) > 0) {
-              p <- p + stat_pvalue_manual(asterisk_data,
-                                         label = "p.signif",
-                                         size = bracket_size,
-                                         bracket.size = line_size,
-                                         tip.length = tip_length,
-                                         vjust = v_just,
-                                         hjust = 0.5,
-                                         step.increase = step_increase_value,
-                                         bracket.nudge.y = 0,
-                                         bracket.shorten = 0,
-                                         remove.bracket = FALSE)
-              cat("🔥 Added", nrow(asterisk_data), "asterisk symbols at full size 🔥\\n")
-            }
+          cat("🔥🔥🔥 BRACKET DRAW CHECK 🔥🔥🔥\\n")
+          cat("🔥 show_brackets =", show_brackets, "🔥\\n")
+          cat("🔥 nrow(pairwise_data) =", nrow(pairwise_data), "🔥\\n")
+          cat("🔥 nrow(asterisk_data) =", nrow(asterisk_data), "🔥\\n")
+          cat("🔥 nrow(ns_data) =", nrow(ns_data), "🔥\\n")
+          if (nrow(pairwise_data) > 0) {
+            cat("🔥 pairwise y.positions:", paste(round(pairwise_data$y.position, 3), collapse=", "), "🔥\\n")
+            cat("🔥 pairwise symbols:", paste(pairwise_data$p.signif, collapse=", "), "🔥\\n")
+          }
+          cat("🔥 clip_y_upper (at draw time) =", if (exists("clip_y_upper")) clip_y_upper else "NOT SET", "🔥\\n")
 
-            # Add n.s. symbols with smaller size and higher position
-            if (nrow(ns_data) > 0) {
-              smaller_size <- bracket_size * 0.7  # 30% smaller for n.s.
-              ns_vjust <- v_just - 0.5
-              p <- p + stat_pvalue_manual(ns_data,
-                                         label = "p.signif",
-                                         size = smaller_size,
-                                         bracket.size = line_size,
-                                         tip.length = tip_length,
-                                         vjust = ns_vjust,
-                                         hjust = 0.5,
-                                         step.increase = step_increase_value,
-                                         bracket.nudge.y = 0,
-                                         bracket.shorten = 0,
-                                         remove.bracket = FALSE)
-              cat("🔥 Added", nrow(ns_data), "n.s. symbols at smaller size (", smaller_size, ") 🔥\\n")
+          if (show_brackets) {
+            if (y_scale %in% c("log", "log10", "log2")) {
+              # On log scale, stat_pvalue_manual does not render correctly.
+              # Use manual annotate() calls instead — they go through ggplot's
+              # scale transformation correctly and always appear at the right position.
+              group_order_b <- if (is.factor(data[[group_col]])) levels(data[[group_col]]) else sort(unique(as.character(data[[group_col]])))
+              for (i in seq_len(nrow(pairwise_data))) {
+                g1b <- as.character(pairwise_data$group1[i])
+                g2b <- as.character(pairwise_data$group2[i])
+                sig_b <- pairwise_data$p.signif[i]
+                y_pos_b <- pairwise_data$y.position[i]
+                x1b <- match(g1b, group_order_b)
+                x2b <- match(g2b, group_order_b)
+                x_mid_b <- (x1b + x2b) / 2
+                is_ns_b <- sig_b == "n.s."
+                sz_b <- if (is_ns_b) bracket_size * 0.7 else bracket_size
+                vj_b <- if (is_ns_b) v_just - 0.5 else v_just
+                # Tip bottom: multiplicative offset so it looks proportional on log axis
+                tip_y_b <- y_pos_b * (1 - tip_length)
+                # Horizontal bar
+                p <- p + annotate("segment", x = x1b, xend = x2b, y = y_pos_b, yend = y_pos_b,
+                                  color = "black", linewidth = line_size)
+                # Left tip
+                p <- p + annotate("segment", x = x1b, xend = x1b, y = tip_y_b, yend = y_pos_b,
+                                  color = "black", linewidth = line_size)
+                # Right tip
+                p <- p + annotate("segment", x = x2b, xend = x2b, y = tip_y_b, yend = y_pos_b,
+                                  color = "black", linewidth = line_size)
+                # Significance text (vjust positions above/below the bracket line)
+                p <- p + annotate("text", x = x_mid_b, y = y_pos_b, label = sig_b,
+                                  size = sz_b, vjust = vj_b, hjust = 0.5)
+              }
+              cat("🔥 Added", nrow(pairwise_data), "brackets via manual annotate (log scale) 🔥\\n")
+            } else {
+              # Linear scale: use stat_pvalue_manual
+              if (nrow(asterisk_data) > 0) {
+                p <- p + stat_pvalue_manual(asterisk_data,
+                                           label = "p.signif",
+                                           size = bracket_size,
+                                           bracket.size = line_size,
+                                           tip.length = tip_length,
+                                           vjust = v_just,
+                                           hjust = 0.5,
+                                           step.increase = step_increase_value,
+                                           bracket.nudge.y = 0,
+                                           bracket.shorten = 0,
+                                           remove.bracket = FALSE)
+                cat("🔥 Added", nrow(asterisk_data), "asterisk symbols at full size 🔥\\n")
+              }
+              if (nrow(ns_data) > 0) {
+                smaller_size <- bracket_size * 0.7
+                ns_vjust <- v_just - 0.5
+                p <- p + stat_pvalue_manual(ns_data,
+                                           label = "p.signif",
+                                           size = smaller_size,
+                                           bracket.size = line_size,
+                                           tip.length = tip_length,
+                                           vjust = ns_vjust,
+                                           hjust = 0.5,
+                                           step.increase = step_increase_value,
+                                           bracket.nudge.y = 0,
+                                           bracket.shorten = 0,
+                                           remove.bracket = FALSE)
+                cat("🔥 Added", nrow(ns_data), "n.s. symbols at smaller size (", smaller_size, ") 🔥\\n")
+              }
             }
           } else {
             # No brackets: use annotate("text") at exact midpoint x between the two groups
@@ -15404,8 +15774,14 @@ async function initWebR() {
 
                   # Perform t-test or Mann-Whitney U test
                   tryCatch({
-                    # Simple t-test for pairwise comparison
-                    pairwise_test <- t.test(group1_data, group2_data)
+                    # Use Levene test to determine equal vs unequal variance
+                    eq_var_pw1 <- tryCatch({
+                      cd_pw1 <- data.frame(values=c(group1_data,group2_data), group=factor(c(rep("g1",length(group1_data)),rep("g2",length(group2_data)))))
+                      gm_pw1 <- tapply(cd_pw1$values, cd_pw1$group, mean)
+                      ad_pw1 <- abs(cd_pw1$values - gm_pw1[cd_pw1$group])
+                      anova(lm(ad_pw1 ~ cd_pw1$group))[["Pr(>F)"]][1] >= 0.05
+                    }, error=function(e) TRUE)
+                    pairwise_test <- t.test(group1_data, group2_data, var.equal=eq_var_pw1)
                     pairwise_p <- pairwise_test$p.value
                     pairwise_sig <- sato_get_significance_symbol(pairwise_p)
 
@@ -15485,8 +15861,14 @@ async function initWebR() {
 
                   # Perform t-test or Mann-Whitney U test
                   tryCatch({
-                    # Simple t-test for pairwise comparison
-                    pairwise_test <- t.test(group1_data, group2_data)
+                    # Use Levene test to determine equal vs unequal variance
+                    eq_var_pw1 <- tryCatch({
+                      cd_pw1 <- data.frame(values=c(group1_data,group2_data), group=factor(c(rep("g1",length(group1_data)),rep("g2",length(group2_data)))))
+                      gm_pw1 <- tapply(cd_pw1$values, cd_pw1$group, mean)
+                      ad_pw1 <- abs(cd_pw1$values - gm_pw1[cd_pw1$group])
+                      anova(lm(ad_pw1 ~ cd_pw1$group))[["Pr(>F)"]][1] >= 0.05
+                    }, error=function(e) TRUE)
+                    pairwise_test <- t.test(group1_data, group2_data, var.equal=eq_var_pw1)
                     pairwise_p <- pairwise_test$p.value
                     pairwise_sig <- sato_get_significance_symbol(pairwise_p)
 
@@ -16197,7 +16579,7 @@ async function initWebR() {
                                             vbracket_timepoint="", vbracket_position="topleft", vbracket_x=0.08, vbracket_y=0.92,
                                             vbracket_text_size=14, vbracket_sig_size=14, vbracket_margin=0.03, vbracket_line_width=0.5,
                                             vbracket_legend_line_length=NULL, vbracket_legend_line_width=NULL, vbracket_item_spacing=NULL,
-                                            vbracket_bracket_layer_spacing=NULL,
+                                            vbracket_bracket_layer_spacing=NULL, vbracket_legend_title=NULL,
                                             output_width=6, output_height=4,
                                             x_breaks_mode="auto") {
 
@@ -16206,7 +16588,7 @@ async function initWebR() {
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
         if (stat_symbol_type == "pvalue") {
-          return(sprintf("p=%.3f", p_val))
+          return(ifelse(p_val < 0.001, paste0("p=", format(p_val, scientific=FALSE)), sprintf("p=%.3f", p_val)))
         } else if (stat_symbol_type == "custom") {
           if (p_val < 0.001) return(custom_symbol_001)
           else if (p_val < 0.01) return(custom_symbol_01)
@@ -16740,6 +17122,7 @@ async function initWebR() {
                 } else NULL,
                 x = vbracket_x,
                 y = vbracket_y,
+                title = vbracket_legend_title,
                 text_size = vbracket_text_size,
                 sig_size = vbracket_sig_size,
                 bracket_margin = vbracket_margin,
@@ -17290,7 +17673,7 @@ async function initWebR() {
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
         if (stat_symbol_type == "pvalue") {
-          return(sprintf("p=%.3f", p_val))
+          return(ifelse(p_val < 0.001, paste0("p=", format(p_val, scientific=FALSE)), sprintf("p=%.3f", p_val)))
         } else if (stat_symbol_type == "custom") {
           if (p_val < 0.001) return(custom_symbol_001)
           else if (p_val < 0.01) return(custom_symbol_01)
@@ -17823,7 +18206,7 @@ async function initWebR() {
       # Helper function to generate significance symbol
       get_sig_symbol <- function(p_val) {
         if (stat_symbol_type == "pvalue") {
-          return(sprintf("p=%.3f", p_val))
+          return(ifelse(p_val < 0.001, paste0("p=", format(p_val, scientific=FALSE)), sprintf("p=%.3f", p_val)))
         } else if (stat_symbol_type == "custom") {
           if (p_val < 0.001) return(custom_symbol_001)
           else if (p_val < 0.01) return(custom_symbol_01)
@@ -18048,7 +18431,7 @@ async function initWebR() {
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
         if (stat_symbol_type == "pvalue") {
-          return(sprintf("p=%.3f", p_val))
+          return(ifelse(p_val < 0.001, paste0("p=", format(p_val, scientific=FALSE)), sprintf("p=%.3f", p_val)))
         } else if (stat_symbol_type == "custom") {
           if (p_val < 0.001) return(custom_symbol_001)
           else if (p_val < 0.01) return(custom_symbol_01)
@@ -18657,7 +19040,7 @@ async function initWebR() {
 
       # Helper function to generate significance symbol
       get_sig_symbol <- function(p_val) {
-        if (stat_symbol_type == "pvalue") return(sprintf("p=%.3f", p_val))
+        if (stat_symbol_type == "pvalue") return(ifelse(p_val < 0.001, paste0("p=", format(p_val, scientific=FALSE)), sprintf("p=%.3f", p_val)))
         else if (stat_symbol_type == "custom") {
           if (p_val < 0.001) return(custom_symbol_001) else if (p_val < 0.01) return(custom_symbol_01) else if (p_val < 0.05) return(custom_symbol_05) else return(custom_symbol_ns)
         } else {
@@ -18832,7 +19215,7 @@ async function initWebR() {
       # Helper function to generate significance symbol based on p-value and symbol type
       get_sig_symbol <- function(p_val) {
         if (stat_symbol_type == "pvalue") {
-          return(sprintf("p=%.3f", p_val))
+          return(ifelse(p_val < 0.001, paste0("p=", format(p_val, scientific=FALSE)), sprintf("p=%.3f", p_val)))
         } else if (stat_symbol_type == "custom") {
           if (p_val < 0.001) return(custom_symbol_001)
           else if (p_val < 0.01) return(custom_symbol_01)
@@ -20580,6 +20963,11 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   addDebugInfo("🔥 Loading R code - Stats: " + addStatistics + ", Chart: " + chartType);
   
   const SHARED_STAT_HELPERS_R = `
+fmt_p <- function(p) {
+  if (is.null(p) || is.na(p) || !is.finite(p)) return("NA")
+  ifelse(p < 0.001, sprintf("%.2e", p), sprintf("%.4f", p))
+}
+
 sato_run_stats_2group <- function(
   group1_data, group2_data, group_names,
   x_label,
@@ -20590,7 +20978,7 @@ sato_run_stats_2group <- function(
   desc_lines = c()
 ) {
   get_sig_sym <- function(p) {
-    if (stat_symbol_type == "pvalue") return(sprintf("p=%.3f", p))
+    if (stat_symbol_type == "pvalue") return(ifelse(p < 0.001, paste0("p=", format(p, scientific=FALSE)), sprintf("p=%.3f", p)))
     if (p < 0.001) "***" else if (p < 0.01) "**" else if (p < 0.05) "*" else "ns"
   }
   normality_text <- c(); both_normal <- TRUE
@@ -20601,7 +20989,7 @@ sato_run_stats_2group <- function(
       if (!is.null(sw)) {
         both_normal <- sw$p.value >= 0.05
         normality_text <- c(normality_text,
-          sprintf("  Differences: p=%.4f (%s)", sw$p.value, if (both_normal) "normal" else "non-normal"))
+          sprintf("  Differences: p=%s (%s)", fmt_p(sw$p.value), if (both_normal) "normal" else "non-normal"))
       }
     }
   } else {
@@ -20611,7 +20999,7 @@ sato_run_stats_2group <- function(
       if (!is.null(sw)) {
         is_n1 <- sw$p.value >= 0.05
         normality_text <- c(normality_text,
-          sprintf("  %s: p=%.4f (%s)", group_names[1], sw$p.value, if (is_n1) "normal" else "non-normal"))
+          sprintf("  %s: p=%s (%s)", group_names[1], fmt_p(sw$p.value), if (is_n1) "normal" else "non-normal"))
       }
     }
     if (length(group2_data) >= 3 && length(group2_data) <= 5000) {
@@ -20619,7 +21007,7 @@ sato_run_stats_2group <- function(
       if (!is.null(sw)) {
         is_n2 <- sw$p.value >= 0.05
         normality_text <- c(normality_text,
-          sprintf("  %s: p=%.4f (%s)", group_names[2], sw$p.value, if (is_n2) "normal" else "non-normal"))
+          sprintf("  %s: p=%s (%s)", group_names[2], fmt_p(sw$p.value), if (is_n2) "normal" else "non-normal"))
       }
     }
     both_normal <- is_n1 && is_n2
@@ -20646,14 +21034,14 @@ sato_run_stats_2group <- function(
       if (!is.null(lv)) {
         lv_p <- lv$\`Pr(>F)\`[1]
         equal_variances <- lv_p > 0.05
-        variance_text <- sprintf("Variance test: p=%.4f (%s, Levene)", lv_p,
+        variance_text <- sprintf("Variance test: p=%s (%s, Levene)", fmt_p(lv_p),
                                  if (equal_variances) "equal variances" else "unequal variances")
       }
     } else {
       vt <- tryCatch(var.test(group1_data, group2_data), error = function(e) NULL)
       if (!is.null(vt)) {
         equal_variances <- vt$p.value > 0.05
-        variance_text <- sprintf("Variance test: p=%.4f (%s, F-test)", vt$p.value,
+        variance_text <- sprintf("Variance test: p=%s (%s, F-test)", fmt_p(vt$p.value),
                                  if (equal_variances) "equal variances" else "unequal variances")
       }
     }
@@ -20686,7 +21074,7 @@ sato_run_stats_2group <- function(
     result_text <- paste0(result_text, "\\nNormality (Shapiro-Wilk): skipped (n < 3 per group)")
   if (nchar(variance_text) > 0)
     result_text <- paste0(result_text, "\\n", variance_text)
-  result_text <- paste0(result_text, sprintf("\\nTest: %s, p=%.4f (%s)", test_name, p_val, sig_label))
+  result_text <- paste0(result_text, sprintf("\\nTest: %s, p=%s (%s)", test_name, fmt_p(p_val), sig_label))
   list(result_text = result_text, sig_label = sig_label, p_val = p_val)
 }
 
@@ -20701,7 +21089,7 @@ sato_run_stats_ngroup <- function(
   desc_lines = c()
 ) {
   get_sig_sym <- function(p) {
-    if (stat_symbol_type == "pvalue") return(sprintf("p=%.3f", p))
+    if (stat_symbol_type == "pvalue") return(ifelse(p < 0.001, paste0("p=", format(p, scientific=FALSE)), sprintf("p=%.3f", p)))
     if (p < 0.001) "***" else if (p < 0.01) "**" else if (p < 0.05) "*" else "ns"
   }
   result_text <- sprintf(">> X-axis value: %s\\nTime point %s:", x_label, x_label)
@@ -20740,7 +21128,7 @@ sato_run_stats_ngroup <- function(
         if (!is.null(sw)) {
           is_norm <- sw$p.value >= 0.05
           normality_text <- c(normality_text,
-            sprintf("  %s vs %s: p=%.4f (%s)", pair_n[1], pair_n[2], sw$p.value,
+            sprintf("  %s vs %s: p=%s (%s)", pair_n[1], pair_n[2], fmt_p(sw$p.value),
                     if (is_norm) "normal" else "non-normal"))
           if (!is_norm) all_normal <- FALSE
         }
@@ -20781,7 +21169,7 @@ sato_run_stats_ngroup <- function(
     }
     if (!is.na(omnibus_p)) {
       result_text <- paste0(result_text,
-        sprintf("\\nOverall test: %s, p=%.4f (%s)", test_name_p, omnibus_p, get_sig_sym(omnibus_p)))
+        sprintf("\\nOverall test: %s, p=%s (%s)", test_name_p, fmt_p(omnibus_p), get_sig_sym(omnibus_p)))
       if (omnibus_p < 0.05) {
         ph_method  <- if (statistical_test == "auto") "holm" else if (post_hoc_test %in% c("bonferroni", "holm")) post_hoc_test else paired_ph_correction
         ph_label   <- if (ph_method == "bonferroni") "Bonferroni" else "Holm"
@@ -20795,7 +21183,7 @@ sato_run_stats_ngroup <- function(
         for (k in seq_along(ph_g1_vec)) {
           p_adj_k <- ph_adj_p[k]
           if (!is.na(p_adj_k)) {
-            result_text <- paste0(result_text, sprintf("\\n  %s-%s: p=%.4f (%s)", ph_g1_vec[k], ph_g2_vec[k], p_adj_k, get_sig_sym(p_adj_k)))
+            result_text <- paste0(result_text, sprintf("\\n  %s-%s: p=%s (%s)", ph_g1_vec[k], ph_g2_vec[k], fmt_p(p_adj_k), get_sig_sym(p_adj_k)))
             pairs <- rbind(pairs, data.frame(group1=ph_g1_vec[k], group2=ph_g2_vec[k], p_adj=p_adj_k, sig_label=get_sig_sym(p_adj_k), stringsAsFactors=FALSE))
           } else {
             result_text <- paste0(result_text, sprintf("\\n  %s-%s: insufficient paired data", ph_g1_vec[k], ph_g2_vec[k]))
@@ -20814,7 +21202,7 @@ sato_run_stats_ngroup <- function(
       if (!is.null(sw)) {
         norm_status <- if (sw$p.value >= 0.05) "normal" else "non-normal"
         if (sw$p.value < 0.05) all_normal <- FALSE
-        normality_text <- c(normality_text, sprintf("  %s: p=%.4f (%s)", grp, sw$p.value, norm_status))
+        normality_text <- c(normality_text, sprintf("  %s: p=%s (%s)", grp, fmt_p(sw$p.value), norm_status))
       }
     }
   }
@@ -20831,7 +21219,7 @@ sato_run_stats_ngroup <- function(
     if (!is.null(kw)) {
       omnibus_p <- kw$p.value
       result_text <- paste0(result_text,
-        sprintf("\\nOverall test: Kruskal-Wallis, p=%.4f (%s)", omnibus_p, get_sig_sym(omnibus_p)))
+        sprintf("\\nOverall test: Kruskal-Wallis, p=%s (%s)", fmt_p(omnibus_p), get_sig_sym(omnibus_p)))
       if (!is.na(omnibus_p) && omnibus_p < 0.05) {
         if (post_hoc_test == "steel") {
           ctrl <- if (nchar(dunnett_control) > 0) dunnett_control else levels(anova_data$group)[1]
@@ -20842,7 +21230,7 @@ sato_run_stats_ngroup <- function(
             for (trt in levels(anova_data$group)[levels(anova_data$group) != ctrl]) {
               sr <- tryCatch(Steel.test(list(ctrl_vals, anova_data$value[anova_data$group == trt])), error=function(e) NULL)
               if (!is.null(sr)) {
-                result_text <- paste0(result_text, sprintf("\\n  %s-%s: p=%.4f (%s)", ctrl, trt, sr$st[2], get_sig_sym(sr$st[2])))
+                result_text <- paste0(result_text, sprintf("\\n  %s-%s: p=%s (%s)", ctrl, trt, fmt_p(sr$st[2]), get_sig_sym(sr$st[2])))
                 pairs <- rbind(pairs, data.frame(group1=ctrl, group2=trt, p_adj=sr$st[2], sig_label=get_sig_sym(sr$st[2]), stringsAsFactors=FALSE))
               }
             }
@@ -20858,7 +21246,7 @@ sato_run_stats_ngroup <- function(
               for (i in seq_along(dr$comparisons)) {
                 comp_clean <- gsub(" - ", "-", dr$comparisons[i])
                 p_i <- dr$P.adjusted[i]
-                result_text <- paste0(result_text, sprintf("\\n  %s: p=%.4f (%s)", comp_clean, p_i, get_sig_sym(p_i)))
+                result_text <- paste0(result_text, sprintf("\\n  %s: p=%s (%s)", comp_clean, fmt_p(p_i), get_sig_sym(p_i)))
                 dn_parts <- strsplit(comp_clean, "-")[[1]]
                 if (length(dn_parts) == 2) pairs <- rbind(pairs, data.frame(group1=dn_parts[1], group2=dn_parts[2], p_adj=p_i, sig_label=get_sig_sym(p_i), stringsAsFactors=FALSE))
               }
@@ -20874,7 +21262,7 @@ sato_run_stats_ngroup <- function(
       anova_p <- as_[[1]][["Pr(>F)"]][1]
       omnibus_p <- anova_p
       result_text <- paste0(result_text,
-        sprintf("\\nOverall test: ANOVA, p=%.4f (%s)", anova_p, if (!is.na(anova_p)) get_sig_sym(anova_p) else ""))
+        sprintf("\\nOverall test: ANOVA, p=%s (%s)", fmt_p(anova_p), if (!is.na(anova_p)) get_sig_sym(anova_p) else ""))
       if (!is.na(anova_p) && anova_p < 0.05) {
         if (post_hoc_test == "dunnett") {
           ctrl <- if (nchar(dunnett_control) > 0) dunnett_control else levels(anova_data$group)[1]
@@ -20888,7 +21276,7 @@ sato_run_stats_ngroup <- function(
               result_text <- paste0(result_text, sprintf("\\nPost-hoc (Dunnett, vs %s):", ctrl))
               pvals <- dr$test$pvalues; cnames <- names(dr$test$coefficients)
               for (i in seq_along(pvals)) {
-                result_text <- paste0(result_text, sprintf("\\n  %s: p=%.4f (%s)", cnames[i], pvals[i], get_sig_sym(pvals[i])))
+                result_text <- paste0(result_text, sprintf("\\n  %s: p=%s (%s)", cnames[i], fmt_p(pvals[i]), get_sig_sym(pvals[i])))
                 dn_parts <- strsplit(cnames[i], " - ")[[1]]
                 if (length(dn_parts) == 2) pairs <- rbind(pairs, data.frame(group1=trimws(dn_parts[2]), group2=trimws(dn_parts[1]), p_adj=pvals[i], sig_label=get_sig_sym(pvals[i]), stringsAsFactors=FALSE))
               }
@@ -20903,7 +21291,7 @@ sato_run_stats_ngroup <- function(
             for (r in rownames(p_mat)) for (c in colnames(p_mat)) {
               p_adj <- p_mat[r,c]
               if (!is.na(p_adj)) {
-                result_text <- paste0(result_text, sprintf("\\n  %s-%s: p=%.4f (%s)", r, c, p_adj, get_sig_sym(p_adj)))
+                result_text <- paste0(result_text, sprintf("\\n  %s-%s: p=%s (%s)", r, c, fmt_p(p_adj), get_sig_sym(p_adj)))
                 pairs <- rbind(pairs, data.frame(group1=r, group2=c, p_adj=p_adj, sig_label=get_sig_sym(p_adj), stringsAsFactors=FALSE))
               }
             }
@@ -20916,8 +21304,8 @@ sato_run_stats_ngroup <- function(
             for (i in 1:nrow(ts_)) {
               comparison <- rownames(ts_)[i]; p_adj <- ts_[i,"p adj"]; diff <- ts_[i,"diff"]
               result_text <- paste0(result_text,
-                sprintf("\\n  %s: diff=%.2f, p=%.4f (%s)", comparison, diff,
-                        ifelse(is.na(p_adj),1.0,p_adj), if (!is.na(p_adj)) get_sig_sym(p_adj) else "ns"))
+                sprintf("\\n  %s: diff=%.2f, p=%s (%s)", comparison, diff,
+                        fmt_p(ifelse(is.na(p_adj),1.0,p_adj)), if (!is.na(p_adj)) get_sig_sym(p_adj) else "ns"))
               tuk_parts <- strsplit(comparison, "-")[[1]]
               if (length(tuk_parts) == 2) pairs <- rbind(pairs, data.frame(group1=tuk_parts[2], group2=tuk_parts[1], p_adj=ifelse(is.na(p_adj),1.0,p_adj), sig_label=if(!is.na(p_adj)) get_sig_sym(p_adj) else "ns", stringsAsFactors=FALSE))
             }
@@ -20955,6 +21343,10 @@ ${SHARED_STAT_HELPERS_R}
     debug_log(paste("🔥🔥🔥 JS Chart type:", "${chartType}"))
     debug_log("🔥🔥🔥 FILE VERSION TIMESTAMP: 2024-10-12-15:00 🔥🔥🔥")
     cat("🔥🔥🔥 CHECKBOX TEST: showMainStatSymbol=${showMainStatSymbol ? 'TRUE' : 'FALSE'}, showPairwiseComparisons=${showPairwiseComparisons ? 'TRUE' : 'FALSE'} 🔥🔥🔥\\n")
+
+    # Initialize clip_y_upper to NULL so condition check below uses !is.null() not exists()
+    # (exists() can fail in webR environments due to frame/scope subtleties with <<-)
+    clip_y_upper <- NULL
 
     # Set symbol size as global variable
     sato_symbol_size <- ${symbolSizeValue}
@@ -21183,7 +21575,7 @@ ${SHARED_STAT_HELPERS_R}
       vbracket_text_size=10, vbracket_sig_size=14,
       vbracket_margin=0.06, vbracket_line_width=3,
       vbracket_legend_line_length=0.05, vbracket_legend_line_width=2,
-      vbracket_item_spacing=0.1, vbracket_bracket_layer_spacing=NULL,
+      vbracket_item_spacing=0.1, vbracket_bracket_layer_spacing=NULL, vbracket_legend_title=NULL,
       output_width=6, output_height=4,
       y_scale="log10"
     ) {
@@ -21388,7 +21780,7 @@ ${SHARED_STAT_HELPERS_R}
       if (add_statistics && n_groups >= 2) {
 
         get_sig_symbol <- function(p_val) {
-          if (stat_symbol_type == "pvalue") return(sprintf("p=%.3f", p_val))
+          if (stat_symbol_type == "pvalue") return(ifelse(p_val < 0.001, paste0("p=", format(p_val, scientific=FALSE)), sprintf("p=%.3f", p_val)))
           if (p_val < 0.001) return("***")
           else if (p_val < 0.01) return("**")
           else if (p_val < 0.05) return("*")
@@ -21618,6 +22010,7 @@ ${SHARED_STAT_HELPERS_R}
                   data.frame(group1=groups1, group2=groups2, label=labels, stringsAsFactors=FALSE)
                 } else NULL,
                 x=lq_vbx, y=lq_vby,
+                title=vbracket_legend_title,
                 text_size=vbracket_text_size, sig_size=vbracket_sig_size,
                 bracket_margin=vbracket_margin,
                 line_length=vbracket_legend_line_length,
@@ -22514,6 +22907,7 @@ ${SHARED_STAT_HELPERS_R}
         vbracket_legend_line_width = ${vbracketLegendLineWidth},
         vbracket_item_spacing = ${vbracketItemSpacing},
         vbracket_bracket_layer_spacing = ${vbracketBracketLayerSpacing === null ? 'NULL' : vbracketBracketLayerSpacing},
+        vbracket_legend_title = ${showLegendTitle === 'TRUE' && escapedLegendTitle ? `"${escapedLegendTitle}"` : 'NULL'},
         output_width = ${wIn},
         output_height = ${hIn},
         x_breaks_mode = "${xBreaksMode}"
@@ -22823,6 +23217,7 @@ ${SHARED_STAT_HELPERS_R}
         vbracket_legend_line_width = ${vbracketLegendLineWidth},
         vbracket_item_spacing = ${vbracketItemSpacing},
         vbracket_bracket_layer_spacing = ${vbracketBracketLayerSpacing !== null ? vbracketBracketLayerSpacing : 'NULL'},
+        vbracket_legend_title = ${showLegendTitle === 'TRUE' && escapedLegendTitle ? `"${escapedLegendTitle}"` : 'NULL'},
         output_width = ${wIn},
         output_height = ${hIn},
         y_scale = "${yScale}"
@@ -22841,22 +23236,55 @@ ${SHARED_STAT_HELPERS_R}
     if (${showYLabel} == TRUE) {
       p <- p + ylab(${formattedYlab})
     }
-    
-    # Apply coordinate system: handles rotation and axis range limits together
+
+    # Fix y-axis scale expansion when statistics are enabled.
+    # Chart functions call sato_apply_theme with add_statistics=FALSE → only 2% expansion.
+    # With 2% expansion and e.g. data max=12, scale top ≈ 12.2 — bracket at 12.56 falls outside.
+    # Replace the scale with 15% upper expansion so brackets are inside the panel.
+    if (${addStatistics ? 'TRUE' : 'FALSE'}) {
+      if ("${yScale}" == "log10") {
+        suppressWarnings(p <- p + scale_y_log10(expand = expansion(mult = c(0.05, 0.15))))
+        cat("🔥 Scale fix: replaced scale_y_log10 with 15% upper expansion for stat brackets 🔥\\n")
+      } else if ("${yScale}" == "log2") {
+        suppressWarnings(p <- p + scale_y_continuous(trans = "log2", expand = expansion(mult = c(0.05, 0.15))))
+        cat("🔥 Scale fix: replaced scale_y_log2 with 15% upper expansion for stat brackets 🔥\\n")
+      } else if ("${yScale}" == "log") {
+        suppressWarnings(p <- p + scale_y_continuous(trans = "log", expand = expansion(mult = c(0.05, 0.15))))
+        cat("🔥 Scale fix: replaced scale_y_log(nat) with 15% upper expansion for stat brackets 🔥\\n")
+      }
+    }
+
+    # Apply coordinate system — single unified block combining:
+    #   • user's y-range (from Theme & Layout tab)
+    #   • clip_y_upper (set by stats function to clip extreme outliers on log scales)
+    # When both exist: y_upper = max(user_max, clip_y_upper) so brackets are always visible.
+    # When only user range set: respect it exactly.
+    # When only clip_y_upper set: use it to restrict the axis (e.g. hide 1e+12 outlier).
     {
       x_lim <- ${rXLim}
       y_lim <- ${rYLim}
-      if ("${rotation}" == "90") {
-        p <- p + coord_flip(xlim = x_lim, ylim = y_lim, clip = "off")
-      } else if (!is.null(x_lim) || !is.null(y_lim)) {
-        p <- p + coord_cartesian(xlim = x_lim, ylim = y_lim, clip = "off")
+
+      y_upper <- if (!is.null(y_lim) && length(y_lim) >= 2 && !is.na(y_lim[2])) y_lim[2] else NA
+      y_lower <- if (!is.null(y_lim) && length(y_lim) >= 1 && !is.na(y_lim[1])) y_lim[1] else NA
+
+      if (!is.null(clip_y_upper) && is.finite(clip_y_upper) && clip_y_upper > 0) {
+        y_upper <- if (is.na(y_upper)) clip_y_upper else max(y_upper, clip_y_upper)
+        cat("🔥 clip_y_upper applied:", clip_y_upper, "→ final y_upper:", y_upper, "🔥\\n")
       }
+
+      final_y_lim <- if (!is.na(y_upper) || !is.na(y_lower)) c(y_lower, y_upper) else NULL
+
+      if ("${rotation}" == "90") {
+        p <- p + coord_flip(xlim = x_lim, ylim = final_y_lim, clip = "off")
+      } else if (!is.null(x_lim) || !is.null(final_y_lim)) {
+        p <- p + coord_cartesian(xlim = x_lim, ylim = final_y_lim, clip = "off")
+      }
+
       # Extend axis breaks to include limit boundary values (linear scale only)
       if (!is.null(x_lim) && "${xScale}" == "linear") {
         limit_vals <- x_lim[!is.na(x_lim)]
-        x_scale <- p$scales$get_scales("x")
-        cur_breaks <- if (!is.null(x_scale) && is.numeric(x_scale$breaks)) x_scale$breaks else numeric(0)
-        # Only extend if explicit breaks exist; otherwise ggplot2 auto-breaks naturally include limit values
+        x_scale_obj <- p$scales$get_scales("x")
+        cur_breaks <- if (!is.null(x_scale_obj) && is.numeric(x_scale_obj$breaks)) x_scale_obj$breaks else numeric(0)
         if (length(cur_breaks) > 0) {
           new_breaks <- sort(unique(c(cur_breaks, limit_vals)))
           p <- p + scale_x_continuous(breaks = new_breaks)
@@ -22864,9 +23292,8 @@ ${SHARED_STAT_HELPERS_R}
       }
       if (!is.null(y_lim) && "${yScale}" == "linear") {
         limit_vals <- y_lim[!is.na(y_lim)]
-        y_scale <- p$scales$get_scales("y")
-        cur_breaks <- if (!is.null(y_scale) && is.numeric(y_scale$breaks)) y_scale$breaks else numeric(0)
-        # Only extend if explicit breaks exist; otherwise ggplot2 auto-breaks naturally include limit values
+        y_scale_obj <- p$scales$get_scales("y")
+        cur_breaks <- if (!is.null(y_scale_obj) && is.numeric(y_scale_obj$breaks)) y_scale_obj$breaks else numeric(0)
         if (length(cur_breaks) > 0) {
           new_breaks <- sort(unique(c(cur_breaks, limit_vals)))
           p <- p + scale_y_continuous(breaks = new_breaks)
@@ -22891,6 +23318,10 @@ ${SHARED_STAT_HELPERS_R}
         p <- p + labs(fill = formatted_legend_title, color = formatted_legend_title, shape = formatted_legend_title)
       }
     }
+
+    # clip_y_upper is now handled in the unified coord block above.
+    # Log the final state for debugging.
+    cat("🔥 clip_y_upper final value:", if (is.null(clip_y_upper)) "NULL" else clip_y_upper, "🔥\\n")
 
     # Dump debug log to console at the end
     if (exists("debug_log_file") && file.exists(debug_log_file)) {
