@@ -2717,6 +2717,12 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
     // Apply y-scale pre-transformation for -log10/-log2 (must be before ggplot)
     const yColNameScale = `col${settings.yColIndex || 2}`;
     const yScaleSg = settings.yScale || 'linear';
+    const isNegLogSg = (yScaleSg === '-log10' || yScaleSg === '-log2');
+    if (isNegLogSg) {
+      // Save original data BEFORE transformation so statistical tests run on untransformed values,
+      // matching Figra's internal behavior (sato_add_statistics_to_plot receives original dat)
+      code += `dat_for_stats <- dat\n`;
+    }
     if (yScaleSg === '-log10') {
       code += `# Apply -log10 transformation to Y axis (matches add-in behavior)\ndat$${yColNameScale} <- -log10(dat$${yColNameScale})\n\n`;
     } else if (yScaleSg === '-log2') {
@@ -2826,7 +2832,7 @@ ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
     // Add statistical comparisons for single-group charts
     if (settings.addStatistics && (chartType === 'bar_error_dot' || chartType === 'box' ||
         chartType === 'box_dot' || chartType === 'violin_dot')) {
-      code += generateSingleGroupStatisticalCode(settings, chartType);
+      code += generateSingleGroupStatisticalCode(settings, chartType, isNegLogSg);
     }
 
     // Compute yMin/yMax R strings for coord system
@@ -4816,7 +4822,7 @@ p <- p + stat_compare_means(comparisons = comparisons, method = 't.test')
 }
 
 // Helper function to generate statistical comparison code for single-group charts
-function generateSingleGroupStatisticalCode(settings, chartType) {
+function generateSingleGroupStatisticalCode(settings, chartType, isNegLog = false) {
   // DOM-first: live checkbox state takes priority over stale stored settings
   const resolvedAddStats = document.getElementById("addStatistics")?.checked ||
                            settings.addStatistics ||
@@ -6093,6 +6099,27 @@ if (nrow(comparison_df) > 0) {
 # To show all comparisons including 'ns', remove the if condition above.
 
 `;
+  }
+
+  // For -log10/-log2 scales: redirect Y-value data access to dat_for_stats (original values),
+  // matching Figra's internal behavior where sato_add_statistics_to_plot receives untransformed data.
+  // Visual range references (range(dat$colY)) are intentionally kept using transformed `dat`.
+  if (isNegLog) {
+    const yc = yColName;
+    const xc = xColName;
+    // Protect the visual range expression before doing replacements
+    const rangePlaceholder = '__RANGE_DAT_YCOL__';
+    code = code.replace(new RegExp(`range\\(dat\\$${yc}`, 'g'), `range(${rangePlaceholder}`);
+    // Replace Y-value accesses used for statistical tests
+    code = code
+      .replace(new RegExp(`dat\\[dat\\$${xc}`, 'g'), `dat_for_stats[dat$${xc}`)
+      .replace(new RegExp(`dat\\$${yc} ~`, 'g'), `dat_for_stats$${yc} ~`)
+      .replace(new RegExp(`dat\\$${yc}, dat\\$${xc}`, 'g'), `dat_for_stats$${yc}, dat$${xc}`)
+      .replace(new RegExp(`dunn\\.test\\(dat\\$${yc}`, 'g'), `dunn.test(dat_for_stats$${yc}`)
+      .replace(new RegExp(`, data = dat\\)`, 'g'), `, data = dat_for_stats)`)
+      .replace(new RegExp(`, data = dat,`, 'g'), `, data = dat_for_stats,`);
+    // Restore the protected range expression
+    code = code.replace(new RegExp(`range\\(${rangePlaceholder}`, 'g'), `range(dat$${yc}`);
   }
 
   return code;
