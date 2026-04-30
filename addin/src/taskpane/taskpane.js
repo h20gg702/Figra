@@ -1321,6 +1321,19 @@ async function loadFromFigure() {
           }
         }
 
+        // Explicitly restore fillMode — safety net after all async operations
+        // (handleChartTypeChange resets fillMode to "single"; this ensures the saved value wins)
+        if (finalSettings.fillMode) {
+          const fillModeEl = document.getElementById(
+            finalSettings.fillMode === 'per_category' ? 'fillModePerCategory' : 'fillModeSingle'
+          );
+          if (fillModeEl) {
+            fillModeEl.checked = true;
+            fillModeEl.dispatchEvent(new Event('change'));
+            console.log("🎨 FINAL fillMode set to:", finalSettings.fillMode);
+          }
+        }
+
         // Final verification: log all font-related UI values
         console.log("✅ FINAL UI VALUES after all settings applied:");
         console.log("  fontFam:", document.getElementById("fontFam")?.value);
