@@ -8426,11 +8426,17 @@ Office.onReady(() => {
       // Ensure single-color state: show fill color, hide category colors
       if (fillColorSubRow) fillColorSubRow.style.display = "flex";
       if (groupColorRow) groupColorRow.style.display = "none";
+    } else if (v === "histogram") {
+      lx.textContent = "Values";
+      ly.textContent = "Y Axis";
     } else {
-      // histogram and others
       lx.textContent = "X Axis";
       ly.textContent = "Y Axis";
     }
+
+    // Show/hide Y column row: histogram computes Y (frequency) automatically, no selector needed
+    const yColumnRow = document.getElementById("yColumnRow");
+    if (yColumnRow) yColumnRow.style.display = v === "histogram" ? "none" : "flex";
 
     // Hide fill mode row and restore fill color row for non-bar_error_dot charts
     if (!isPerCategoryColor) {
