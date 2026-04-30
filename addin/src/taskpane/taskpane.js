@@ -2125,6 +2125,16 @@ async function writeRCodeToCell(rCode) {
   }
 }
 
+// Wrap R vector values across multiple lines to stay under R's 4094-char line limit
+function chunkRValues(arr, lineIndent) {
+  const CHUNK = 50;
+  const lines = [];
+  for (let i = 0; i < arr.length; i += CHUNK) {
+    lines.push(arr.slice(i, i + CHUNK).join(', '));
+  }
+  return lines.join(',\n' + lineIndent);
+}
+
 // Generate subset R code from Excel data (data frame + basic ggplot)
 function generateSubsetRCodeFromData(chartType, opts) {
   try {
@@ -2153,11 +2163,11 @@ function generateSubsetRCodeFromData(chartType, opts) {
         const isNumeric = colValues.every(v => v === null || v === '' || !isNaN(v));
 
         if (isNumeric) {
-          const values = colValues.map(v => v === null || v === '' ? 'NA' : v).join(', ');
-          dataFrameCode += `  ${colName} = c(${values})`;
+          const valArr = colValues.map(v => v === null || v === '' ? 'NA' : v);
+          dataFrameCode += `  ${colName} = c(${chunkRValues(valArr, '    ')})`;
         } else {
-          const values = colValues.map(v => v === null || v === '' ? 'NA' : `'${String(v).replace(/'/g, "\\'")}'`).join(', ');
-          dataFrameCode += `  ${colName} = c(${values})`;
+          const valArr = colValues.map(v => v === null || v === '' ? 'NA' : `'${String(v).replace(/'/g, "\\'")}'`);
+          dataFrameCode += `  ${colName} = c(${chunkRValues(valArr, '    ')})`;
         }
 
         if (colIdx < headers.length - 1) dataFrameCode += ',\n';
@@ -2170,11 +2180,11 @@ function generateSubsetRCodeFromData(chartType, opts) {
         const isNumeric = colValues.every(v => v === null || v === '' || !isNaN(v));
 
         if (isNumeric) {
-          const values = colValues.map(v => v === null || v === '' ? 'NA' : v).join(', ');
-          dataFrameCode += `  V${colIdx + 1} = c(${values})`;
+          const valArr = colValues.map(v => v === null || v === '' ? 'NA' : v);
+          dataFrameCode += `  V${colIdx + 1} = c(${chunkRValues(valArr, '    ')})`;
         } else {
-          const values = colValues.map(v => v === null || v === '' ? 'NA' : `'${String(v).replace(/'/g, "\\'")}'`).join(', ');
-          dataFrameCode += `  V${colIdx + 1} = c(${values})`;
+          const valArr = colValues.map(v => v === null || v === '' ? 'NA' : `'${String(v).replace(/'/g, "\\'")}'`);
+          dataFrameCode += `  V${colIdx + 1} = c(${chunkRValues(valArr, '    ')})`;
         }
 
         if (colIdx < numCols - 1) dataFrameCode += ',\n';
@@ -2441,17 +2451,16 @@ function extractRelevantRCode() {
 
         if (isNumeric) {
           // Numeric column
-          const values = colValues.map(v => v === null || v === '' ? 'NA' : v).join(', ');
-          dataFrame += `  ${colName} = c(${values})`;
+          const valArr = colValues.map(v => v === null || v === '' ? 'NA' : v);
+          dataFrame += `  ${colName} = c(${chunkRValues(valArr, '    ')})`;
         } else {
           // String column - USE SINGLE QUOTES
-          const values = colValues.map(v => {
+          const valArr = colValues.map(v => {
             if (v === null || v === '') return 'NA';
-            // Escape single quotes in the string value
             const escaped = String(v).replace(/'/g, "\\'");
             return `'${escaped}'`;
-          }).join(', ');
-          dataFrame += `  ${colName} = c(${values})`;
+          });
+          dataFrame += `  ${colName} = c(${chunkRValues(valArr, '    ')})`;
         }
 
         if (colIdx < headers.length - 1) dataFrame += ',\n';
@@ -2597,7 +2606,7 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
       const groupVals = allRows.map(r => `'${String(r[settings.groupColIndex - 1]).replace(/'/g, "\\'")}'`);
       const groupColors = settings.groupColors || ["#4C78A8", "#E15759", "#76B7B2", "#F28E2B"];
       const groupColorsR = `c(${groupColors.slice(0, settings.numGroups || 2).map(c => `'${c}'`).join(', ')})`;
-      code += `dat <- data.frame(\n  ${groupColName} = c(${groupVals.join(', ')}),\n  ${xColName} = c(${xVals.join(', ')}),\n  ${yColName} = c(${yVals.join(', ')})\n)\n`;
+      code += `dat <- data.frame(\n  ${groupColName} = c(${chunkRValues(groupVals, '    ')}),\n  ${xColName} = c(${chunkRValues(xVals, '    ')}),\n  ${yColName} = c(${chunkRValues(yVals, '    ')})\n)\n`;
       code += negLogTransform();
       if (settings.scatterPerGroupShape && settings.scatterGroupShapes) {
         const shapeValsR = `c(${settings.scatterGroupShapes.slice(0, settings.numGroups || 2).join(', ')})`;
@@ -2614,7 +2623,7 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
       code += `  theme_${settings.themeName || 'bw'}(base_size = ${settings.xAxisTextSize || 12}, base_family = '${settings.fontFamily || 'Arial'}')\n`;
       code += scaleLines();
     } else {
-      code += `dat <- data.frame(\n  ${xColName} = c(${xVals.join(', ')}),\n  ${yColName} = c(${yVals.join(', ')})\n)\n`;
+      code += `dat <- data.frame(\n  ${xColName} = c(${chunkRValues(xVals, '    ')}),\n  ${yColName} = c(${chunkRValues(yVals, '    ')})\n)\n`;
       code += negLogTransform();
       code += `p <- ggplot(dat, aes(x = ${xColName}, y = ${yColName})) +\n`;
       code += `  geom_point(color = '${settings.dotColor || '#4C78A8'}', size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}, shape = ${settings.dotShape || 16}) +\n`;
@@ -9707,6 +9716,25 @@ Office.onReady(() => {
     // Repopulate vbracket timepoint dropdown with new X values
     if (typeof populateVbracketTimepoints === 'function') {
       populateVbracketTimepoints();
+    }
+    // Auto-update numGroups for per-category chart types (violin, box, dot, bar, etc.)
+    const PER_CAT_TYPES = ["bar_error_dot", "bar", "bar_error", "box", "box_dot", "violin", "violin_dot", "dot"];
+    const currentType = (document.getElementById("chartType")?.value || "").toLowerCase();
+    if (PER_CAT_TYPES.includes(currentType) && window.lastProcessedData?.length > 1) {
+      const headers = window.lastProcessedData[0];
+      const colIdx = headers.indexOf(this.value);
+      if (colIdx >= 0) {
+        const unique = new Set(
+          window.lastProcessedData.slice(1).map(r => r[colIdx]).filter(v => v !== null && v !== '')
+        );
+        const numGroupsEl = document.getElementById("numGroups");
+        if (numGroupsEl) {
+          numGroupsEl.value = Math.min(Math.max(unique.size, 1), 10);
+          if (typeof window.updateGroupColorVisibility === 'function') {
+            window.updateGroupColorVisibility();
+          }
+        }
+      }
     }
   });
 
