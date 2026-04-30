@@ -2797,8 +2797,11 @@ ${needsVbracket ? `library(vbracket)  # For custom legend with brackets` : ''}
       }
     }
 
+    const aesStr = chartType === 'histogram'
+      ? `aes(x = col${settings.xColIndex || 1})`
+      : `aes(x = col${settings.xColIndex || 1}, y = col${settings.yColIndex || 2})`;
     code += `# Create plot
-p <- ggplot(dat, aes(x = col${settings.xColIndex || 1}, y = col${settings.yColIndex || 2})) +
+p <- ggplot(dat, ${aesStr}) +
   ${geomCode} +
 ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
   theme_${settings.themeName}(base_family = '${settings.fontFamily}') +
@@ -13134,11 +13137,11 @@ async function exportIC50CurveDataToExcel() {
 
       await Excel.run(async (context) => {
         const sheet = context.workbook.worksheets.getActiveSheet();
-        const usedRange = sheet.getUsedRange();
-        usedRange.load("columnCount");
+        const usedRange = sheet.getUsedRangeOrNullObject();
+        usedRange.load(["isNullObject", "columnCount"]);
         await context.sync();
 
-        const startCol = usedRange.columnCount + 1;
+        const startCol = usedRange.isNullObject ? 1 : usedRange.columnCount + 1;
 
         // Section 1: IC50 summary table
         const outputData = [
@@ -13243,12 +13246,12 @@ async function exportIC50CurveDataToExcel() {
 
       await Excel.run(async (context) => {
         const sheet = context.workbook.worksheets.getActiveSheet();
-        const usedRange = sheet.getUsedRange();
-        usedRange.load("columnCount");
+        const usedRange = sheet.getUsedRangeOrNullObject();
+        usedRange.load(["isNullObject", "columnCount"]);
         await context.sync();
 
         // Write results after the last used column (with one blank column gap)
-        const startCol = usedRange.columnCount + 1;
+        const startCol = usedRange.isNullObject ? 1 : usedRange.columnCount + 1;
 
         const outputData = [];
         outputData.push(["IC50 Analysis Results"]);
@@ -16279,6 +16282,7 @@ async function initWebR() {
                             add_statistics=FALSE, statistical_test="auto") {
 
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
+      dat[[x_col]] <- as.numeric(dat[[x_col]])
 
       if (!is.null(group_col) && ncol(dat) >= group_col) {
         # Grouped scatter: color by group
@@ -22093,7 +22097,7 @@ ${SHARED_STAT_HELPERS_R}
     if (chart_type == "histogram") {
       p <- sato_hist(
         dat = dat,
-        x_col = 1,
+        x_col = ${xColIndex},
         bins = ${bins},
         fill = "${fillColor}",
         color = "${strokeColor}",
