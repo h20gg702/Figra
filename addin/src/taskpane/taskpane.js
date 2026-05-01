@@ -9543,6 +9543,9 @@ Office.onReady(() => {
 
   // Copy to Clipboard button
   document.getElementById("vcCopyBtn")?.addEventListener("click", async () => {
+    const btn = document.getElementById("vcCopyBtn");
+    const origText = btn ? btn.textContent : "";
+    if (btn) { btn.textContent = "Copying…"; btn.disabled = true; }
     try {
       if (!vcData.length) { setVcMsg("❌ Load data first.", true); return; }
       const outputRows = vcBuildOutputRows();
@@ -9552,10 +9555,31 @@ Office.onReady(() => {
         return;
       }
       const tsv = outputRows.map(row => row.map(v => (v === null || v === undefined) ? "" : String(v)).join("\t")).join("\n");
-      await navigator.clipboard.writeText(tsv);
-      setVcMsg(`✅ ${outputRows.length - 1} rows copied to clipboard. Paste into Excel, then click <b>Load Data</b>.`);
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(tsv);
+        copied = true;
+      } catch (e) {
+        console.warn("Clipboard API failed, trying execCommand fallback:", e);
+      }
+      if (!copied) {
+        const ta = document.createElement("textarea");
+        ta.value = tsv;
+        ta.style.cssText = "position:fixed;opacity:0;pointer-events:none;";
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand("copy");
+        document.body.removeChild(ta);
+      }
+      if (copied) {
+        setVcMsg(`✅ ${outputRows.length - 1} rows copied to clipboard. Paste into Excel, then click <b>Load Data</b>.`);
+      } else {
+        setVcMsg("❌ Could not copy to clipboard. Try the <b>Convert to New Sheet</b> button instead.", true);
+      }
     } catch (e) {
       setVcMsg("❌ Clipboard error: " + (e?.message || e), true);
+    } finally {
+      if (btn) { btn.textContent = origText; btn.disabled = false; }
     }
   });
 
