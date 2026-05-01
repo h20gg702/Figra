@@ -723,6 +723,35 @@ async function saveFigureWithMetadata() {
       }
     }
 
+    // 2d. Collect LQ results if applicable
+    metadata.lqResults = null;
+    if (chartType === "lq_survival_grouped") {
+      try {
+        await initWebR();
+        const lqGroupsR = await webR.evalR(`if(exists("lq_survival_grouped_results")&&!is.null(lq_survival_grouped_results)) as.character(lq_survival_grouped_results$Group) else character(0)`);
+        const lqGroups = await lqGroupsR.toArray().catch(() => []);
+        if (lqGroups.length > 0) {
+          const lqAlphasR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Alpha)`);
+          const lqAlphas = await lqAlphasR.toArray().catch(() => []);
+          const lqBetasR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Beta)`);
+          const lqBetas = await lqBetasR.toArray().catch(() => []);
+          const lqAbR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Alpha_Beta)`);
+          const lqAbs = await lqAbR.toArray().catch(() => []);
+          const lqSf2R = await webR.evalR(`as.numeric(lq_survival_grouped_results$SF2)`);
+          const lqSf2s = await lqSf2R.toArray().catch(() => []);
+          const lqD10R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D10)`);
+          const lqD10s = await lqD10R.toArray().catch(() => []);
+          const lqD0R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D0)`);
+          const lqD0s = await lqD0R.toArray().catch(() => []);
+          metadata.lqResults = { groups: lqGroups, alphas: lqAlphas, betas: lqBetas, abs_vals: lqAbs, sf2s: lqSf2s, d10s: lqD10s, d0s: lqD0s };
+          debugLog("Step 5d: ✅ LQ results saved (" + lqGroups.length + " groups)");
+        }
+      } catch (e) {
+        console.error("Error collecting LQ results for metadata:", e);
+        debugLog("Step 5d: ❌ Error: " + e.message);
+      }
+    }
+
     // 3. Embed metadata into PNG iTXt chunk
     const pngWithMetadata = await embedPngMetadata(pngBlob, metadata);
     debugLog("Step 6: Metadata embedded (" + pngWithMetadata.size + " bytes)");
@@ -879,6 +908,33 @@ async function downloadMetadataJson() {
       }
     } else {
       metadata.statisticalResults = null;
+    }
+
+    // Collect LQ results if applicable
+    metadata.lqResults = null;
+    if (chartType === "lq_survival_grouped") {
+      try {
+        await initWebR();
+        const lqGroupsR = await webR.evalR(`if(exists("lq_survival_grouped_results")&&!is.null(lq_survival_grouped_results)) as.character(lq_survival_grouped_results$Group) else character(0)`);
+        const lqGroups = await lqGroupsR.toArray().catch(() => []);
+        if (lqGroups.length > 0) {
+          const lqAlphasR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Alpha)`);
+          const lqAlphas = await lqAlphasR.toArray().catch(() => []);
+          const lqBetasR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Beta)`);
+          const lqBetas = await lqBetasR.toArray().catch(() => []);
+          const lqAbR = await webR.evalR(`as.numeric(lq_survival_grouped_results$Alpha_Beta)`);
+          const lqAbs = await lqAbR.toArray().catch(() => []);
+          const lqSf2R = await webR.evalR(`as.numeric(lq_survival_grouped_results$SF2)`);
+          const lqSf2s = await lqSf2R.toArray().catch(() => []);
+          const lqD10R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D10)`);
+          const lqD10s = await lqD10R.toArray().catch(() => []);
+          const lqD0R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D0)`);
+          const lqD0s = await lqD0R.toArray().catch(() => []);
+          metadata.lqResults = { groups: lqGroups, alphas: lqAlphas, betas: lqBetas, abs_vals: lqAbs, sf2s: lqSf2s, d10s: lqD10s, d0s: lqD0s };
+        }
+      } catch (e) {
+        console.error("Error collecting LQ results for metadata:", e);
+      }
     }
 
     // Convert to JSON
@@ -1203,6 +1259,35 @@ async function loadFromFigure() {
               newSheet.getRangeByIndexes(0, ic50StartCol, 1, 1).format.font.size = 14;
               ic50Range.format.autofitColumns();
               console.log("IC50 results written from metadata to sheet");
+            }
+
+            if (metadata.lqResults) {
+              const lq = metadata.lqResults;
+              const lqStartCol = numCols + 1;
+              const lqRows = [
+                ["LQ Clonogenic Survival Analysis"],
+                ["Model: SF = exp(-alpha × Dose - beta × Dose²)"],
+                [""],
+                ["Group", "alpha (Gy⁻¹)", "beta (Gy⁻²)", "alpha/beta (Gy)", "SF2", "D10 (Gy)", "D0 (Gy)"]
+              ];
+              for (let i = 0; i < lq.groups.length; i++) {
+                const abVal = lq.abs_vals[i];
+                lqRows.push([
+                  lq.groups[i],
+                  isNaN(lq.alphas[i]) ? "N/A" : lq.alphas[i],
+                  isNaN(lq.betas[i]) ? "N/A" : lq.betas[i],
+                  (!abVal || abVal > 1e6) ? "Inf" : abVal,
+                  isNaN(lq.sf2s[i]) ? "N/A" : lq.sf2s[i],
+                  isNaN(lq.d10s[i]) ? "N/A" : lq.d10s[i],
+                  isNaN(lq.d0s[i]) ? "N/A" : lq.d0s[i]
+                ]);
+              }
+              const lqRange = newSheet.getRangeByIndexes(0, lqStartCol, lqRows.length, 7);
+              lqRange.values = lqRows.map(row => { const r = [...row]; while (r.length < 7) r.push(""); return r.slice(0, 7); });
+              newSheet.getRangeByIndexes(0, lqStartCol, 1, 1).format.font.bold = true;
+              newSheet.getRangeByIndexes(0, lqStartCol, 1, 1).format.font.size = 14;
+              lqRange.format.autofitColumns();
+              console.log("LQ results written from metadata to sheet");
             }
 
             await context.sync();
@@ -3512,8 +3597,9 @@ fit_data <- do.call(rbind, lapply(groups, function(g) {
   if (is.null(fit)) return(NULL)
   coefs <- coef(fit)
   alpha <- coefs['a']; beta <- if ('b' %in% names(coefs)) coefs['b'] else 0
-  cat(sprintf('%s: alpha=%.4f, beta=%.4f, alpha/beta=%.2f Gy\\n', g, alpha, beta,
-              if (beta > 1e-8) alpha/beta else Inf))
+  d0 <- if (beta > 1e-8) (-alpha + sqrt(alpha^2 + 4*beta)) / (2*beta) else 1/alpha
+  cat(sprintf('%s: alpha=%.4f, beta=%.4f, alpha/beta=%.2f Gy, D0=%.2f Gy\\n', g, alpha, beta,
+              if (beta > 1e-8) alpha/beta else Inf, d0))
   data.frame(group=g, dose=dose_seq, sf_pred=pmax(exp(-alpha*dose_seq - beta*dose_seq^2), 1e-10),
              stringsAsFactors=FALSE)
 }))
@@ -13370,6 +13456,8 @@ async function exportLQSurvivalResultsToExcel() {
     const sf2s = await sf2R.toArray().catch(() => []);
     const d10R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D10)`);
     const d10s = await d10R.toArray().catch(() => []);
+    const d0R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D0)`);
+    const d0s = await d0R.toArray().catch(() => []);
 
     // Fetch fitted curve data
     const fitGroupsR = await webR.evalR(`
@@ -13397,7 +13485,7 @@ async function exportLQSurvivalResultsToExcel() {
         ["LQ Clonogenic Survival Analysis"],
         ["Model: SF = exp(-alpha * Dose - beta * Dose^2)"],
         [""],
-        ["Group", "alpha (Gy\u207b\u00b9)", "beta (Gy\u207b\u00b2)", "alpha/beta (Gy)", "SF2", "D10 (Gy)"]
+        ["Group", "alpha (Gy\u207b\u00b9)", "beta (Gy\u207b\u00b2)", "alpha/beta (Gy)", "SF2", "D10 (Gy)", "D0 (Gy)"]
       ];
 
       for (let i = 0; i < groups.length; i++) {
@@ -13408,7 +13496,8 @@ async function exportLQSurvivalResultsToExcel() {
           isNaN(betas[i]) ? "N/A" : betas[i],
           (!abVal || abVal > 1e6) ? "Inf" : abVal,
           isNaN(sf2s[i]) ? "N/A" : sf2s[i],
-          isNaN(d10s[i]) ? "N/A" : d10s[i]
+          isNaN(d10s[i]) ? "N/A" : d10s[i],
+          isNaN(d0s[i]) ? "N/A" : d0s[i]
         ]);
       }
 
@@ -21728,9 +21817,15 @@ ${SHARED_STAT_HELPERS_R}
           } else {
             log(10) / alpha_val
           }
+          d0         <- if (beta_val > 1e-8) {
+            disc <- alpha_val^2 + 4 * beta_val * 1
+            if (disc >= 0) (-alpha_val + sqrt(disc)) / (2 * beta_val) else NA_real_
+          } else {
+            1 / alpha_val
+          }
 
           params_list[[as.character(g)]] <- list(
-            alpha=alpha_val, beta=beta_val, alpha_beta=alpha_beta, sf2=sf2, d10=d10
+            alpha=alpha_val, beta=beta_val, alpha_beta=alpha_beta, sf2=sf2, d10=d10, d0=d0
           )
 
           sf_pred <- pmax(exp(-alpha_val * dose_seq - beta_val * dose_seq^2), 1e-10)
@@ -21751,6 +21846,7 @@ ${SHARED_STAT_HELPERS_R}
           cat(sprintf("  alpha/beta:     %s Gy\\n", ab_str))
           cat(sprintf("  SF2:            %.4f\\n", pr$sf2))
           cat(sprintf("  D10 (Gy):       %.2f\\n", pr$d10))
+          cat(sprintf("  D0  (Gy):       %.2f\\n", pr$d0))
           cat("\\n")
         }
       }
@@ -21767,6 +21863,7 @@ ${SHARED_STAT_HELPERS_R}
           Alpha_Beta = sapply(groups, function(g) { p2 <- params_list[[as.character(g)]]; if (!is.null(p2)) p2$alpha_beta else NA }),
           SF2        = sapply(groups, function(g) { p2 <- params_list[[as.character(g)]]; if (!is.null(p2)) p2$sf2 else NA }),
           D10        = sapply(groups, function(g) { p2 <- params_list[[as.character(g)]]; if (!is.null(p2)) p2$d10 else NA }),
+          D0         = sapply(groups, function(g) { p2 <- params_list[[as.character(g)]]; if (!is.null(p2)) p2$d0 else NA }),
           stringsAsFactors = FALSE
         )
       }, error = function(e) NULL)
@@ -24743,6 +24840,8 @@ async function previewPlotWithDebug() {
               const sf2s = await sf2R.toArray().catch(() => []);
               const d10R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D10)`);
               const d10s = await d10R.toArray().catch(() => []);
+              const d0R = await webR.evalR(`as.numeric(lq_survival_grouped_results$D0)`);
+              const d0s = await d0R.toArray().catch(() => []);
 
               let resultText = "";
               for (let i = 0; i < groups.length; i++) {
@@ -24753,6 +24852,7 @@ async function previewPlotWithDebug() {
                 resultText += `  alpha/beta:    ${(!abVal || abVal > 1e6) ? "\u221e (\u03b2\u22480)" : abVal.toFixed(2) + " Gy"}\n`;
                 resultText += `  SF2:           ${isNaN(sf2s[i]) ? "N/A" : sf2s[i].toFixed(4)}\n`;
                 resultText += `  D10 (Gy):      ${isNaN(d10s[i]) ? "N/A" : d10s[i].toFixed(2)}\n`;
+                resultText += `  D0  (Gy):      ${isNaN(d0s[i]) ? "N/A" : d0s[i].toFixed(2)}\n`;
                 if (i < groups.length - 1) resultText += "\n";
               }
 
