@@ -13526,14 +13526,14 @@ async function exportLQSurvivalResultsToExcel() {
       }
 
       const paramRows = outputData.length;
-      const range = newSheet.getRange(`A1:F${paramRows}`);
+      const range = newSheet.getRange(`A1:G${paramRows}`);
       range.values = outputData.map(row => {
-        while (row.length < 6) row.push("");
-        return row.slice(0, 6);
+        while (row.length < 7) row.push("");
+        return row.slice(0, 7);
       });
       newSheet.getRange("A1").format.font.bold = true;
       newSheet.getRange("A1").format.font.size = 13;
-      newSheet.getRange("A4:F4").format.font.bold = true;
+      newSheet.getRange("A4:G4").format.font.bold = true;
 
       // Section 2: Fitted curve data (2 rows below parameters)
       if (fitGroups.length > 0) {
