@@ -22,3 +22,6 @@ pnpm-debug.log*
 # Office add-in certs (if generated)
 *.pfx
 *.cer
+
+# Claude Code
+.claude/
