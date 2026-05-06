@@ -104,6 +104,59 @@ Search for **Figra** in Microsoft AppSource, or install directly from Excel via 
 
 The hosted add-in is served from [https://h20gg702.github.io/figra-pages/](https://h20gg702.github.io/figra-pages/).
 
+## Get Started in 3 Steps
+
+**Step 1 — Download the manifest file**
+Download `manifest.xml` from [https://h20gg702.github.io/figra-pages/](https://h20gg702.github.io/figra-pages/)
+
+**Step 2 — Add to Excel**
+
+🌐 **Excel Online (easiest — any OS):**
+1. Open a workbook at office.com
+2. **Home** → **Add-ins** → **More Settings** → **Upload My Add-in**
+3. Select `manifest.xml` → **Upload**
+
+🪟 **Windows Desktop Excel:**
+1. Create a folder e.g. `C:\FigraAddin` and copy `manifest.xml` into it
+2. Right-click the folder → **Properties** → **Sharing** tab → **Advanced Sharing** → check **Share this folder** → note the network path (e.g. `\\YourPC\FigraAddin`)
+3. In Excel: **File** → **Options** → **Trust Center** → **Trust Center Settings** → **Trusted Add-in Catalogs**
+4. Paste the network path → **Add Catalog** → check **Show in Menu** → **OK**
+5. Close and reopen Excel → **Insert** → **Get Add-ins** → **SHARED FOLDER** tab → select **Figra** → **Add**
+
+> ⚠️ Microsoft disabled Shared Folder sideloading by default from Office build 16.0.16227 (March 2023). If the Shared Folder tab is missing, use Excel Online or ask your IT admin to deploy via Microsoft 365 Admin Center.
+
+🍎 **Mac Desktop Excel:**
+1. In Finder press **Cmd+Shift+G** → navigate to `~/Library/Containers/com.microsoft.Excel/Data/Documents/wef` (create the `wef` folder if it does not exist)
+2. Copy `manifest.xml` into this folder
+3. Open Excel → **Home** → **Add-ins** → select **Figra**
+
+**Step 3 — Start creating figures**
+Click **Figra** in the Home tab, register (one-time), and create your first figure!
+
+---
+
+## Frequently Asked Questions
+
+**Is Figra free?**
+Yes, completely free with a one-time registration.
+
+**Do I need to install R?**
+No. Figra uses [webR](https://webr.r-wasm.org/) — R runs directly in your browser via WebAssembly with no installation required.
+
+**Does it work on Mac?**
+Yes. Excel Online provides full functionality on Mac. The Mac Excel desktop app has some limitations due to OS restrictions: saving PNG with embedded metadata and downloading `.R` files directly don't work, but you can use Insert Figure to Sheet and Copy R Code instead.
+
+**What file formats can I export?**
+PNG with embedded metadata (data and settings), allowing you to regenerate and re-edit figures later.
+
+**What statistical tests are supported?**
+t-test, Wilcoxon, ANOVA, and Kruskal-Wallis. Post-hoc tests: Tukey HSD, Dunnett, Steel, and Dunn, with Bonferroni and Holm correction options.
+
+**What kind of data works best with Figra?**
+Figra runs R inside your browser via WebAssembly, which can use up to 4GB of your PC's memory ([details](https://v8.dev/blog/4gb-wasm-memory)). Performance depends on your available RAM and CPU. Typical experimental datasets work well on most modern computers, but very large datasets may be slow. Figra is not designed for large-scale genomics data visualization such as RNA-seq or other NGS results.
+
+---
+
 ## Quick Start
 
 1. **Select your data** in Excel (with headers)
