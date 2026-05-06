@@ -4,7 +4,7 @@
 
 Figra is an Excel Office Add-in that creates publication-ready scientific visualizations using R and ggplot2 — directly in your browser, with no R installation required.
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![License](https://img.shields.io/badge/license-Custom%20Terms-blue.svg)
 ![Platform](https://img.shields.io/badge/platform-Excel%20(Windows%20%7C%20Mac%20%7C%20Web)-green.svg)
 
 ## Features
@@ -193,7 +193,7 @@ ORCID: [0000-0003-3375-5189](https://orcid.org/0000-0003-3375-5189)
 
 ## License
 
-MIT License — see [LICENSE](LICENSE) for details.
+Free for academic, research, and personal use. Redistribution, modification, and commercial resale are not permitted without written permission from the author. See [LICENSE](LICENSE) and the full [Terms of Use](https://h20gg702.github.io/figra-pages/terms.html) for details.
 
 ## Acknowledgments
 
