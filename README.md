@@ -196,6 +196,8 @@ ORCID: [0000-0003-3375-5189](https://orcid.org/0000-0003-3375-5189)
 
 Free for academic, research, and personal use. Redistribution, modification, and commercial resale are not permitted without written permission from the author. See [LICENSE](LICENSE) and the full [Terms of Use](https://h20gg702.github.io/figra-pages/terms.html) for details.
 
+For installation instructions, chart examples, FAQ, and more, visit **[https://h20gg702.github.io/figra-pages/](https://h20gg702.github.io/figra-pages/)**.
+
 ## Acknowledgments
 
 - [webR](https://webr.r-wasm.org/) by George Stagg and the R Consortium
