@@ -20,53 +20,27 @@ Figra is an Excel Office Add-in that creates publication-ready scientific visual
 
 ### Distribution Charts
 
-| Histogram | Box Plot | Box Plot + Dots |
-|:---------:|:--------:|:---------------:|
-| ![Histogram](docs/images/histogram.png) | ![Box Plot](docs/images/box.png) | ![Box Plot + Dots](docs/images/box_dot.png) |
+| Histogram | Box Plot | Violin Plot |
+|:---------:|:--------:|:-----------:|
+| ![Histogram](https://h20gg702.github.io/figra-pages/figures/histogram.png) | ![Box Plot](https://h20gg702.github.io/figra-pages/figures/box.png) | ![Violin Plot](https://h20gg702.github.io/figra-pages/figures/violin.png) |
 
-| Violin Plot | Violin Plot + Dots | Dot Plot |
-|:-----------:|:------------------:|:--------:|
-| ![Violin Plot](docs/images/violin.png) | ![Violin Plot + Dots](docs/images/violin_dot.png) | ![Dot Plot](docs/images/dot.png) |
+### Bar & Grouped Charts
 
-### Bar Charts
+| Bar + Error + Dots | Grouped Bar + Error + Dots | Grouped Box + Dots |
+|:------------------:|:--------------------------:|:------------------:|
+| ![Bar + Error + Dots](https://h20gg702.github.io/figra-pages/figures/bar.png) | ![Grouped Bar + Error + Dots](https://h20gg702.github.io/figra-pages/figures/grouped_bar_error_dots.png) | ![Grouped Box + Dots](https://h20gg702.github.io/figra-pages/figures/grouped_box_dots.png) |
 
-| Bar Plot | Bar + Error | Bar + Error + Dots |
-|:--------:|:-----------:|:------------------:|
-| ![Bar Plot](docs/images/bar.png) | ![Bar + Error](docs/images/bar_error.png) | ![Bar + Error + Dots](docs/images/bar_error_dot.png) |
+### Line & Dose-Response Charts
 
-### Grouped Bar Charts
+| Grouped Line | Grouped Dose-Response | IC50 Dose-Response (4PL) |
+|:------------:|:---------------------:|:------------------------:|
+| ![Grouped Line](https://h20gg702.github.io/figra-pages/figures/group_line.png) | ![Grouped Dose-Response](https://h20gg702.github.io/figra-pages/figures/group_dose.png) | ![IC50 Dose-Response](https://h20gg702.github.io/figra-pages/figures/dose_response_curve.png) |
 
-| Grouped Bar | Grouped Bar + Error | Grouped Bar + Error + Dots |
-|:-----------:|:-------------------:|:--------------------------:|
-| ![Grouped Bar](docs/images/bar_grouped.png) | ![Grouped Bar + Error](docs/images/bar_grouped_error.png) | ![Grouped Bar + Error + Dots](docs/images/bar_grouped_error_dot.png) |
+### Specialized Charts
 
-### Grouped Box & Violin Charts
-
-| Grouped Box | Grouped Box + Dots | Grouped Violin + Dots |
-|:-----------:|:------------------:|:---------------------:|
-| ![Grouped Box](docs/images/box_grouped.png) | ![Grouped Box + Dots](docs/images/box_grouped_dot.png) | ![Grouped Violin + Dots](docs/images/violin_grouped_dot.png) |
-
-### Line Charts
-
-| Line Plot | Grouped Line | Grouped Line + Error |
-|:---------:|:------------:|:--------------------:|
-| ![Line Plot](docs/images/line.png) | ![Grouped Line](docs/images/line_grouped.png) | ![Grouped Line + Error](docs/images/line_grouped_error.png) |
-
-| Grouped Line + Error (Raw Data) |
-|:-------------------------------:|
-| ![Grouped Line + Error Raw](docs/images/line_grouped_error_raw.png) |
-
-### Dose-Response Curve
-
-| IC50 Dose-Response (4PL) |
-|:------------------------:|
-| ![IC50 Dose-Response](docs/images/ic50_dose_response.png) |
-
-### Statistical Analysis Examples
-
-| Pairwise Comparisons | VBracket Legend (3+ groups) |
-|:--------------------:|:---------------------------:|
-| ![Stats Brackets](docs/images/stats_brackets.png) | ![VBracket Legend](docs/images/vbracket_legend.png) |
+| Scatter Plot | Survival Curve (LQ) | Gene Ontology |
+|:------------:|:-------------------:|:-------------:|
+| ![Scatter Plot](https://h20gg702.github.io/figra-pages/figures/scatter_plot.png) | ![Survival Curve](https://h20gg702.github.io/figra-pages/figures/lq.png) | ![Gene Ontology](https://h20gg702.github.io/figra-pages/figures/gene_ontology.png) |
 
 ### Statistical Analysis
 - **Automatic test selection** based on data normality and group count
@@ -104,7 +78,7 @@ Figra uses [webR](https://webr.r-wasm.org/) to run R code directly in your brows
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/yourusername/Figra.git
+   git clone https://github.com/h20gg702/Figra.git
    cd Figra/addin
    ```
 
@@ -124,9 +98,11 @@ Figra uses [webR](https://webr.r-wasm.org/) to run R code directly in your brows
    - Click **Upload My Add-in**
    - Select `manifest/manifest.xml`
 
-### Option 2: Use Hosted Version
+### Option 2: Install from Microsoft AppSource
 
-*(Coming soon)*
+Search for **Figra** in Microsoft AppSource, or install directly from Excel via **Insert → Add-ins → Get Add-ins**.
+
+The hosted add-in is served from [https://h20gg702.github.io/figra-pages/](https://h20gg702.github.io/figra-pages/).
 
 ## Quick Start
 
