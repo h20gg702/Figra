@@ -5,7 +5,7 @@
   <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light only" />
-  <title>SATO WebR Add-in</title>
+  <title>Figra</title>
 
   <!-- Office.js（必須）-->
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
@@ -125,6 +125,36 @@
       color: #e53e3e;
       font-size: 12px;
       margin-top: 4px;
+    }
+    .reg-showcase-wrap {
+      overflow: hidden;
+      margin: 0 -32px 16px;
+    }
+    .reg-showcase-track {
+      display: flex;
+      width: max-content;
+      animation: reg-scroll-left 22s linear infinite;
+    }
+    .reg-showcase-wrap:hover .reg-showcase-track {
+      animation-play-state: paused;
+    }
+    @keyframes reg-scroll-left {
+      0%   { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+    .reg-showcase-item {
+      flex-shrink: 0;
+      width: 130px;
+      height: 98px;
+      margin: 0 6px;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .reg-showcase-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
     }
 
     /* 折りたたみ */
@@ -363,6 +393,35 @@
     <div class="registration-card">
       <h2>Welcome to Figra</h2>
       <p class="subtitle">Free for everyone — one-time registration required.</p>
+      <p style="font-size:12px; color:#444; margin: 6px 0 14px 0; line-height:1.5;">
+        Create publication-quality scientific figures from your Excel data using ggplot2 — no R installation needed. Registration helps us keep Figra free and improve it for the research community.
+      </p>
+
+      <div class="reg-showcase-wrap">
+        <div class="reg-showcase-track">
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/bar.png" alt="Bar plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/box.png" alt="Box plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/violin.png" alt="Violin plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/histogram.png" alt="Histogram"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/scatter_plot.png" alt="Scatter plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/grouped_bar_error_dots.png" alt="Grouped bar"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/grouped_box_dots.png" alt="Grouped box"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/group_line.png" alt="Line plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/dose_response_curve.png" alt="Dose-response curve"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/lq.png" alt="Survival curve"></div>
+          <!-- duplicate for seamless infinite loop -->
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/bar.png" alt="Bar plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/box.png" alt="Box plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/violin.png" alt="Violin plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/histogram.png" alt="Histogram"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/scatter_plot.png" alt="Scatter plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/grouped_bar_error_dots.png" alt="Grouped bar"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/grouped_box_dots.png" alt="Grouped box"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/group_line.png" alt="Line plot"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/dose_response_curve.png" alt="Dose-response curve"></div>
+          <div class="reg-showcase-item"><img src="https://h20gg702.github.io/figra-pages/figures/lq.png" alt="Survival curve"></div>
+        </div>
+      </div>
 
       <div class="form-group">
         <label for="regEmail">Email *</label>
@@ -497,6 +556,14 @@
                      background:#f5f5f5; color:#333; border:1px solid #ccc; border-radius:6px;
                      cursor:pointer;">
         Select your data in Excel and click here to load
+      </button>
+    </div>
+    <div style="margin: 0 0 6px 0;">
+      <button id="loadBeta"
+              style="width:100%; padding:9px; font-size:12px;
+                     background:#e8f5e9; color:#2e7d32; border:1px solid #a5d6a7; border-radius:6px;
+                     cursor:pointer;">
+        Load Data (beta) for large data
       </button>
     </div>
     <div id="loadStatus" style="font-size:14px; color:#333; min-height:18px; margin-bottom:8px; padding-left:2px;"></div>

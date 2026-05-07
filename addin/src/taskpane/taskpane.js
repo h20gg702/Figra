@@ -502,7 +502,7 @@ async function extractPngMetadata(pngBlob) {
 }
 
 // Add iTXt chunk to PNG (UTF-8 support, cross-platform compatible)
-async function embedPngMetadata(pngBlob, metadataObj) {
+async function embedPngMetadata(pngBlob, metadataObj, dpi = 96) {
   const arrayBuffer = await pngBlob.arrayBuffer();
   const data = new Uint8Array(arrayBuffer);
   const encoder = new TextEncoder();
@@ -513,10 +513,27 @@ async function embedPngMetadata(pngBlob, metadataObj) {
   const ihdrLen = view.getUint32(offset);
   const ihdrTotal = 4 + 4 + ihdrLen + 4; // length + type + data + CRC
 
-  // We'll insert iTXt chunk right after IHDR
+  // We'll insert pHYs + iTXt chunks right after IHDR
   const signature = data.slice(0, 8);
   const ihdrChunk = data.slice(8, 8 + ihdrTotal);
   const rest = data.slice(8 + ihdrTotal);
+
+  // Build pHYs chunk: sets physical pixel density so viewers show correct DPI
+  // Unit 1 = metre; pixels/metre = DPI × (10000 / 254)
+  const ppm = Math.round(dpi * 10000 / 254);
+  const physData = new Uint8Array(9);
+  const physView = new DataView(physData.buffer);
+  physView.setUint32(0, ppm); // X pixels per unit
+  physView.setUint32(4, ppm); // Y pixels per unit
+  physData[8] = 1;            // unit = metre
+  const physType = encoder.encode("pHYs");
+  const physChunk = new Uint8Array(4 + 4 + 9 + 4);
+  const physChunkView = new DataView(physChunk.buffer);
+  physChunkView.setUint32(0, 9);
+  physChunk.set(physType, 4);
+  physChunk.set(physData, 8);
+  const physCrc = crc32(physChunk.slice(4, 17));
+  physChunkView.setUint32(17, physCrc);
 
   // Create iTXt chunk with all metadata as single JSON
   const keyword = "OPEN_FIGURE_META";
@@ -553,11 +570,12 @@ async function embedPngMetadata(pngBlob, metadataObj) {
   const crc = crc32(crcData);
   chunkView.setUint32(8 + length, crc);
 
-  // Assemble new PNG: signature + IHDR + iTXt + rest
-  const newData = new Uint8Array(signature.length + ihdrChunk.length + chunk.length + rest.length);
+  // Assemble new PNG: signature + IHDR + pHYs + iTXt + rest
+  const newData = new Uint8Array(signature.length + ihdrChunk.length + physChunk.length + chunk.length + rest.length);
   let pos = 0;
   newData.set(signature, pos); pos += signature.length;
   newData.set(ihdrChunk, pos); pos += ihdrChunk.length;
+  newData.set(physChunk, pos); pos += physChunk.length;
   newData.set(chunk, pos); pos += chunk.length;
   newData.set(rest, pos);
 
@@ -752,8 +770,9 @@ async function saveFigureWithMetadata() {
       }
     }
 
-    // 3. Embed metadata into PNG iTXt chunk
-    const pngWithMetadata = await embedPngMetadata(pngBlob, metadata);
+    // 3. Embed metadata into PNG iTXt chunk + pHYs DPI chunk
+    const saveDpi = lastRender?.meta?.dpi || 300;
+    const pngWithMetadata = await embedPngMetadata(pngBlob, metadata, saveDpi);
     debugLog("Step 6: Metadata embedded (" + pngWithMetadata.size + " bytes)");
 
     // 4. Build default filename from title
@@ -9865,6 +9884,66 @@ Office.onReady(() => {
     loadHeadersFromSelection();
   });
 
+  document.getElementById("loadBeta")?.addEventListener("click", async () => {
+    showCompatibilityNotice(null, []);
+    try {
+      setStatus("⏳ Beta load: initializing R...");
+
+      await initWebR();
+      if (!webR || !webrReady) { setStatus("⚠️ Beta load: R engine not ready yet"); return; }
+
+      setStatus("⏳ Beta load: reading Excel data...");
+      const { values } = await readRangeValuesWithFallback();
+      if (!values || values.length < 2) { setStatus("⚠️ Beta load: no data in selection"); return; }
+
+      window.lastProcessedData = values;
+      const headers = values[0];
+      const rows = values.slice(1);
+
+      // Sanitize column names to valid identifiers
+      const colNames = headers.map((h, i) =>
+        String(h).replace(/[^a-zA-Z0-9_]/g, "_").replace(/^(\d)/, "_$1") || `col${i}`
+      );
+
+      // Build CSV string in JS (fast — pure string ops, no channel transfer)
+      setStatus("⏳ Beta load: building data...");
+      const csvLines = [colNames.join(",")];
+      for (const row of rows) {
+        csvLines.push(colNames.map((_, colIdx) => {
+          const v = row[colIdx];
+          if (v === null || v === undefined || v === "") return "";
+          if (typeof v === "number") return v;
+          const s = String(v);
+          if (s.includes(",") || s.includes('"') || s.includes("\n"))
+            return '"' + s.replace(/"/g, '""') + '"';
+          return s;
+        }).join(","));
+      }
+      const csvString = csvLines.join("\n");
+
+      // Mount as WORKERFS blob — R reads directly from JS Blob, zero channel transfer
+      setStatus("⏳ Beta load: mounting data for R...");
+      const blob = new Blob([csvString], { type: "text/plain" });
+      const mountPath = "/mnt/figra_beta";
+      try { await webR.FS.unmount(mountPath); } catch (_) {}
+      try { await webR.FS.mkdir(mountPath); } catch (_) {}
+      await webR.FS.mount("WORKERFS", { blobs: [{ name: "data.csv", data: blob }] }, mountPath);
+
+      setStatus("⏳ Beta load: loading into R...");
+      await webR.evalRVoid(`dat <- read.csv("${mountPath}/data.csv", stringsAsFactors=FALSE, check.names=FALSE)`);
+
+      await loadHeadersFromSelectionFromCache();
+
+      const nRows = rows.length;
+      setStatus(`✅ Beta load: ${nRows} rows × ${headers.length} cols loaded via WORKERFS`);
+      setLoadStatus(`✅ Beta load complete`);
+      console.log("🧪 Beta load complete via WORKERFS:", colNames);
+    } catch (e) {
+      setStatus("❌ Beta load error: " + (e?.message || e));
+      console.error("Beta load error:", e);
+    }
+  });
+
   // Figure save/load with metadata
   document.getElementById("saveFigure")?.addEventListener("click", saveFigureWithMetadata);
   document.getElementById("loadFromFigure")?.addEventListener("click", loadFromFigure);
@@ -13293,12 +13372,9 @@ async function exportIC50CurveDataToExcel() {
       const curveResp = await curveRespR.toArray().catch(() => []);
 
       await Excel.run(async (context) => {
-        const sheet = context.workbook.worksheets.getActiveSheet();
-        const usedRange = sheet.getUsedRangeOrNullObject();
-        usedRange.load(["isNullObject", "columnCount"]);
-        await context.sync();
-
-        const startCol = usedRange.isNullObject ? 1 : usedRange.columnCount + 1;
+        const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+        const newSheet = context.workbook.worksheets.add(`IC50_Results_${timestamp}`);
+        newSheet.activate();
 
         // Section 1: IC50 summary table
         const outputData = [
@@ -13321,22 +13397,20 @@ async function exportIC50CurveDataToExcel() {
         }
 
         const maxCols = curveConc.length > 0 ? 3 : 2;
-        const startColLetter = columnIndexToLetter(startCol);
-        const endColLetter = columnIndexToLetter(startCol + maxCols - 1);
-        const range = sheet.getRange(`${startColLetter}1:${endColLetter}${outputData.length}`);
+        const range = newSheet.getRange(`A1:${columnIndexToLetter(maxCols - 1)}${outputData.length}`);
         range.values = outputData.map(row => {
           const padded = [...row];
           while (padded.length < maxCols) padded.push("");
           return padded.slice(0, maxCols);
         });
 
-        sheet.getRange(`${startColLetter}1`).format.font.bold = true;
-        sheet.getRange(`${startColLetter}1`).format.font.size = 14;
-        sheet.getRange(`${startColLetter}3:${columnIndexToLetter(startCol + 1)}3`).format.font.bold = true;
-        sheet.getUsedRange().format.autofitColumns();
+        newSheet.getRange("A1").format.font.bold = true;
+        newSheet.getRange("A1").format.font.size = 14;
+        newSheet.getRange("A3:B3").format.font.bold = true;
+        newSheet.getUsedRange().format.autofitColumns();
 
         await context.sync();
-        setStatus(`✅ IC50 results written to current sheet (column ${startColLetter})`);
+        setStatus(`✅ IC50 results exported to new sheet: IC50_Results_${timestamp}`);
       });
 
     } else {
@@ -13402,13 +13476,9 @@ async function exportIC50CurveDataToExcel() {
       }
 
       await Excel.run(async (context) => {
-        const sheet = context.workbook.worksheets.getActiveSheet();
-        const usedRange = sheet.getUsedRangeOrNullObject();
-        usedRange.load(["isNullObject", "columnCount"]);
-        await context.sync();
-
-        // Write results after the last used column (with one blank column gap)
-        const startCol = usedRange.isNullObject ? 1 : usedRange.columnCount + 1;
+        const timestamp = new Date().toISOString().slice(11, 19).replace(/:/g, "");
+        const newSheet = context.workbook.worksheets.add(`IC50_Results_${timestamp}`);
+        newSheet.activate();
 
         const outputData = [];
         outputData.push(["IC50 Analysis Results"]);
@@ -13430,18 +13500,16 @@ async function exportIC50CurveDataToExcel() {
           outputData.push([conc[i], response[i]]);
         }
 
-        const startColLetter = columnIndexToLetter(startCol);
-        const endColLetter = columnIndexToLetter(startCol + 1);
-        const range = sheet.getRange(`${startColLetter}1:${endColLetter}${outputData.length}`);
+        const range = newSheet.getRange(`A1:B${outputData.length}`);
         range.values = outputData.map(row => row.length === 1 ? [row[0], ""] : row.slice(0, 2));
 
-        sheet.getRange(`${startColLetter}1`).format.font.bold = true;
-        sheet.getRange(`${startColLetter}1`).format.font.size = 14;
-        sheet.getRange(`${startColLetter}3`).format.font.bold = true;
-        sheet.getUsedRange().format.autofitColumns();
+        newSheet.getRange("A1").format.font.bold = true;
+        newSheet.getRange("A1").format.font.size = 14;
+        newSheet.getRange("A3").format.font.bold = true;
+        newSheet.getUsedRange().format.autofitColumns();
 
         await context.sync();
-        setStatus(`✅ IC50 results written to current sheet (column ${startColLetter})`);
+        setStatus(`✅ IC50 results exported to new sheet: IC50_Results_${timestamp}`);
       });
     }
 
@@ -24337,6 +24405,54 @@ async function clearOldStatisticalResults() {
 }
 
 // ---- Load headers ----
+// Populate UI column selectors from window.lastProcessedData without re-reading Excel or re-loading R
+async function loadHeadersFromSelectionFromCache(){
+  try {
+    await clearOldStatisticalResults();
+    const values = window.lastProcessedData;
+    if (!values || values.length < 2) { setStatus("No cached data"); return; }
+    const headers = headersFromValues(values);
+    if (!headers.length) { setStatus("Headers not found"); return; }
+    const xSel = el("xColumn"), ySel = el("yColumn"), groupSel = el("groupColumn"), errorSel = el("errorColumn");
+    xSel.innerHTML=""; ySel.innerHTML="";
+    if (groupSel) groupSel.innerHTML="";
+    if (errorSel) errorSel.innerHTML="";
+    headers.forEach(h => {
+      xSel.add(new Option(h,h));
+      ySel.add(new Option(h,h));
+      if (groupSel) groupSel.add(new Option(h,h));
+      if (errorSel) errorSel.add(new Option(h,h));
+    });
+    const subjectSel = document.getElementById("subjectColumn");
+    if (subjectSel) {
+      subjectSel.innerHTML = '<option value="">-- Select --</option>';
+      headers.forEach(h => { const o = document.createElement("option"); o.value=h; o.textContent=h; subjectSel.appendChild(o); });
+    }
+    const rows = values.slice(1);
+    const isNum = (i)=>rows.every(r=>r[i]==="" || Number.isFinite(+r[i]));
+    let yIdx = headers.findIndex((_,i)=>isNum(i)); if (yIdx<0) yIdx=0;
+    let xIdx = yIdx===0 && headers.length>1 ? 1 : 0;
+    xSel.value=headers[xIdx]; ySel.value=headers[yIdx];
+    if (groupSel && headers.length > 0) groupSel.value=headers[0];
+    const actualGroups = getActualGroupNames();
+    if (actualGroups && actualGroups.length >= 2) {
+      const numGroupsInput = document.getElementById("numGroups");
+      const clampedCount = Math.min(actualGroups.length, 6);
+      if (numGroupsInput && parseInt(numGroupsInput.value) !== clampedCount) {
+        numGroupsInput.value = clampedCount;
+        numGroupsInput.dispatchEvent(new Event('change'));
+      }
+    }
+    updateGroupColorLabels();
+    populateComparisonCheckboxes();
+    await detectAndStoreGroups();
+    populateVbracketTimepoints();
+    if (typeof window.populateConversionColumns === 'function') window.populateConversionColumns();
+  } catch(e) {
+    setStatus("Beta UI populate error: " + (e?.message || e));
+  }
+}
+
 async function loadHeadersFromSelection(){
   try {
     // Clear old statistical results to prevent stale data issues
@@ -25013,7 +25129,7 @@ async function insertIntoExcelFixed() {
     }
 
     // Embed metadata into PNG
-    const pngWithMetadata = await embedPngMetadata(pngBlob, metadata);
+    const pngWithMetadata = await embedPngMetadata(pngBlob, metadata, dpi);
 
     // Convert back to base64
     const reader = new FileReader();
