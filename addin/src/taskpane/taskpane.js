@@ -295,6 +295,7 @@ async function submitRegistration() {
     setRegistered();
     try { localStorage.setItem("figra_email", email); } catch(e) {}
     hideRegistrationOverlay();
+    if (typeof gtag === "function") gtag("event", "registration_complete", { country: country, job_title: jobTitle });
 
     console.log("✅ Registration submitted successfully");
 
@@ -7969,28 +7970,42 @@ function updateEventHandlersWithDebug() {
     // 既存のハンドラーを削除してから新しいハンドラーを追加
     const newPreviewBtn = previewBtn.cloneNode(true);
     previewBtn.parentNode.replaceChild(newPreviewBtn, previewBtn);
-    newPreviewBtn.addEventListener("click", previewPlotWithDebug);
+    newPreviewBtn.addEventListener("click", () => {
+      const chartType = document.getElementById("chartType")?.value || "unknown";
+      if (typeof gtag === "function") gtag("event", "preview", { chart_type: chartType });
+      previewPlotWithDebug();
+    });
   }
 
   const insertBtn = document.getElementById("insert");
   if (insertBtn) {
     const newInsertBtn = insertBtn.cloneNode(true);
     insertBtn.parentNode.replaceChild(newInsertBtn, insertBtn);
-    newInsertBtn.addEventListener("click", insertIntoExcelFixed);
+    newInsertBtn.addEventListener("click", () => {
+      const chartType = document.getElementById("chartType")?.value || "unknown";
+      if (typeof gtag === "function") gtag("event", "insert_figure", { chart_type: chartType });
+      insertIntoExcelFixed();
+    });
   }
 
   const downloadRCodeBtn = document.getElementById("downloadRCode");
   if (downloadRCodeBtn) {
     const newDownloadBtn = downloadRCodeBtn.cloneNode(true);
     downloadRCodeBtn.parentNode.replaceChild(newDownloadBtn, downloadRCodeBtn);
-    newDownloadBtn.addEventListener("click", downloadRCodeHandler);
+    newDownloadBtn.addEventListener("click", () => {
+      if (typeof gtag === "function") gtag("event", "download_r_code");
+      downloadRCodeHandler();
+    });
   }
 
   const writeRCodeBtn = document.getElementById("writeRCodeToCell");
   if (writeRCodeBtn) {
     const newWriteBtn = writeRCodeBtn.cloneNode(true);
     writeRCodeBtn.parentNode.replaceChild(newWriteBtn, writeRCodeBtn);
-    newWriteBtn.addEventListener("click", writeRCodeToCellHandler);
+    newWriteBtn.addEventListener("click", () => {
+      if (typeof gtag === "function") gtag("event", "copy_r_code");
+      writeRCodeToCellHandler();
+    });
   }
 
   // Preset buttons
@@ -9879,7 +9894,7 @@ Office.onReady(() => {
 
   // 基本操作 - 修正版ハンドラーを使用
   document.getElementById("load")?.addEventListener("click", () => {
-    // Clear any compatibility notice when loading fresh data
+    if (typeof gtag === "function") gtag("event", "load_data");
     showCompatibilityNotice(null, []);
     loadHeadersFromSelection();
   });
