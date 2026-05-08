@@ -9960,8 +9960,15 @@ Office.onReady(() => {
   });
 
   // Figure save/load with metadata
-  document.getElementById("saveFigure")?.addEventListener("click", saveFigureWithMetadata);
-  document.getElementById("loadFromFigure")?.addEventListener("click", loadFromFigure);
+  document.getElementById("saveFigure")?.addEventListener("click", () => {
+    const chartType = document.getElementById("chartType")?.value || "unknown";
+    if (typeof gtag === "function") gtag("event", "save_figure", { chart_type: chartType });
+    saveFigureWithMetadata();
+  });
+  document.getElementById("loadFromFigure")?.addEventListener("click", () => {
+    if (typeof gtag === "function") gtag("event", "load_from_figure");
+    loadFromFigure();
+  });
   document.getElementById("downloadMetadataJson")?.addEventListener("click", downloadMetadataJson);
 
   // 修正版のイベントハンドラーを適用
