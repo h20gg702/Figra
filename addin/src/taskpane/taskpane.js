@@ -1,8 +1,7 @@
 // ========= その他の既存機能群（ファイル保存、テンプレート等）=========
 
 // ========= Google Analytics 4 Measurement Protocol =========
-const GA4_MEASUREMENT_ID = "G-113GB01Q07";
-const GA4_API_SECRET = "Hpa4zU8_QqWeOz93l-NRHg";
+const GA4_PROXY_URL = "https://empty-disk-9e32.lascia333.workers.dev/";
 
 function getGA4ClientId() {
   try {
@@ -19,7 +18,7 @@ function getGA4ClientId() {
 
 function sendGA4Event(eventName, params = {}) {
   try {
-    fetch(`https://www.google-analytics.com/mp/collect?measurement_id=${GA4_MEASUREMENT_ID}&api_secret=${GA4_API_SECRET}`, {
+    fetch(GA4_PROXY_URL, {
       method: "POST",
       body: JSON.stringify({
         client_id: getGA4ClientId(),
