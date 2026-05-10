@@ -1,5 +1,34 @@
 // ========= その他の既存機能群（ファイル保存、テンプレート等）=========
 
+// ========= Google Analytics 4 Measurement Protocol =========
+const GA4_MEASUREMENT_ID = "G-113GB01Q07";
+const GA4_API_SECRET = "Hpa4zU8_QqWeOz93l-NRHg";
+
+function getGA4ClientId() {
+  try {
+    let cid = localStorage.getItem("figra_ga4_cid");
+    if (!cid) {
+      cid = Math.random().toString(36).slice(2) + "." + Date.now();
+      localStorage.setItem("figra_ga4_cid", cid);
+    }
+    return cid;
+  } catch (_) {
+    return "anonymous." + Date.now();
+  }
+}
+
+function sendGA4Event(eventName, params = {}) {
+  try {
+    fetch(`https://www.google-analytics.com/mp/collect?measurement_id=${GA4_MEASUREMENT_ID}&api_secret=${GA4_API_SECRET}`, {
+      method: "POST",
+      body: JSON.stringify({
+        client_id: getGA4ClientId(),
+        events: [{ name: eventName, params: params }]
+      })
+    }).catch(() => {});
+  } catch (_) {}
+}
+
 // Add-in version (update this when making breaking changes)
 const ADDIN_VERSION = "1.0.0";
 
@@ -295,7 +324,7 @@ async function submitRegistration() {
     setRegistered();
     try { localStorage.setItem("figra_email", email); } catch(e) {}
     hideRegistrationOverlay();
-    if (typeof gtag === "function") gtag("event", "registration_complete", { country: country, job_title: jobTitle });
+    sendGA4Event("registration_complete", { country: country, job_title: jobTitle });
 
     console.log("✅ Registration submitted successfully");
 
@@ -7972,7 +8001,7 @@ function updateEventHandlersWithDebug() {
     previewBtn.parentNode.replaceChild(newPreviewBtn, previewBtn);
     newPreviewBtn.addEventListener("click", () => {
       const chartType = document.getElementById("chartType")?.value || "unknown";
-      if (typeof gtag === "function") gtag("event", "preview", { chart_type: chartType });
+      sendGA4Event("preview", { chart_type: chartType });
       previewPlotWithDebug();
     });
   }
@@ -7983,7 +8012,7 @@ function updateEventHandlersWithDebug() {
     insertBtn.parentNode.replaceChild(newInsertBtn, insertBtn);
     newInsertBtn.addEventListener("click", () => {
       const chartType = document.getElementById("chartType")?.value || "unknown";
-      if (typeof gtag === "function") gtag("event", "insert_figure", { chart_type: chartType });
+      sendGA4Event("insert_figure", { chart_type: chartType });
       insertIntoExcelFixed();
     });
   }
@@ -7993,7 +8022,7 @@ function updateEventHandlersWithDebug() {
     const newDownloadBtn = downloadRCodeBtn.cloneNode(true);
     downloadRCodeBtn.parentNode.replaceChild(newDownloadBtn, downloadRCodeBtn);
     newDownloadBtn.addEventListener("click", () => {
-      if (typeof gtag === "function") gtag("event", "download_r_code");
+      sendGA4Event("download_r_code");
       downloadRCodeHandler();
     });
   }
@@ -8003,7 +8032,7 @@ function updateEventHandlersWithDebug() {
     const newWriteBtn = writeRCodeBtn.cloneNode(true);
     writeRCodeBtn.parentNode.replaceChild(newWriteBtn, writeRCodeBtn);
     newWriteBtn.addEventListener("click", () => {
-      if (typeof gtag === "function") gtag("event", "copy_r_code");
+      sendGA4Event("copy_r_code");
       writeRCodeToCellHandler();
     });
   }
@@ -8033,6 +8062,8 @@ function updateEventHandlersWithDebug() {
 
 // ---- 初期化 ----
 Office.onReady(() => {
+  sendGA4Event("figra_opened", { version: ADDIN_VERSION });
+
   // Display version in title and Help tab
   const versionSpan = document.getElementById("appVersion");
   if (versionSpan) versionSpan.textContent = `v${ADDIN_VERSION}`;
@@ -9894,7 +9925,7 @@ Office.onReady(() => {
 
   // 基本操作 - 修正版ハンドラーを使用
   document.getElementById("load")?.addEventListener("click", () => {
-    if (typeof gtag === "function") gtag("event", "load_data");
+    sendGA4Event("load_data");
     showCompatibilityNotice(null, []);
     loadHeadersFromSelection();
   });
@@ -9962,11 +9993,11 @@ Office.onReady(() => {
   // Figure save/load with metadata
   document.getElementById("saveFigure")?.addEventListener("click", () => {
     const chartType = document.getElementById("chartType")?.value || "unknown";
-    if (typeof gtag === "function") gtag("event", "save_figure", { chart_type: chartType });
+    sendGA4Event("save_figure", { chart_type: chartType });
     saveFigureWithMetadata();
   });
   document.getElementById("loadFromFigure")?.addEventListener("click", () => {
-    if (typeof gtag === "function") gtag("event", "load_from_figure");
+    sendGA4Event("load_from_figure");
     loadFromFigure();
   });
   document.getElementById("downloadMetadataJson")?.addEventListener("click", downloadMetadataJson);
