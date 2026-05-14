@@ -43,20 +43,28 @@
       top: 0; left: 0; right: 0; bottom: 0;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       z-index: 2000;
-      display: flex;
-      align-items: flex-start;
-      justify-content: center;
-      padding: 20px;
-      overflow-y: auto;
+      display: block;
+      overflow: hidden;
     }
     #registrationOverlay.hidden { display: none; }
+    #regScrollContainer {
+      height: 100%;
+      overflow-y: auto;
+      overflow-x: hidden;
+      -webkit-overflow-scrolling: touch;
+      overscroll-behavior: contain;
+      padding: 12px;
+      box-sizing: border-box;
+    }
     .registration-card {
       background: #fff;
       border-radius: 16px;
       box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-      padding: 32px;
+      padding: 20px;
       max-width: 420px;
       width: 100%;
+      box-sizing: border-box;
+      margin: 0 auto;
     }
     .registration-card h2 {
       margin: 0 0 8px;
@@ -138,7 +146,7 @@
     }
     .reg-showcase-wrap {
       overflow: hidden;
-      margin: 0 -32px 16px;
+      margin: 0 -20px 16px;
     }
     .reg-showcase-track {
       display: flex;
@@ -400,6 +408,7 @@
 
   <!-- Registration Overlay -->
   <div id="registrationOverlay">
+  <div id="regScrollContainer">
     <div class="registration-card">
       <h2>Welcome to Figra</h2>
       <p class="subtitle">Free for everyone — one-time registration required.</p>
@@ -487,6 +496,7 @@
       <button type="button" id="regSubmitBtn" class="submit-btn">Start Using Figra</button>
       <p id="regError" class="error-msg" style="display:none;"></p>
     </div>
+  </div>
   </div>
 
   <div class="container">

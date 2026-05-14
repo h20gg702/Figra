@@ -18228,7 +18228,9 @@ async function initWebR() {
               if (nrow(res3$pairs) > 0) {
                 for (pi in 1:nrow(res3$pairs)) {
                   sl_pi <- res3$pairs$sig_label[pi]
-                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  ck1_ph <- paste0(res3$pairs$group1[pi],"-",res3$pairs$group2[pi],"@",cat_val)
+                  ck2_ph <- paste0(res3$pairs$group2[pi],"-",res3$pairs$group1[pi],"@",cat_val)
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all" || (comparison_mode=="custom" && (ck1_ph %in% custom_comps || ck2_ph %in% custom_comps))
                   if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
                 }
               }
@@ -18649,7 +18651,9 @@ async function initWebR() {
               if (nrow(res3$pairs) > 0) {
                 for (pi in 1:nrow(res3$pairs)) {
                   sl_pi <- res3$pairs$sig_label[pi]
-                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  ck1_ph <- paste0(res3$pairs$group1[pi],"-",res3$pairs$group2[pi],"@",cat_val)
+                  ck2_ph <- paste0(res3$pairs$group2[pi],"-",res3$pairs$group1[pi],"@",cat_val)
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all" || (comparison_mode=="custom" && (ck1_ph %in% custom_comps || ck2_ph %in% custom_comps))
                   if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
                 }
               }
@@ -18973,7 +18977,9 @@ async function initWebR() {
               if (nrow(res3$pairs) > 0) {
                 for (pi in 1:nrow(res3$pairs)) {
                   sl_pi <- res3$pairs$sig_label[pi]
-                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  ck1_ph <- paste0(res3$pairs$group1[pi],"-",res3$pairs$group2[pi],"@",cat_val)
+                  ck2_ph <- paste0(res3$pairs$group2[pi],"-",res3$pairs$group1[pi],"@",cat_val)
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all" || (comparison_mode=="custom" && (ck1_ph %in% custom_comps || ck2_ph %in% custom_comps))
                   if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
                 }
               }
@@ -19461,7 +19467,9 @@ async function initWebR() {
               if (nrow(res3$pairs) > 0) {
                 for (pi in 1:nrow(res3$pairs)) {
                   sl_pi <- res3$pairs$sig_label[pi]
-                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  ck1_ph <- paste0(res3$pairs$group1[pi],"-",res3$pairs$group2[pi],"@",cat_val)
+                  ck2_ph <- paste0(res3$pairs$group2[pi],"-",res3$pairs$group1[pi],"@",cat_val)
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all" || (comparison_mode=="custom" && (ck1_ph %in% custom_comps || ck2_ph %in% custom_comps))
                   if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
                 }
               }
@@ -19756,7 +19764,9 @@ async function initWebR() {
               if (nrow(res3$pairs) > 0) {
                 for (pi in 1:nrow(res3$pairs)) {
                   sl_pi <- res3$pairs$sig_label[pi]
-                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all"
+                  ck1_ph <- paste0(res3$pairs$group1[pi],"-",res3$pairs$group2[pi],"@",cat_val)
+                  ck2_ph <- paste0(res3$pairs$group2[pi],"-",res3$pairs$group1[pi],"@",cat_val)
+                  should_add_ph <- (comparison_mode=="significant" && sl_pi!="ns") || comparison_mode=="all" || (comparison_mode=="custom" && (ck1_ph %in% custom_comps || ck2_ph %in% custom_comps))
                   if (should_add_ph) bracket_data <- rbind(bracket_data, data.frame(group1=res3$pairs$group1[pi], group2=res3$pairs$group2[pi], p.signif=sl_pi, x.position=cat_index, y.position=NA, stringsAsFactors=FALSE))
                 }
               }
@@ -21136,8 +21146,18 @@ const fontStack = buildCompleteFontStack(effectiveFont);
 
   // Comparison mode settings
   const comparisonMode = o.comparisonMode || "significant";
-  const customComparisons = o.customComparisons || [];
-  const customPositions = o.customPositions || {};
+  const customComparisons = (() => {
+    const raw = o.customComparisons;
+    if (!raw) return [];
+    if (Array.isArray(raw)) return raw;
+    try { return JSON.parse(raw); } catch(e) { return []; }
+  })();
+  const customPositions = (() => {
+    const raw = o.customPositions;
+    if (!raw) return {};
+    if (typeof raw === 'object' && !Array.isArray(raw)) return raw;
+    try { return JSON.parse(raw); } catch(e) { return {}; }
+  })();
   console.log("Comparison mode:", comparisonMode, "Custom comparisons:", customComparisons, "Custom positions:", customPositions);
 
   // VBracket legend settings (for 3+ groups line plots)
@@ -25181,7 +25201,7 @@ async function insertIntoExcelFixed() {
     }
 
     // Embed metadata into PNG
-    const pngWithMetadata = await embedPngMetadata(pngBlob, metadata, dpi);
+    const pngWithMetadata = await embedPngMetadata(pngBlob, metadata, meta.dpi);
 
     // Convert back to base64
     const reader = new FileReader();
