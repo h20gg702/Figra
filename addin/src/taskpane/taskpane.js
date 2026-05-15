@@ -16,13 +16,33 @@ function getGA4ClientId() {
   }
 }
 
+function getGA4SessionId() {
+  try {
+    let sid = sessionStorage.getItem("figra_ga4_sid");
+    if (!sid) {
+      sid = Date.now().toString();
+      sessionStorage.setItem("figra_ga4_sid", sid);
+    }
+    return sid;
+  } catch (_) {
+    return Date.now().toString();
+  }
+}
+
 function sendGA4Event(eventName, params = {}) {
   try {
     fetch(GA4_PROXY_URL, {
       method: "POST",
       body: JSON.stringify({
         client_id: getGA4ClientId(),
-        events: [{ name: eventName, params: params }]
+        events: [{
+          name: eventName,
+          params: {
+            session_id: getGA4SessionId(),
+            engagement_time_msec: 100,
+            ...params
+          }
+        }]
       })
     }).catch(() => {});
   } catch (_) {}
