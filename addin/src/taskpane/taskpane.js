@@ -218,7 +218,7 @@ function showCompatibilityNotice(savedVersion, missingFeatures) {
 }
 
 // Grouped chart types constant (used throughout the file)
-const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw", "ic50_grouped_dose_response", "lq_survival_grouped"];
+const GROUPED_CHART_TYPES = ["bar_grouped", "bar_grouped_error", "bar_grouped_error_dot", "bar_stacked", "box_grouped", "box_grouped_dot", "violin_grouped", "violin_grouped_dot", "line_grouped", "line_grouped_error", "line_grouped_error_raw", "ic50_grouped_dose_response", "lq_survival_grouped"];
 
 // ========= Registration System =========
 const REGISTRATION_KEY = "figra_registered";
@@ -2363,6 +2363,7 @@ function generateSubsetRCodeFromData(chartType, opts) {
     const titleWeight = document.getElementById("titleWeight")?.value || "plain";
     const axisTitleWeight = document.getElementById("axisTitleWeight")?.value || "plain";
     const axisTextWeight = document.getElementById("axisTextWeight")?.value || "plain";
+    const stackedBar100 = document.getElementById("stackedBar100")?.checked || false;
 
     // Escape single quotes for R strings (use single quotes in R code)
     const escapeForRLabel = (str) => {
@@ -2389,6 +2390,35 @@ function generateSubsetRCodeFromData(chartType, opts) {
         ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Bar Plot')}', x = '${xLabelOrig}', y = '${yLabelOrig}') +\n`;
         ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
         break;
+
+      case 'bar_stacked': {
+        const stackedColorsStr = (rColorVector || "c('#4C78A8', '#E15759', '#76B7B2', '#F28E2B')").replace(/"/g, "'");
+        const stackedGroupCol = `col${groupColIndex || 1}`;
+        const stackedXCol = `col${xColIndex || 2}`;
+        const stackedYCol = `col${yColIndex || 3}`;
+        const stackedPos = stackedBar100 ? "fill" : "stack";
+        const stackedYLabel = stackedBar100 ? "Proportion" : (escapeForRLabel(originalHeaders[yColIndex - 1] || ylab || 'Value'));
+        ggplotCode += `# Summarize: mean per group × category\n`;
+        ggplotCode += `dat$${stackedGroupCol} <- factor(dat$${stackedGroupCol})\n`;
+        ggplotCode += `dat$${stackedXCol} <- factor(dat$${stackedXCol})\n`;
+        ggplotCode += `summary_data <- dat %>% group_by(${stackedGroupCol}, ${stackedXCol}) %>% summarise(mean_val = mean(${stackedYCol}, na.rm = TRUE), .groups = 'drop')\n`;
+        if (stackedBar100) {
+          ggplotCode += `summary_data <- summary_data %>% group_by(${stackedXCol}) %>% mutate(prop = mean_val / sum(mean_val, na.rm = TRUE)) %>% ungroup()\n`;
+        }
+        ggplotCode += `p <- ggplot(summary_data, aes(x = ${stackedXCol}, y = mean_val, fill = ${stackedGroupCol})) +\n`;
+        ggplotCode += `  geom_bar(stat = 'identity', position = '${stackedPos}', color = '${strokeColor || '#1f2937'}', alpha = ${fillAlpha || 1}, linewidth = ${lineWidth || 0.5}) +\n`;
+        if (stackedBar100) {
+          const sLabelColor = (document.getElementById("stackedLabelColor")?.value || "#ffffff").trim();
+          const sLabelSize = parseFloat(document.getElementById("stackedLabelSize")?.value) || 14;
+          const sLabelWeight = document.getElementById("stackedLabelWeight")?.value || "plain";
+          ggplotCode += `  geom_text(aes(label = scales::percent(prop, accuracy = 1)), position = position_fill(vjust = 0.5), size = ${sLabelSize} / .pt, color = '${sLabelColor}', fontface = '${sLabelWeight}') +\n`;
+          ggplotCode += `  scale_y_continuous(labels = scales::percent) +\n`;
+        }
+        ggplotCode += `  scale_fill_manual(values = ${stackedColorsStr}) +\n`;
+        ggplotCode += `  labs(title = '${escapeForRLabel(title || 'Stacked Bar Plot')}', x = '${escapeForRLabel(originalHeaders[xColIndex - 1] || xlab || 'Category')}', y = '${stackedYLabel}', fill = '${escapeForRLabel(originalHeaders[groupColIndex - 1] || 'Group')}') +\n`;
+        ggplotCode += `  theme_${themeName || 'bw'}(base_size = ${xAxisTextSize}, base_family = '${fontFamily}')\n`;
+        break;
+      }
 
       case 'bar_grouped':
       case 'bar_grouped_error_dot':
@@ -3706,6 +3736,114 @@ ${statBlock2}${statBlock3}
 print(p)
 `;
 
+  } else if (chartType === 'bar_stacked') {
+    const escR = (str) => str ? String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'") : '';
+    const origHeaders = window.lastOriginalHeaders || [];
+    const gIdx = settings.groupColIndex || 1;
+    const xIdx = settings.xColIndex || 2;
+    const yIdx = settings.yColIndex || 3;
+    const groupCol = `col${gIdx}`;
+    const xCol = `col${xIdx}`;
+    const yCol = `col${yIdx}`;
+    const stackedPos = settings.stackedBar100 ? 'fill' : 'stack';
+    const colorsStr = (groupColors && typeof groupColors === 'string' && groupColors.startsWith('c('))
+      ? groupColors.replace(/"/g, "'")
+      : "c('#4C78A8', '#E15759', '#76B7B2', '#F28E2B', '#F2B701', '#B07AA1')";
+    const rawLegendName = (settings.showLegendTitle !== false && settings.legendTitle && settings.legendTitle.trim())
+      ? settings.legendTitle.trim()
+      : (settings.showLegendTitle !== false ? (settings.selectedGroupColumn || origHeaders[gIdx - 1] || 'Group') : '');
+    const legendName = escR(rawLegendName);
+
+    // Factor ordering — same logic as generateGroupedBarCode
+    let actualCategories = [];
+    let actualGroups = [];
+    if (window.lastProcessedData && window.lastProcessedData.length > 1) {
+      const data = window.lastProcessedData;
+      const headers = data[0];
+      const catIdx = xIdx - 1;
+      const grpIdx = gIdx - 1;
+      if (catIdx >= 0 && catIdx < headers.length)
+        actualCategories = [...new Set(data.slice(1).map(r => r[catIdx]).filter(v => v != null && v !== ''))];
+      if (grpIdx >= 0 && grpIdx < headers.length)
+        actualGroups = [...new Set(data.slice(1).map(r => r[grpIdx]).filter(v => v != null && v !== ''))];
+    }
+
+    const dataOrder = settings.dataOrder || 'original';
+    let factorCode = '';
+    if (actualCategories.length > 0) {
+      let cats = dataOrder === 'custom' && settings.customOrderCategory
+        ? (typeof settings.customOrderCategory === 'string' ? settings.customOrderCategory.split(',').map(c => c.trim()).filter(c => c) : settings.customOrderCategory)
+        : dataOrder === 'alphabetical' || dataOrder === 'default'
+          ? [...actualCategories].sort((a, b) => String(a).localeCompare(String(b)))
+          : actualCategories;
+      if (!cats.length || !cats.every(c => actualCategories.includes(c))) cats = actualCategories;
+      factorCode += `dat$${xCol} <- factor(dat$${xCol}, levels = c(${cats.map(c => `'${escR(String(c))}'`).join(', ')}))\n`;
+    }
+    if (actualGroups.length > 0) {
+      let grps = dataOrder === 'custom' && settings.customOrderGroup
+        ? (typeof settings.customOrderGroup === 'string' ? settings.customOrderGroup.split(',').map(g => g.trim()).filter(g => g) : settings.customOrderGroup)
+        : dataOrder === 'alphabetical' || dataOrder === 'default'
+          ? [...actualGroups].sort((a, b) => String(a).localeCompare(String(b)))
+          : actualGroups;
+      if (!grps.length || !grps.every(g => actualGroups.includes(g))) grps = actualGroups;
+      factorCode += `dat$${groupCol} <- factor(dat$${groupCol}, levels = c(${grps.map(g => `'${escR(String(g))}'`).join(', ')}))\n`;
+    }
+
+    const font = settings.fontFamily || 'Arial';
+    const xRotCode = (settings.xAxisRotation && settings.xAxisRotation != 0)
+      ? `, angle = ${settings.xAxisRotation}, hjust = ${settings.xAxisHjust}, vjust = ${settings.xAxisVjust}` : '';
+    const yRotCode = (settings.yAxisRotation && settings.yAxisRotation != 0)
+      ? `, angle = ${settings.yAxisRotation}, hjust = ${settings.yAxisHjust}, vjust = ${settings.yAxisVjust}` : '';
+
+    const yMinEdu = (settings.yMin != null && settings.yMin !== '') ? settings.yMin : null;
+    const yMaxEdu = (settings.yMax != null && settings.yMax !== '') ? settings.yMax : null;
+
+    // Effective labels: use stored label (which already has column-name fallback applied at render time)
+    const effectiveXLabel = settings.xlab || origHeaders[xIdx - 1] || 'Category';
+    const effectiveYLabel = settings.ylab || origHeaders[yIdx - 1] || 'Value';
+
+    code += `${factorCode}
+# Summarize: mean value per group × category
+summary_data <- dat %>%
+  group_by(${groupCol}, ${xCol}) %>%
+  summarise(mean_val = mean(${yCol}, na.rm = TRUE), .groups = 'drop')
+${settings.stackedBar100 ? `
+# Calculate proportion per category for 100% stacked labels
+summary_data <- summary_data %>%
+  group_by(${xCol}) %>%
+  mutate(prop = mean_val / sum(mean_val, na.rm = TRUE)) %>%
+  ungroup()
+` : ''}
+p <- ggplot(summary_data, aes(x = ${xCol}, y = mean_val, fill = ${groupCol})) +
+  geom_bar(stat = 'identity', position = '${stackedPos}',
+           width = ${settings.barWidth || 0.8},
+           color = '${escR(settings.strokeColor || '#1f2937')}',
+           alpha = ${settings.fillAlpha || 0.9},
+           linewidth = ${settings.lineWidth || 0.5}) +
+${settings.stackedBar100 ? `  geom_text(aes(label = scales::percent(prop, accuracy = 1)),
+           position = position_fill(vjust = 0.5),
+           size = ${settings.stackedLabelSize || 14} / .pt, color = '${settings.stackedLabelColor || '#ffffff'}', fontface = '${settings.stackedLabelWeight || 'plain'}') +
+  scale_y_continuous(labels = scales::percent) +
+` : ''}  scale_fill_manual(values = ${colorsStr}, name = ${settings.showLegendTitle !== false ? `'${legendName}'` : 'NULL'}) +
+  theme_${settings.themeName || 'bw'}(base_family = '${font}') +
+  theme(
+    plot.background = element_rect(fill = 'white', color = NA),
+    panel.background = element_rect(fill = 'white', color = NA),
+    panel.grid.major.y = element_line(color = '#e5e7eb', linewidth = 0.6),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(linewidth = 0.6),
+    axis.ticks = element_line(linewidth = 0.5),
+    plot.title  = element_text(size = ${settings.titleSize || 24},     face = '${settings.titleWeight || 'plain'}',     family = '${font}', hjust = 0.5),
+    axis.title.x = element_text(size = ${settings.xAxisTitleSize || 20}, face = '${settings.axisTitleWeight || 'plain'}', family = '${font}'),
+    axis.title.y = element_text(size = ${settings.yAxisTitleSize || 20}, face = '${settings.axisTitleWeight || 'plain'}', family = '${font}'),
+    axis.text.x  = element_text(size = ${settings.xAxisTextSize || 18},  face = '${settings.axisTextWeight || 'plain'}',  family = '${font}', color = 'black'${xRotCode}),
+    axis.text.y  = element_text(size = ${settings.yAxisTextSize || 18},  face = '${settings.axisTextWeight || 'plain'}',  family = '${font}', color = 'black'${yRotCode}),
+    legend.text  = element_text(size = ${settings.legendTextSize || 16}, family = '${font}'),
+    legend.title = element_text(size = ${settings.legendTextSize || 16}, family = '${font}')
+  )
+
+${settings.showTitle  !== false ? `p <- p + ggtitle(${convertToRPlotmath(settings.title || 'Stacked Bar Plot')})\n` : `p <- p + ggtitle(NULL)\n`}${settings.showXLabel !== false ? `p <- p + xlab(${convertToRPlotmath(effectiveXLabel)})\n` : `p <- p + xlab(NULL)\n`}${settings.showYLabel !== false ? `p <- p + ylab(${convertToRPlotmath(effectiveYLabel)})\n` : `p <- p + ylab(NULL)\n`}${(yMinEdu !== null || yMaxEdu !== null) ? `p <- p + coord_cartesian(ylim = c(${yMinEdu !== null ? yMinEdu : 'NA'}, ${yMaxEdu !== null ? yMaxEdu : 'NA'}), clip = 'off')\n` : ''}print(p)
+`;
   } else {
     // Unknown chart type
     code += `# Chart type '${chartType}' is not yet supported for educational R code generation.
@@ -4033,12 +4171,18 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
 
   if (settings.showTitle) {
     code += `p <- p + ggtitle(${convertToRPlotmath(settings.title)})\n`;
+  } else {
+    code += `p <- p + ggtitle(NULL)\n`;
   }
   if (settings.showXLabel) {
     code += `p <- p + xlab(${convertToRPlotmath(settings.xlab)})\n`;
+  } else {
+    code += `p <- p + xlab(NULL)\n`;
   }
   if (settings.showYLabel) {
     code += `p <- p + ylab(${convertToRPlotmath(settings.ylab)})\n`;
+  } else {
+    code += `p <- p + ylab(NULL)\n`;
   }
 
   // Add statistical comparisons using helper function
@@ -6480,12 +6624,18 @@ p <- ggplot(dat, aes(x = ${xColName}, y = ${yColName}, fill = ${groupColName})) 
 
   if (settings.showTitle) {
     code += `p <- p + ggtitle(${convertToRPlotmath(settings.title)})\n`;
+  } else {
+    code += `p <- p + ggtitle(NULL)\n`;
   }
   if (settings.showXLabel) {
     code += `p <- p + xlab(${convertToRPlotmath(settings.xlab)})\n`;
+  } else {
+    code += `p <- p + xlab(NULL)\n`;
   }
   if (settings.showYLabel) {
     code += `p <- p + ylab(${convertToRPlotmath(settings.ylab)})\n`;
+  } else {
+    code += `p <- p + ylab(NULL)\n`;
   }
 
   // Add statistical comparisons using helper function
@@ -6674,12 +6824,18 @@ p <- ggplot(dat, aes(x = ${xColName}, y = ${yColName}, fill = ${groupColName})) 
 
   if (settings.showTitle) {
     code += `p <- p + ggtitle(${convertToRPlotmath(settings.title)})\n`;
+  } else {
+    code += `p <- p + ggtitle(NULL)\n`;
   }
   if (settings.showXLabel) {
     code += `p <- p + xlab(${convertToRPlotmath(settings.xlab)})\n`;
+  } else {
+    code += `p <- p + xlab(NULL)\n`;
   }
   if (settings.showYLabel) {
     code += `p <- p + ylab(${convertToRPlotmath(settings.ylab)})\n`;
+  } else {
+    code += `p <- p + ylab(NULL)\n`;
   }
 
   // Add statistical comparisons using helper function
@@ -6875,12 +7031,18 @@ p <- ggplot(summary_data, aes(x = TimePoint_num, y = Mean, color = Group, group 
 
   if (settings.showTitle) {
     code += `p <- p + ggtitle(${convertToRPlotmath(settings.title)})\n`;
+  } else {
+    code += `p <- p + ggtitle(NULL)\n`;
   }
   if (settings.showXLabel) {
     code += `p <- p + xlab(${convertToRPlotmath(settings.xlab)})\n`;
+  } else {
+    code += `p <- p + xlab(NULL)\n`;
   }
   if (settings.showYLabel) {
     code += `p <- p + ylab(${convertToRPlotmath(settings.ylab)})\n`;
+  } else {
+    code += `p <- p + ylab(NULL)\n`;
   }
 
   // Axis scale transformations
@@ -7433,6 +7595,12 @@ function collectCurrentSettings() {
     xLabel: el("xLabel")?.value || "",
     yLabel: el("yLabel")?.value || "",
     legendTitle: el("legendTitle")?.value || "",
+
+    // Stacked bar
+    stackedBar100: el("stackedBar100")?.checked || false,
+    stackedLabelColor: (el("stackedLabelColor")?.value || el("stackedLabelColorPicker")?.value || "#ffffff").trim(),
+    stackedLabelSize: parseFloat(el("stackedLabelSize")?.value) || 14,
+    stackedLabelWeight: el("stackedLabelWeight")?.value || "plain",
 
     // Scatter group toggle and per-group shapes
     scatterGrouped: el("scatterGrouped")?.checked || false,
@@ -7994,6 +8162,16 @@ function applySettingsToUI(settings) {
   // VBracket position preset
   if (settings.vbracketPosition) setValue("vbracketPosition", settings.vbracketPosition);
 
+  // Stacked bar settings
+  setChecked("stackedBar100", settings.stackedBar100);
+  if (settings.stackedLabelColor) {
+    setValue("stackedLabelColor", settings.stackedLabelColor);
+    const picker = el("stackedLabelColorPicker");
+    if (picker) try { picker.value = settings.stackedLabelColor; } catch(e) {}
+  }
+  setValue("stackedLabelSize", settings.stackedLabelSize);
+  setValue("stackedLabelWeight", settings.stackedLabelWeight);
+
   // Trigger numGroups change event to update UI
   const numGroupsEl = el("numGroups");
   if (numGroupsEl) {
@@ -8168,6 +8346,16 @@ Office.onReady(() => {
   ];
 
   // Function to show/hide statistics controls based on chart type support
+  function updateStackedLabelColorVisibility() {
+    const isStacked = (document.getElementById("chartType")?.value || "") === "bar_stacked";
+    const is100 = document.getElementById("stackedBar100")?.checked || false;
+    const show = (isStacked && is100) ? "flex" : "none";
+    ["stackedLabelColorRow", "stackedLabelSizeRow", "stackedLabelWeightRow"].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = show;
+    });
+  }
+
   function updateStatisticsAvailability() {
     const chartType = document.getElementById("chartType")?.value || "";
     const statsControlsContainer = document.getElementById("statsControlsContainer");
@@ -8409,7 +8597,8 @@ Office.onReady(() => {
 
     const barCharts = [
       'bar', 'bar_error', 'bar_error_dot',
-      'bar_grouped', 'bar_grouped_error', 'bar_grouped_error_dot'
+      'bar_grouped', 'bar_grouped_error', 'bar_grouped_error_dot',
+      'bar_stacked'
     ];
     const boxCharts = ['box', 'box_dot', 'box_grouped', 'box_grouped_dot'];
     const violinCharts = ['violin', 'violin_dot', 'violin_grouped', 'violin_grouped_dot'];
@@ -8529,6 +8718,9 @@ Office.onReady(() => {
     const errorColumnRow = document.getElementById("errorColumnRow");
     const fillModeRow = document.getElementById("fillModeRow");
     const fillColorSubRow = document.getElementById("fillColorSubRow");
+    const stackedBarOptions = document.getElementById("stackedBarOptions");
+    if (stackedBarOptions) stackedBarOptions.style.display = v === "bar_stacked" ? "block" : "none";
+    updateStackedLabelColorVisibility();
 
     if (!lx || !ly) return;
 
@@ -10259,6 +10451,23 @@ Office.onReady(() => {
     }
   }
   
+  // Stacked label color picker sync
+  const stackedLabelColorPicker = document.getElementById("stackedLabelColorPicker");
+  const stackedLabelColorInput  = document.getElementById("stackedLabelColor");
+  if (stackedLabelColorPicker) {
+    stackedLabelColorPicker.addEventListener("change", function() {
+      if (stackedLabelColorInput) stackedLabelColorInput.value = this.value;
+    });
+  }
+  if (stackedLabelColorInput) {
+    stackedLabelColorInput.addEventListener("change", function() {
+      if (this.value.startsWith("#") && stackedLabelColorPicker) stackedLabelColorPicker.value = this.value;
+    });
+  }
+
+  // stackedBar100 checkbox → show/hide label color row
+  document.getElementById("stackedBar100")?.addEventListener("change", updateStackedLabelColorVisibility);
+
   // Number of groups control
   document.getElementById("numGroups")?.addEventListener("change", function() {
     const numGroups = parseInt(this.value);
@@ -17900,6 +18109,85 @@ async function initWebR() {
                       add_statistics, statistical_test)
     }
 
+    # Stacked bar chart
+    sato_bar_stacked <- function(dat, group_col=1, x_col=2, y_col=3,
+                                fill_colors=c("#4C78A8", "#E15759", "#76B7B2", "#F28E2B", "#F2B701", "#B07AA1"),
+                                stroke_color="#1f2937",
+                                alpha=0.9, linewidth=0.5, width=0.8,
+                                stacked_100=FALSE, label_color="#ffffff", label_size=14, label_weight="plain",
+                                group_name="Group", category_name="Category", value_name="Value",
+                                target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
+                                title_size=14, x_axis_title_size=12, y_axis_title_size=12,
+                                x_axis_text_size=10, y_axis_text_size=10, legend_text_size=16,
+                                title_text="Stacked Bar Plot", x_text="Category", y_text="Value",
+                                show_title=TRUE, show_x_label=TRUE, show_y_label=TRUE,
+                                theme_name="bw",
+                                x_axis_rotation=0, y_axis_rotation=0,
+                                x_axis_hjust=0.5, x_axis_vjust=0.5,
+                                y_axis_hjust=0.5, y_axis_vjust=0.5) {
+
+      if (ncol(dat) < 3) stop("Stacked bar chart requires at least 3 columns: Group, Category, Value")
+
+      col_names <- names(dat)
+      actual_group_name <- if(!is.null(col_names) && length(col_names) >= group_col && !grepl("^V[0-9]+$", col_names[group_col])) col_names[group_col] else group_name
+      actual_x_name    <- if(!is.null(col_names) && length(col_names) >= x_col    && !grepl("^V[0-9]+$", col_names[x_col]))    col_names[x_col]    else category_name
+      actual_y_name    <- if(!is.null(col_names) && length(col_names) >= y_col    && !grepl("^V[0-9]+$", col_names[y_col]))    col_names[y_col]    else value_name
+
+      plot_data <- data.frame(
+        group    = factor(dat[[group_col]]),
+        category = factor(dat[[x_col]]),
+        value    = as.numeric(dat[[y_col]])
+      )
+      plot_data <- plot_data[complete.cases(plot_data), ]
+      if (nrow(plot_data) == 0) stop("No valid data points after removing NAs")
+
+      n_groups    <- length(levels(plot_data$group))
+      group_levels <- levels(plot_data$group)
+      if (length(fill_colors) < n_groups) fill_colors <- rep(fill_colors, length.out = n_groups)
+
+      bar_position <- if (stacked_100) "fill" else "stack"
+
+      # Summarize: mean per group × category (handles multiple replicates)
+      summary_data <- plot_data %>%
+        dplyr::group_by(group, category) %>%
+        dplyr::summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+
+      if (stacked_100) {
+        # Pre-calculate proportions for label display (after_stat(y) doesn't work with stat="identity" + position_fill)
+        summary_data <- summary_data %>%
+          dplyr::group_by(category) %>%
+          dplyr::mutate(prop = value / sum(value, na.rm = TRUE)) %>%
+          dplyr::ungroup()
+      }
+
+      p <- ggplot(summary_data, aes(x = category, y = value, fill = group)) +
+           geom_bar(stat = "identity", position = bar_position,
+                    color = stroke_color, alpha = alpha,
+                    linewidth = linewidth, width = width) +
+           scale_fill_manual(values = setNames(fill_colors[1:n_groups], group_levels),
+                             name = actual_group_name)
+
+      if (stacked_100) {
+        p <- p +
+          geom_text(aes(label = scales::percent(prop, accuracy = 1)),
+                    position = position_fill(vjust = 0.5),
+                    size = label_size / .pt,
+                    color = label_color, fontface = label_weight) +
+          scale_y_continuous(labels = scales::percent)
+      }
+
+      sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
+                      title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
+                      title_text, x_text, y_text,
+                      show_title, show_x_label, show_y_label,
+                      "linear", "linear",
+                      theme_name,
+                      x_axis_rotation, y_axis_rotation,
+                      x_axis_hjust, x_axis_vjust,
+                      y_axis_hjust, y_axis_vjust,
+                      FALSE, "none")
+    }
+
     # Grouped bar chart with error bars
     sato_bar_grouped_error <- function(dat, group_col=1, x_col=2, y_col=3, error_col=4,
                                       fill_colors=c("#4C78A8", "#E15759"), stroke_color="#1f2937",
@@ -20926,6 +21214,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       case 'bar_grouped': return 'Grouped Bar Plot';
       case 'bar_grouped_error': return 'Grouped Bar Plot with Error';
       case 'bar_grouped_error_dot': return 'Grouped Bar + Dot Plot with Error';
+      case 'bar_stacked': return 'Stacked Bar Plot';
       case 'line': return 'Line Plot';
       case 'ic50_dose_response': return 'Dose-Response Curve';
       case 'ic50_grouped_dose_response': return 'Grouped Dose-Response';
@@ -21006,9 +21295,10 @@ const fontStack = buildCompleteFontStack(effectiveFont);
       case 'bar': return selectedYColumn || 'Value';
       case 'bar_error': return selectedYColumn || '';
       case 'bar_error_dot': return selectedYColumn || '';     // Use column name when available
-      case 'bar_grouped': return selectedYColumn || 'Value';  // For grouped data, Y is the numeric value
-      case 'bar_grouped_error': return selectedYColumn || 'Mean';  // With error bars, usually showing means
-      case 'bar_grouped_error_dot': return selectedYColumn || 'Value';  // With dots, showing individual values
+      case 'bar_grouped': return selectedYColumn || 'Value';
+      case 'bar_grouped_error': return selectedYColumn || 'Mean';
+      case 'bar_grouped_error_dot': return selectedYColumn || 'Value';
+      case 'bar_stacked': return selectedYColumn || 'Value';
       case 'line': return selectedYColumn || 'Value';
       case 'ic50_dose_response': return selectedYColumn || 'Response (%)';
       case 'ic50_grouped_dose_response': return selectedYColumn || 'Response (%)';
@@ -21020,17 +21310,19 @@ const fontStack = buildCompleteFontStack(effectiveFont);
     switch(type) {
       case 'bar_error_dot': return selectedXColumn || '';  // Use column name when available
       case 'box_dot': return selectedXColumn || '';        // Use column name when available
-      case 'bar_grouped': return selectedXColumn || 'Treatment';  // For grouped data, X is usually treatment/category
-      case 'bar_grouped_error': return selectedXColumn || 'Treatment';  // For grouped data with error
-      case 'bar_grouped_error_dot': return selectedXColumn || 'Treatment';  // For grouped data with error and dots
+      case 'bar_grouped': return selectedXColumn || 'Treatment';
+      case 'bar_grouped_error': return selectedXColumn || 'Treatment';
+      case 'bar_grouped_error_dot': return selectedXColumn || 'Treatment';
+      case 'bar_stacked': return selectedXColumn || 'Category';
       case 'ic50_dose_response': return selectedXColumn || 'Concentration';
       case 'ic50_grouped_dose_response': return selectedXColumn || 'Concentration';
       default: return selectedXColumn || 'Value';
     }
   };
   
+  const stackedBar100 = o.stackedBar100 || false;
   const title = o.title || getDefaultTitle(chartType);
-  const xlab = o.xlab || getDefaultXLabel(chartType);  
+  const xlab = o.xlab || getDefaultXLabel(chartType);
   const ylab = o.ylab || getDefaultYLabel(chartType);
   const bins = Math.max(1, Math.min(100, o.bins || 20));
   
@@ -21067,6 +21359,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const dodgeWidth = o.dodgeWidth || 0.9;
   const rotation = o.rotation || '0';
   const tableStyleLabels = o.tableStyleLabels || false;
+  const stackedLabelColor = o.stackedLabelColor || "#ffffff";
+  const stackedLabelSize = o.stackedLabelSize || 14;
+  const stackedLabelWeight = o.stackedLabelWeight || "plain";
   const errorBarType = o.errorBarType || 'sd';
   const dotSize = o.dotSize || 4;
   const dotColor = o.dotColor || '#333333';
@@ -23271,6 +23566,45 @@ ${SHARED_STAT_HELPERS_R}
         output_height = ${hIn},
         x_breaks_mode = "${xBreaksMode}"
       )
+    } else if (chart_type == "bar_stacked") {
+      p <- sato_bar_stacked(
+        dat = dat,
+        group_col = ${groupColIndex},
+        x_col = ${xColIndex},
+        y_col = ${yColIndex},
+        fill_colors = ${rColorVector},
+        stroke_color = "${strokeColor}",
+        alpha = ${fillAlpha},
+        linewidth = ${lineWidth},
+        width = ${barWidth},
+        stacked_100 = ${stackedBar100 ? 'TRUE' : 'FALSE'},
+        label_color = "${stackedLabelColor}",
+        label_size = ${stackedLabelSize},
+        label_weight = "${stackedLabelWeight}",
+        target_font = target_font,
+        title_weight = title_weight,
+        axis_title_weight = axis_title_weight,
+        axis_text_weight = axis_text_weight,
+        title_size = ${titleSize},
+        x_axis_title_size = ${xAxisTitleSize},
+        y_axis_title_size = ${yAxisTitleSize},
+        x_axis_text_size = ${xAxisTextSize},
+        y_axis_text_size = ${yAxisTextSize},
+        legend_text_size = ${legendTextSize},
+        title_text = ${formatR(title)},
+        x_text = ${formatR(xlab)},
+        y_text = ${formatR(ylab)},
+        show_title = ${showTitle},
+        show_x_label = ${showXLabel},
+        show_y_label = ${showYLabel},
+        theme_name = "${themeName}",
+        x_axis_rotation = ${xAxisRotation},
+        y_axis_rotation = ${yAxisRotation},
+        x_axis_hjust = ${xAxisHjust},
+        x_axis_vjust = ${xAxisVjust},
+        y_axis_hjust = ${yAxisHjust},
+        y_axis_vjust = ${yAxisVjust}
+      )
     } else if (chart_type == "bar_grouped") {
       # Grouped bar chart - requires 3 columns: Group, Category, Value
       p <- sato_bar_grouped(
@@ -23725,7 +24059,10 @@ ${SHARED_STAT_HELPERS_R}
     statSymbolSize, statLineSize, statTipLength, symbolGap, bracketSpacing,
     comparisonMode, customComparisons, customPositions,
     vbracketTimepoint, vbracketPosition, vbracketX, vbracketY, vbracketTextSize, vbracketSigSize, vbracketMargin, vbracketLineWidth,
-    fillMode,
+    fillMode, stackedBar100: el("stackedBar100")?.checked || false,
+    stackedLabelColor: (el("stackedLabelColor")?.value || el("stackedLabelColorPicker")?.value || "#ffffff").trim(),
+    stackedLabelSize: parseFloat(el("stackedLabelSize")?.value) || 14,
+    stackedLabelWeight: el("stackedLabelWeight")?.value || "plain",
     dataOrder, customOrderGroup, customOrderCategory, numGroups, bins, expWidth: wIn, expHeight: hIn,
     // VBracket extended settings
     vbracketLegendLineLength, vbracketLegendLineWidth, vbracketItemSpacing, vbracketBracketLayerSpacing,
@@ -24969,6 +25306,12 @@ function uiOpts(){
     vbracketLegendLineWidth: el("vbracketLegendLineWidth")?.value || "2",
     vbracketItemSpacing: el("vbracketItemSpacing")?.value || "0.1",
     vbracketBracketLayerSpacing: el("vbracketBracketLayerSpacing")?.value || "",
+
+    // Stacked bar options
+    stackedBar100: el("stackedBar100")?.checked || false,
+    stackedLabelColor: (el("stackedLabelColor")?.value || el("stackedLabelColorPicker")?.value || "#ffffff").trim(),
+    stackedLabelSize: parseFloat(el("stackedLabelSize")?.value) || 14,
+    stackedLabelWeight: el("stackedLabelWeight")?.value || "plain",
   };
 }
 

@@ -605,6 +605,7 @@
         <option value="bar_grouped">Grouped bar plot</option>
         <option value="bar_grouped_error">Grouped bar plot with error (pre-calculated)</option>
         <option value="bar_grouped_error_dot">Grouped bar + dot plot with error</option>
+        <option value="bar_stacked">Stacked bar plot</option>
         <option value="box_grouped">Grouped box plot</option>
         <option value="box_grouped_dot">Grouped box plot with dots</option>
         <option value="violin_grouped">Grouped violin plot</option>
@@ -627,6 +628,14 @@
         <div id="chartTypeOptions" class="chart-dropdown-options">
           <!-- Options will be populated by JavaScript -->
         </div>
+      </div>
+    </div>
+
+    <!-- Stacked bar options (shown only for bar_stacked) -->
+    <div id="stackedBarOptions" style="display:none; margin: 4px 0 6px 0;">
+      <div class="row">
+        <input type="checkbox" id="stackedBar100" />
+        <label for="stackedBar100" style="font-weight:normal;width:auto">100% stacked (show proportions)</label>
       </div>
     </div>
 
@@ -920,6 +929,15 @@
               <option value="4">× Cross</option>
             </select>
           </div>
+        </div>
+      </div>
+
+      <!-- Stacked bar 100%: label color + size (shown only when bar_stacked + stackedBar100) -->
+      <div id="stackedLabelColorRow" class="row" style="display:none;">
+        <label>Label color</label>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <input id="stackedLabelColorPicker" type="color" value="#ffffff" />
+          <input id="stackedLabelColor" type="text" placeholder="#ffffff" style="width:100px" />
         </div>
       </div>
 
@@ -1493,6 +1511,19 @@
       <div class="row">
         <label for="axisTextWeight">Axis text weight</label>
         <select id="axisTextWeight">
+          <option value="plain" selected>plain</option>
+          <option value="bold">bold</option>
+        </select>
+      </div>
+
+      <!-- Stacked bar 100%: label font size + weight (shown only when bar_stacked + stackedBar100) -->
+      <div id="stackedLabelSizeRow" class="row" style="display:none;">
+        <label>% label size</label>
+        <input id="stackedLabelSize" type="number" value="14" min="4" max="32" step="1" style="width:70px" />
+      </div>
+      <div id="stackedLabelWeightRow" class="row" style="display:none;">
+        <label>% label weight</label>
+        <select id="stackedLabelWeight">
           <option value="plain" selected>plain</option>
           <option value="bold">bold</option>
         </select>
@@ -2900,6 +2931,7 @@
         bar_grouped: `<svg viewBox="0 0 40 30"><rect x="2" y="12" width="5" height="16" fill="#4C78A8"/><rect x="8" y="16" width="5" height="12" fill="#E15759"/><rect x="16" y="8" width="5" height="20" fill="#4C78A8"/><rect x="22" y="10" width="5" height="18" fill="#E15759"/><rect x="30" y="6" width="5" height="22" fill="#4C78A8"/><rect x="36" y="14" width="3" height="14" fill="#E15759"/></svg>`,
         bar_grouped_error: `<svg viewBox="0 0 40 30"><rect x="4" y="12" width="6" height="16" fill="#4C78A8"/><line x1="7" y1="8" x2="7" y2="12" stroke="#333" stroke-width="1"/><rect x="11" y="16" width="6" height="12" fill="#E15759"/><line x1="14" y1="12" x2="14" y2="16" stroke="#333" stroke-width="1"/><rect x="22" y="8" width="6" height="20" fill="#4C78A8"/><line x1="25" y1="4" x2="25" y2="8" stroke="#333" stroke-width="1"/><rect x="29" y="10" width="6" height="18" fill="#E15759"/><line x1="32" y1="6" x2="32" y2="10" stroke="#333" stroke-width="1"/></svg>`,
         bar_grouped_error_dot: `<svg viewBox="0 0 40 30"><rect x="4" y="12" width="6" height="16" fill="#4C78A8"/><line x1="7" y1="8" x2="7" y2="12" stroke="#333" stroke-width="1"/><circle cx="7" cy="18" r="1.2" fill="#333"/><rect x="11" y="16" width="6" height="12" fill="#E15759"/><circle cx="14" cy="20" r="1.2" fill="#333"/><rect x="22" y="8" width="6" height="20" fill="#4C78A8"/><circle cx="25" cy="14" r="1.2" fill="#333"/><rect x="29" y="10" width="6" height="18" fill="#E15759"/><circle cx="32" cy="16" r="1.2" fill="#333"/></svg>`,
+        bar_stacked: `<svg viewBox="0 0 40 30"><rect x="4" y="18" width="8" height="10" fill="#4C78A8"/><rect x="4" y="10" width="8" height="8" fill="#E15759"/><rect x="4" y="4" width="8" height="6" fill="#76B7B2"/><rect x="16" y="14" width="8" height="14" fill="#4C78A8"/><rect x="16" y="8" width="8" height="6" fill="#E15759"/><rect x="16" y="4" width="8" height="4" fill="#76B7B2"/><rect x="28" y="12" width="8" height="16" fill="#4C78A8"/><rect x="28" y="6" width="8" height="6" fill="#E15759"/><rect x="28" y="2" width="8" height="4" fill="#76B7B2"/></svg>`,
         box_grouped: `<svg viewBox="0 0 40 30"><rect x="2" y="8" width="5" height="10" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="2" y1="13" x2="7" y2="13" stroke="#4C78A8" stroke-width="1.2"/><line x1="4.5" y1="4" x2="4.5" y2="8" stroke="#4C78A8" stroke-width="1"/><line x1="4.5" y1="18" x2="4.5" y2="24" stroke="#4C78A8" stroke-width="1"/><rect x="8" y="10" width="5" height="8" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="8" y1="14" x2="13" y2="14" stroke="#E15759" stroke-width="1.2"/><line x1="10.5" y1="6" x2="10.5" y2="10" stroke="#E15759" stroke-width="1"/><line x1="10.5" y1="18" x2="10.5" y2="22" stroke="#E15759" stroke-width="1"/><rect x="18" y="6" width="5" height="12" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="18" y1="12" x2="23" y2="12" stroke="#4C78A8" stroke-width="1.2"/><line x1="20.5" y1="2" x2="20.5" y2="6" stroke="#4C78A8" stroke-width="1"/><line x1="20.5" y1="18" x2="20.5" y2="26" stroke="#4C78A8" stroke-width="1"/><rect x="24" y="8" width="5" height="10" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="24" y1="13" x2="29" y2="13" stroke="#E15759" stroke-width="1.2"/><line x1="26.5" y1="4" x2="26.5" y2="8" stroke="#E15759" stroke-width="1"/><line x1="26.5" y1="18" x2="26.5" y2="24" stroke="#E15759" stroke-width="1"/></svg>`,
         box_grouped_dot: `<svg viewBox="0 0 40 30"><rect x="2" y="8" width="5" height="10" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="2" y1="13" x2="7" y2="13" stroke="#4C78A8" stroke-width="1.2"/><line x1="4.5" y1="4" x2="4.5" y2="8" stroke="#4C78A8" stroke-width="1"/><line x1="4.5" y1="18" x2="4.5" y2="24" stroke="#4C78A8" stroke-width="1"/><circle cx="3.5" cy="10" r="1" fill="#E15759"/><circle cx="5.5" cy="16" r="1" fill="#E15759"/><circle cx="4" cy="22" r="1" fill="#E15759"/><rect x="8" y="10" width="5" height="8" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="8" y1="14" x2="13" y2="14" stroke="#E15759" stroke-width="1.2"/><line x1="10.5" y1="6" x2="10.5" y2="10" stroke="#E15759" stroke-width="1"/><line x1="10.5" y1="18" x2="10.5" y2="23" stroke="#E15759" stroke-width="1"/><circle cx="9.5" cy="12" r="1" fill="#333"/><circle cx="11.5" cy="17" r="1" fill="#333"/><circle cx="10" cy="21" r="1" fill="#333"/><rect x="22" y="6" width="5" height="12" fill="none" stroke="#4C78A8" stroke-width="1.2"/><line x1="22" y1="12" x2="27" y2="12" stroke="#4C78A8" stroke-width="1.2"/><line x1="24.5" y1="2" x2="24.5" y2="6" stroke="#4C78A8" stroke-width="1"/><line x1="24.5" y1="18" x2="24.5" y2="26" stroke="#4C78A8" stroke-width="1"/><circle cx="23.5" cy="8" r="1" fill="#E15759"/><circle cx="25.5" cy="15" r="1" fill="#E15759"/><circle cx="24" cy="24" r="1" fill="#E15759"/><rect x="28" y="8" width="5" height="10" fill="none" stroke="#E15759" stroke-width="1.2"/><line x1="28" y1="13" x2="33" y2="13" stroke="#E15759" stroke-width="1.2"/><line x1="30.5" y1="4" x2="30.5" y2="8" stroke="#E15759" stroke-width="1"/><line x1="30.5" y1="18" x2="30.5" y2="24" stroke="#E15759" stroke-width="1"/><circle cx="29.5" cy="11" r="1" fill="#333"/><circle cx="31.5" cy="16" r="1" fill="#333"/><circle cx="30" cy="22" r="1" fill="#333"/></svg>`,
         violin_grouped: `<svg viewBox="0 0 40 30"><path d="M5 4 C8 6 8 11 6.5 15 C8 17 8 22 5 26 C2 22 2 17 3.5 15 C2 11 2 6 5 4 Z" fill="none" stroke="#4C78A8" stroke-width="1.2"/><path d="M12 4 C15 6 15 11 13.5 15 C15 17 15 22 12 26 C9 22 9 17 10.5 15 C9 11 9 6 12 4 Z" fill="none" stroke="#E15759" stroke-width="1.2"/><path d="M26 4 C29 6 29 11 27.5 15 C29 17 29 22 26 26 C23 22 23 17 24.5 15 C23 11 23 6 26 4 Z" fill="none" stroke="#4C78A8" stroke-width="1.2"/><path d="M33 4 C36 6 36 11 34.5 15 C36 17 36 22 33 26 C30 22 30 17 31.5 15 C30 11 30 6 33 4 Z" fill="none" stroke="#E15759" stroke-width="1.2"/></svg>`,
@@ -2927,6 +2959,7 @@
         bar_grouped: 'Grouped bar plot',
         bar_grouped_error: 'Grouped bar plot with error (pre-calculated)',
         bar_grouped_error_dot: 'Grouped bar + dot plot with error',
+        bar_stacked: 'Stacked bar plot',
         box_grouped: 'Grouped box plot',
         box_grouped_dot: 'Grouped box plot with dots',
         violin_grouped: 'Grouped violin plot',
