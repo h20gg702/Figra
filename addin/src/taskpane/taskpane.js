@@ -2866,36 +2866,46 @@ library(ggpattern)  # For fill patterns` : ''}
     let additionalGeoms = '';
 
     const isPerCat = settings.fillMode === 'per_category';
+    const bwPattern = settings.patternMode === 'bw_pattern';
     // No trailing + — the template at line "  ${geomCode} +" provides it
     const scaleAndGuide = isPerCat
       ? `\n  scale_fill_manual(values = ${groupColors}) +\n  guides(fill = 'none')`
       : '';
+    // For pattern mode: inject scale_fill_manual when per-category colors apply (not B&W — B&W forces white)
+    const patternFillScale = (isPerCat && !bwPattern)
+      ? `\n  scale_fill_manual(values = ${groupColors}) +`
+      : '';
+    // For pattern mode: include fill aes only when per-category AND not B&W (B&W forces white via scalar)
+    const patFillAes = (isPerCat && !bwPattern) ? `, fill = ${`col${settings.xColIndex || 1}`}` : '';
     const xAes = `col${settings.xColIndex || 1}`;
 
-    const singleBarPatFill = (settings.patternMode === 'bw_pattern') ? "'black'" : "'grey30'";
-    const singleBarFill = (settings.patternMode === 'bw_pattern') ? "'white'" : `'${settings.fillColor || '#4C78A8'}'`;
-    const singleBarPatDensity = settings.patternDensity || 0.3;
+    const singleBarPatFill = bwPattern ? "'black'" : "'grey30'";
+    const singleBarFill = bwPattern ? "'white'" : `'${settings.fillColor || '#4C78A8'}'`;
     const singleBarPatSpacing = settings.patternSpacing || 0.05;
-    // Build per-category pattern and angle cycles (resolve stripe_h/stripe_v)
+    // Build per-category pattern, angle, and density cycles (resolve stripe_h/stripe_v)
     const _defaultPats = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
     const _rawSinglePats = Array.isArray(settings.groupPatterns) && settings.groupPatterns.length >= 6
       ? settings.groupPatterns : _defaultPats;
     const _singleBarDefaultAngle = settings.patternAngle || 30;
     const _eduSingleResolvedPats = _rawSinglePats.map(p => (p === 'stripe_h' || p === 'stripe_v') ? 'stripe' : p);
     const _eduSingleAngles = _rawSinglePats.map(p => p === 'stripe_h' ? 0 : p === 'stripe_v' ? 90 : _singleBarDefaultAngle);
+    const _eduSingleDensities = Array.isArray(settings.groupDensities) && settings.groupDensities.length >= 6
+      ? settings.groupDensities : Array(6).fill(0.3);
     const patCycleR = _eduSingleResolvedPats.map(p => `"${p}"`).join(', ');
     const angleCycleR = _eduSingleAngles.join(', ');
+    const densityCycleR = _eduSingleDensities.join(', ');
 
     if (chartType === 'bar') {
       if (usePattern) {
-        geomCode = `geom_bar_pattern(stat = 'identity', aes(pattern = ${xAes}, pattern_angle = ${xAes}${isPerCat ? `, fill = ${xAes}` : ''}),
+        geomCode = `geom_bar_pattern(stat = 'identity', aes(pattern = ${xAes}, pattern_angle = ${xAes}, pattern_density = ${xAes}${patFillAes}),
     fill = ${singleBarFill}, color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9},
     width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7},
     pattern_fill = ${singleBarPatFill}, pattern_colour = ${singleBarPatFill},
-    pattern_density = ${singleBarPatDensity}, pattern_spacing = ${singleBarPatSpacing}) +
+    pattern_spacing = ${singleBarPatSpacing}) +${patternFillScale}
   scale_pattern_manual(values = pat_vals) +
   scale_pattern_angle_manual(values = angle_vals) +
-  guides(fill = 'none', pattern = 'none', pattern_angle = 'none')`;
+  scale_pattern_density_manual(values = density_vals) +
+  guides(fill = 'none', pattern = 'none', pattern_angle = 'none', pattern_density = 'none')`;
       } else if (isPerCat) {
         geomCode = `geom_bar(stat = 'identity', aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide}`;
       } else {
@@ -2903,14 +2913,15 @@ library(ggpattern)  # For fill patterns` : ''}
       }
     } else if (chartType === 'bar_error') {
       if (usePattern) {
-        geomCode = `geom_col_pattern(aes(pattern = ${xAes}, pattern_angle = ${xAes}${isPerCat ? `, fill = ${xAes}` : ''}),
+        geomCode = `geom_col_pattern(aes(pattern = ${xAes}, pattern_angle = ${xAes}, pattern_density = ${xAes}${patFillAes}),
     fill = ${singleBarFill}, color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9},
     width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7},
     pattern_fill = ${singleBarPatFill}, pattern_colour = ${singleBarPatFill},
-    pattern_density = ${singleBarPatDensity}, pattern_spacing = ${singleBarPatSpacing}) +
+    pattern_spacing = ${singleBarPatSpacing}) +${patternFillScale}
   scale_pattern_manual(values = pat_vals) +
   scale_pattern_angle_manual(values = angle_vals) +
-  guides(fill = 'none', pattern = 'none', pattern_angle = 'none') +
+  scale_pattern_density_manual(values = density_vals) +
+  guides(fill = 'none', pattern = 'none', pattern_angle = 'none', pattern_density = 'none') +
   geom_errorbar(aes(ymin = col${settings.yColIndex || 2} - col${settings.errorColIndex || 3}, ymax = col${settings.yColIndex || 2} + col${settings.errorColIndex || 3}), width = 0.2, linewidth = ${settings.lineWidth || 0.7})`;
       } else if (isPerCat) {
         geomCode = `geom_col(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide} +
@@ -2922,14 +2933,15 @@ library(ggpattern)  # For fill patterns` : ''}
     } else if (chartType === 'bar_error_dot') {
       const errorType = settings.errorBarType === 'se' ? 'se' : (settings.errorBarType === 'ci95' ? 'ci95' : 'sd');
       if (usePattern) {
-        geomCode = `stat_summary(aes(pattern = ${xAes}, pattern_angle = ${xAes}${isPerCat ? `, fill = ${xAes}` : ''}), fun = mean, geom = 'bar_pattern',
+        geomCode = `stat_summary(aes(pattern = ${xAes}, pattern_angle = ${xAes}, pattern_density = ${xAes}${patFillAes}), fun = mean, geom = 'bar_pattern',
     fill = ${singleBarFill}, color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9},
     width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7},
     pattern_fill = ${singleBarPatFill}, pattern_colour = ${singleBarPatFill},
-    pattern_density = ${singleBarPatDensity}, pattern_spacing = ${singleBarPatSpacing}) +
+    pattern_spacing = ${singleBarPatSpacing}) +${patternFillScale}
   scale_pattern_manual(values = pat_vals) +
   scale_pattern_angle_manual(values = angle_vals) +
-  guides(fill = 'none', pattern = 'none', pattern_angle = 'none') +
+  scale_pattern_density_manual(values = density_vals) +
+  guides(fill = 'none', pattern = 'none', pattern_angle = 'none', pattern_density = 'none') +
   stat_summary(fun.data = mean_${errorType}, geom = 'errorbar', width = 0.2, linewidth = ${settings.lineWidth || 0.7}) +
   geom_point(position = position_jitter(width = ${(settings.barWidth || 0.4) * 0.15}, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 1}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16})`;
       } else if (isPerCat) {
@@ -3061,13 +3073,15 @@ library(ggpattern)  # For fill patterns` : ''}
     }
 
     if (usePattern && ['bar', 'bar_error', 'bar_error_dot'].includes(chartType)) {
-      code += `# Per-category pattern and angle assignments
+      code += `# Per-category pattern, angle, and density assignments
 pat_cycle <- c(${patCycleR})
 angle_cycle <- c(${angleCycleR})
+density_cycle <- c(${densityCycleR})
 cat_levels <- levels(factor(dat$${xAes}))
 n_cats <- length(cat_levels)
 pat_vals <- setNames(pat_cycle[((seq_len(n_cats) - 1) %% length(pat_cycle)) + 1], cat_levels)
 angle_vals <- setNames(angle_cycle[((seq_len(n_cats) - 1) %% length(angle_cycle)) + 1], cat_levels)
+density_vals <- setNames(density_cycle[((seq_len(n_cats) - 1) %% length(density_cycle)) + 1], cat_levels)
 
 `;
     }
@@ -4174,6 +4188,8 @@ summary_data$Error <- ${settings.errorBarType === 'se' ? 'summary_data$SE' : set
   const eduGroupPatterns = rawGroupPatterns.map(p => (p === 'stripe_h' || p === 'stripe_v') ? 'stripe' : p);
   const eduDefaultAngle = settings.patternAngle || 30;
   const eduGroupAngles = rawGroupPatterns.map(p => p === 'stripe_h' ? 0 : p === 'stripe_v' ? 90 : eduDefaultAngle);
+  const eduGroupDensities = Array.isArray(settings.groupDensities) && settings.groupDensities.length >= 6
+    ? settings.groupDensities : Array(6).fill(0.3);
 
   if (usePattern) {
     const numGroups = actualGroups.length || 2;
@@ -4184,7 +4200,7 @@ summary_data$Error <- ${settings.errorBarType === 'se' ? 'summary_data$SE' : set
     code += `# ============ Create Plot ============
 
 # Create the base plot with fill patterns
-p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group, pattern = Group, pattern_angle = Group)) +
+p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group, pattern = Group, pattern_angle = Group, pattern_density = Group)) +
 
   # Add patterned bars
   geom_bar_pattern(
@@ -4196,7 +4212,6 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group, pattern = Gr
     linewidth = ${settings.lineWidth},
     pattern_fill = ${patFill},
     pattern_colour = ${patFill},
-    pattern_density = ${settings.patternDensity || 0.3},
     pattern_spacing = ${settings.patternSpacing || 0.05}
   ) +
 
@@ -4279,15 +4294,18 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
     const numGroupsEdu = actualGroups.length || 2;
     const patValsEdu = eduGroupPatterns.slice(0, numGroupsEdu).map(p => `"${p}"`).join(', ');
     const angleValsEdu = eduGroupAngles.slice(0, numGroupsEdu).join(', ');
+    const densityValsEdu = eduGroupDensities.slice(0, numGroupsEdu).join(', ');
     const fillValsEdu = isBWPattern ? `rep('white', ${numGroupsEdu})` : groupColors;
     code += `  # Set fill colors and patterns (merged into one legend)
   scale_fill_manual(values = ${fillValsEdu}, name = '${settings.selectedGroupColumn || 'Group'}') +
   scale_pattern_manual(values = c(${patValsEdu}), name = '${settings.selectedGroupColumn || 'Group'}') +
   scale_pattern_angle_manual(values = c(${angleValsEdu})) +
+  scale_pattern_density_manual(values = c(${densityValsEdu})) +
   guides(
     fill = guide_legend(override.aes = list(pattern = c(${patValsEdu}))),
     pattern = 'none',
-    pattern_angle = 'none'
+    pattern_angle = 'none',
+    pattern_density = 'none'
   ) +
 ${themeBlockBar}`;
   } else {
@@ -7856,7 +7874,8 @@ function collectCurrentSettings() {
     groupPatterns: [1,2,3,4,5,6].map((i, idx) => {
       const defaults = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
       return el(`groupPattern${i}`)?.value || defaults[idx];
-    })
+    }),
+    groupDensities: [1,2,3,4,5,6].map(i => parseFloat(el(`groupDensity${i}`)?.value || "0.3"))
   };
 
   // Collect group colors dynamically
@@ -8338,6 +8357,11 @@ function applySettingsToUI(settings) {
   if (Array.isArray(settings.groupPatterns)) {
     settings.groupPatterns.forEach((p, idx) => {
       setValue(`groupPattern${idx + 1}`, p);
+    });
+  }
+  if (Array.isArray(settings.groupDensities)) {
+    settings.groupDensities.forEach((d, idx) => {
+      setValue(`groupDensity${idx + 1}`, d);
     });
   }
 
@@ -9396,6 +9420,7 @@ Office.onReady(() => {
     if (patternMode) { patternMode.value = "none"; patternMode.dispatchEvent(new Event('change')); }
     const defaultPatterns = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
     defaultPatterns.forEach((p, i) => { const el = document.getElementById(`groupPattern${i+1}`); if (el) el.value = p; });
+    [1,2,3,4,5,6].forEach(i => { const el = document.getElementById(`groupDensity${i}`); if (el) el.value = "0.3"; });
     setVal("patternDensity", "0.3");
     setVal("patternSpacing", "0.05");
     setVal("patternAngle",   "30");
@@ -17044,7 +17069,7 @@ async function initWebR() {
                         add_statistics=FALSE, statistical_test="auto",
                         use_pattern=FALSE, pattern_bw=FALSE,
                         group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                        pattern_density=0.3, pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                        group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -17065,24 +17090,27 @@ async function initWebR() {
         names(bar_fills) <- cat_levels
         names(pat_vals) <- cat_levels
         angle_vals <- setNames(group_angles[((seq_len(n_cats) - 1) %% length(group_angles)) + 1], cat_levels)
+        density_vals <- setNames(group_densities[((seq_len(n_cats) - 1) %% length(group_densities)) + 1], cat_levels)
         if (is.null(y_col) || ncol(dat) == 1) {
-          p <- ggplot(dat, aes(x=factor(dat[[x_col]]), fill=factor(dat[[x_col]]), pattern=factor(dat[[x_col]]), pattern_angle=factor(dat[[x_col]]))) +
+          p <- ggplot(dat, aes(x=factor(dat[[x_col]]), fill=factor(dat[[x_col]]), pattern=factor(dat[[x_col]]), pattern_angle=factor(dat[[x_col]]), pattern_density=factor(dat[[x_col]]))) +
                geom_bar_pattern(colour=bar_colour, linewidth=linewidth, alpha=alpha, width=width,
                  pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30",
-                 pattern_density=pattern_density, pattern_spacing=pattern_spacing) +
+                 pattern_spacing=pattern_spacing) +
                scale_fill_manual(values=bar_fills) +
                scale_pattern_manual(values=pat_vals) +
                scale_pattern_angle_manual(values=angle_vals) +
-               guides(fill="none", pattern="none", pattern_angle="none")
+               scale_pattern_density_manual(values=density_vals) +
+               guides(fill="none", pattern="none", pattern_angle="none", pattern_density="none")
         } else {
-          p <- ggplot(dat, aes(x=factor(dat[[x_col]]), y=dat[[y_col]], fill=factor(dat[[x_col]]), pattern=factor(dat[[x_col]]), pattern_angle=factor(dat[[x_col]]))) +
+          p <- ggplot(dat, aes(x=factor(dat[[x_col]]), y=dat[[y_col]], fill=factor(dat[[x_col]]), pattern=factor(dat[[x_col]]), pattern_angle=factor(dat[[x_col]]), pattern_density=factor(dat[[x_col]]))) +
                geom_col_pattern(colour=bar_colour, linewidth=linewidth, alpha=alpha, width=width,
                  pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30",
-                 pattern_density=pattern_density, pattern_spacing=pattern_spacing) +
+                 pattern_spacing=pattern_spacing) +
                scale_fill_manual(values=bar_fills) +
                scale_pattern_manual(values=pat_vals) +
                scale_pattern_angle_manual(values=angle_vals) +
-               guides(fill="none", pattern="none", pattern_angle="none")
+               scale_pattern_density_manual(values=density_vals) +
+               guides(fill="none", pattern="none", pattern_angle="none", pattern_density="none")
         }
       } else if (is.null(y_col) || ncol(dat) == 1) {
         # Single column: frequency bar chart with per-category colors
@@ -18122,7 +18150,7 @@ async function initWebR() {
                               add_statistics=FALSE, statistical_test="auto",
                               use_pattern=FALSE, pattern_bw=FALSE,
                               group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                              pattern_density=0.3, pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                              group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18147,16 +18175,18 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else color
         pat_vals <- setNames(group_patterns[((seq_len(n_cats) - 1) %% length(group_patterns)) + 1], cat_levels)
         angle_vals <- setNames(group_angles[((seq_len(n_cats) - 1) %% length(group_angles)) + 1], cat_levels)
-        p <- ggplot(df, aes(x=category, y=mean_val, fill=category, pattern=category, pattern_angle=category)) +
+        density_vals <- setNames(group_densities[((seq_len(n_cats) - 1) %% length(group_densities)) + 1], cat_levels)
+        p <- ggplot(df, aes(x=category, y=mean_val, fill=category, pattern=category, pattern_angle=category, pattern_density=category)) +
              geom_col_pattern(colour=bar_colour, linewidth=linewidth, alpha=alpha, width=width,
                pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30",
-               pattern_density=pattern_density, pattern_spacing=pattern_spacing) +
+               pattern_spacing=pattern_spacing) +
              geom_errorbar(aes(ymin=mean_val-error, ymax=mean_val+error),
                           width=errorbar_width, color=bar_colour, linewidth=linewidth*0.8) +
              scale_fill_manual(values=bar_fills) +
              scale_pattern_manual(values=pat_vals) +
              scale_pattern_angle_manual(values=angle_vals) +
-             guides(fill="none", pattern="none", pattern_angle="none")
+             scale_pattern_density_manual(values=density_vals) +
+             guides(fill="none", pattern="none", pattern_angle="none", pattern_density="none")
       } else {
         # Create bar plot with error bars
         p <- ggplot(df, aes(x=category, y=mean_val, fill=category)) +
@@ -18194,7 +18224,7 @@ async function initWebR() {
                                   add_statistics=FALSE, statistical_test="auto",
                                   use_pattern=FALSE, pattern_bw=FALSE,
                                   group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                                  pattern_density=0.3, pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                                  group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18279,20 +18309,22 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else color
         pat_vals <- setNames(group_patterns[((seq_len(length(cat_levels)) - 1) %% length(group_patterns)) + 1], cat_levels)
         angle_vals <- setNames(group_angles[((seq_len(length(cat_levels)) - 1) %% length(group_angles)) + 1], cat_levels)
+        density_vals <- setNames(group_densities[((seq_len(length(cat_levels)) - 1) %% length(group_densities)) + 1], cat_levels)
         p <- ggplot() +
-             geom_col_pattern(data = summary_df, aes(x = category, y = mean_val, fill = category, pattern = category, pattern_angle = category),
+             geom_col_pattern(data = summary_df, aes(x = category, y = mean_val, fill = category, pattern = category, pattern_angle = category, pattern_density = category),
                      colour=bar_colour, linewidth=linewidth, alpha=alpha, width=width,
                      pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30",
-                     pattern_density=pattern_density, pattern_spacing=pattern_spacing) +
+                     pattern_spacing=pattern_spacing) +
              scale_fill_manual(values = bar_fills) +
              scale_pattern_manual(values = pat_vals) +
              scale_pattern_angle_manual(values = angle_vals) +
+             scale_pattern_density_manual(values = density_vals) +
              geom_errorbar(data = summary_df, aes(x = category, ymin = mean_val - error_val, ymax = mean_val + error_val),
                           width = errorbar_width, color = bar_colour, linewidth = linewidth * 0.8) +
              geom_point(data = df, aes(x = category, y = value),
                        position = position_jitter(width = jitter_width, height = 0),
                        size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape) +
-             guides(fill = "none", pattern = "none", pattern_angle = "none")
+             guides(fill = "none", pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot() +
              # Bar layer (means) - per-category fill colors
@@ -18433,7 +18465,7 @@ async function initWebR() {
                                 add_statistics=FALSE, statistical_test="auto",
                                 use_pattern=FALSE, pattern_bw=FALSE,
                                 group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                                pattern_density=0.3, pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                                group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18522,17 +18554,19 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else stroke_color
         pat_vals <- setNames(group_patterns[((seq_len(n_groups) - 1) %% length(group_patterns)) + 1], group_levels)
         angle_vals <- setNames(group_angles[((seq_len(n_groups) - 1) %% length(group_angles)) + 1], group_levels)
-        p <- ggplot(plot_data, aes(x = category, y = value, fill = group, pattern = group, pattern_angle = group)) +
+        density_vals <- setNames(group_densities[((seq_len(n_groups) - 1) %% length(group_densities)) + 1], group_levels)
+        p <- ggplot(plot_data, aes(x = category, y = value, fill = group, pattern = group, pattern_angle = group, pattern_density = group)) +
              geom_col_pattern(position = position_dodge(width = dodge_width), width = width,
                      alpha = alpha, linewidth = linewidth, colour = bar_colour,
                      pattern_fill = if(pattern_bw)"black" else "grey30",
                      pattern_colour = if(pattern_bw)"black" else "grey30",
-                     pattern_density = pattern_density, pattern_spacing = pattern_spacing) +
+                     pattern_spacing = pattern_spacing) +
              scale_fill_manual(values = bar_fills, name = actual_group_name) +
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
+             scale_pattern_density_manual(values = density_vals) +
              guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals))),
-                    pattern = "none", pattern_angle = "none")
+                    pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot(plot_data, aes(x = category, y = value, fill = group)) +
              geom_col(position = position_dodge(width = dodge_width),
@@ -18656,7 +18690,7 @@ async function initWebR() {
                                       y_axis_hjust=0.5, y_axis_vjust=0.5,
                                       use_pattern=FALSE, pattern_bw=FALSE,
                                       group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                                      pattern_density=0.3, pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                                      group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18701,19 +18735,21 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else stroke_color
         pat_vals <- setNames(group_patterns[((seq_len(n_groups) - 1) %% length(group_patterns)) + 1], group_levels)
         angle_vals <- setNames(group_angles[((seq_len(n_groups) - 1) %% length(group_angles)) + 1], group_levels)
+        density_vals <- setNames(group_densities[((seq_len(n_groups) - 1) %% length(group_densities)) + 1], group_levels)
         pat_fill <- if (pattern_bw) "black" else "grey30"
-        p <- ggplot(plot_data, aes(x = category, y = mean_val, fill = group, pattern = group, pattern_angle = group)) +
+        p <- ggplot(plot_data, aes(x = category, y = mean_val, fill = group, pattern = group, pattern_angle = group, pattern_density = group)) +
              geom_col_pattern(position = position_dodge(width = dodge_width),
                      width = width, alpha = alpha, linewidth = linewidth, colour = bar_colour,
                      pattern_fill = pat_fill, pattern_colour = pat_fill,
-                     pattern_density = pattern_density, pattern_spacing = pattern_spacing) +
+                     pattern_spacing = pattern_spacing) +
              geom_errorbar(aes(ymin = mean_val - error_val, ymax = mean_val + error_val),
                           position = position_dodge(width = dodge_width),
                           width = 0.25, linewidth = linewidth * 0.8) +
              scale_fill_manual(values = bar_fills, name = actual_group_name) +
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals))), pattern = "none", pattern_angle = "none")
+             scale_pattern_density_manual(values = density_vals) +
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals))), pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot(plot_data, aes(x = category, y = mean_val, fill = group)) +
              geom_col(position = position_dodge(width = dodge_width),
@@ -18764,7 +18800,7 @@ async function initWebR() {
                                           paired=FALSE, subject_col=NULL,
                                           use_pattern=FALSE, pattern_bw=FALSE,
                                           group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                                          pattern_density=0.3, pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                                          group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18841,12 +18877,13 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else stroke_color
         pat_vals <- setNames(group_patterns[((seq_len(n_groups) - 1) %% length(group_patterns)) + 1], group_levels)
         angle_vals <- setNames(group_angles[((seq_len(n_groups) - 1) %% length(group_angles)) + 1], group_levels)
-        p <- ggplot(summary_data, aes(x = category, y = mean_val, fill = group, pattern = group, pattern_angle = group)) +
+        density_vals <- setNames(group_densities[((seq_len(n_groups) - 1) %% length(group_densities)) + 1], group_levels)
+        p <- ggplot(summary_data, aes(x = category, y = mean_val, fill = group, pattern = group, pattern_angle = group, pattern_density = group)) +
              geom_col_pattern(position = position_dodge(width = dodge_width), width = width,
                      alpha = alpha, linewidth = linewidth, colour = bar_colour,
                      pattern_fill = if(pattern_bw)"black" else "grey30",
                      pattern_colour = if(pattern_bw)"black" else "grey30",
-                     pattern_density = pattern_density, pattern_spacing = pattern_spacing) +
+                     pattern_spacing = pattern_spacing) +
              geom_errorbar(aes(ymin = mean_val - error_val, ymax = mean_val + error_val),
                           position = position_dodge(width = dodge_width),
                           width = 0.25, linewidth = linewidth * 0.8, color = bar_colour) +
@@ -18856,8 +18893,9 @@ async function initWebR() {
              scale_fill_manual(values = bar_fills, name = actual_group_name) +
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
+             scale_pattern_density_manual(values = density_vals) +
              guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals))),
-                    pattern = "none", pattern_angle = "none")
+                    pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot(summary_data, aes(x = category, y = mean_val, fill = group)) +
              geom_col(position = position_dodge(width = dodge_width),
@@ -21995,6 +22033,9 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   // Resolve stripe_h/stripe_v → stripe with per-group angles
   const resolvedGroupPatterns = groupPatterns.map(p => (p === 'stripe_h' || p === 'stripe_v') ? 'stripe' : p);
   const resolvedGroupAngles = groupPatterns.map(p => p === 'stripe_h' ? 0 : p === 'stripe_v' ? 90 : patternAngle);
+  const defaultDensities = [0.3, 0.3, 0.3, 0.3, 0.3, 0.3];
+  const resolvedGroupDensities = Array.isArray(o.groupDensities) && o.groupDensities.length >= 6
+    ? o.groupDensities : defaultDensities;
 
   // VBracket legend settings (for 3+ groups line plots)
   const vbracketTimepoint = o.vbracketTimepoint || "";
@@ -23667,7 +23708,7 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        pattern_density = ${patternDensity},
+        group_densities = c(${resolvedGroupDensities.join(', ')}),
         pattern_spacing = ${patternSpacing},
         group_angles = c(${resolvedGroupAngles.join(', ')})
       )
@@ -23747,7 +23788,7 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        pattern_density = ${patternDensity},
+        group_densities = c(${resolvedGroupDensities.join(', ')}),
         pattern_spacing = ${patternSpacing},
         group_angles = c(${resolvedGroupAngles.join(', ')})
       )
@@ -23794,7 +23835,7 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        pattern_density = ${patternDensity},
+        group_densities = c(${resolvedGroupDensities.join(', ')}),
         pattern_spacing = ${patternSpacing},
         group_angles = c(${resolvedGroupAngles.join(', ')})
       )
@@ -24188,7 +24229,7 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        pattern_density = ${patternDensity},
+        group_densities = c(${resolvedGroupDensities.join(', ')}),
         pattern_spacing = ${patternSpacing},
         group_angles = c(${resolvedGroupAngles.join(', ')})
       )
@@ -24238,7 +24279,7 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        pattern_density = ${patternDensity},
+        group_densities = c(${resolvedGroupDensities.join(', ')}),
         pattern_spacing = ${patternSpacing},
         group_angles = c(${resolvedGroupAngles.join(', ')})
       )
@@ -24308,7 +24349,7 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        pattern_density = ${patternDensity},
+        group_densities = c(${resolvedGroupDensities.join(', ')}),
         pattern_spacing = ${patternSpacing},
         group_angles = c(${resolvedGroupAngles.join(', ')})
       )
@@ -24644,7 +24685,8 @@ ${SHARED_STAT_HELPERS_R}
     scatterPerGroupShape: document.getElementById("scatterPerGroupShape")?.checked || false,
     scatterGroupShapes: [1,2,3,4,5,6].map((i, idx) => parseInt(document.getElementById(`scatterShape${i}`)?.value || [16,17,15,18,1,2][idx])),
     // Fill pattern settings
-    patternMode, patternDensity, patternSpacing, patternAngle, groupPatterns
+    patternMode, patternDensity, patternSpacing, patternAngle, groupPatterns,
+    groupDensities: [1,2,3,4,5,6].map(i => parseFloat(document.getElementById(`groupDensity${i}`)?.value || "0.3"))
   };
   console.log("✅ Stored all plot settings for R code generation");
 
@@ -25889,6 +25931,7 @@ function uiOpts(){
       const defaults = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
       return el(`groupPattern${i}`)?.value || defaults[idx];
     }),
+    groupDensities: [1,2,3,4,5,6].map(i => parseFloat(el(`groupDensity${i}`)?.value || "0.3")),
   };
 }
 

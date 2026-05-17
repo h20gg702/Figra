@@ -836,7 +836,11 @@
           </select>
           <!-- Per-group/category pattern selectors -->
           <div id="patternPickersRow" style="display:none; flex-direction:column; gap:3px;">
-            <div style="font-size:11px; color:#666; margin-bottom:2px;">Pattern per group/category:</div>
+            <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
+              <span style="font-size:11px; color:#666; width:90px;">Pattern per group:</span>
+              <span style="font-size:11px; color:#666; flex:1;">Pattern</span>
+              <span style="font-size:11px; color:#666; width:44px; text-align:center;">Density</span>
+            </div>
             <div class="pattern-group-item" data-group="1" style="display:flex; align-items:center; gap:6px;">
               <label id="patternLabel1" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">1st group</label>
               <select id="groupPattern1" style="flex:1; font-size:12px;">
@@ -850,6 +854,7 @@
                 <option value="wave">〰〰 Wave</option>
                 <option value="none">▭ Solid fill</option>
               </select>
+              <input type="number" id="groupDensity1" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
             </div>
             <div class="pattern-group-item" data-group="2" style="display:flex; align-items:center; gap:6px;">
               <label id="patternLabel2" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">2nd group</label>
@@ -864,6 +869,7 @@
                 <option value="wave">〰〰 Wave</option>
                 <option value="none">▭ Solid fill</option>
               </select>
+              <input type="number" id="groupDensity2" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
             </div>
             <div class="pattern-group-item" data-group="3" style="display:none; align-items:center; gap:6px;">
               <label id="patternLabel3" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">3rd group</label>
@@ -878,6 +884,7 @@
                 <option value="wave">〰〰 Wave</option>
                 <option value="none">▭ Solid fill</option>
               </select>
+              <input type="number" id="groupDensity3" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
             </div>
             <div class="pattern-group-item" data-group="4" style="display:none; align-items:center; gap:6px;">
               <label id="patternLabel4" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">4th group</label>
@@ -892,6 +899,7 @@
                 <option value="wave">〰〰 Wave</option>
                 <option value="none">▭ Solid fill</option>
               </select>
+              <input type="number" id="groupDensity4" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
             </div>
             <div class="pattern-group-item" data-group="5" style="display:none; align-items:center; gap:6px;">
               <label id="patternLabel5" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">5th group</label>
@@ -906,6 +914,7 @@
                 <option value="wave">〰〰 Wave</option>
                 <option value="none">▭ Solid fill</option>
               </select>
+              <input type="number" id="groupDensity5" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
             </div>
             <div class="pattern-group-item" data-group="6" style="display:none; align-items:center; gap:6px;">
               <label id="patternLabel6" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">6th group</label>
@@ -920,11 +929,12 @@
                 <option value="wave" selected>〰〰 Wave</option>
                 <option value="none">▭ Solid fill</option>
               </select>
+              <input type="number" id="groupDensity6" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
             </div>
           </div>
           <!-- Pattern appearance controls -->
           <div id="patternAppearanceRow" style="display:none; flex-direction:column; gap:4px;">
-            <div style="display:flex; align-items:center; gap:8px;">
+            <div style="display:none; align-items:center; gap:8px;">
               <label style="font-size:12px; width:60px;">Density</label>
               <input type="range" id="patternDensity" min="0.05" max="0.5" step="0.05" value="0.3" style="flex:1;">
               <span id="patternDensityVal" style="font-size:12px; width:30px;">0.3</span>
