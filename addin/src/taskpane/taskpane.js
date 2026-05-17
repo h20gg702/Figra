@@ -4139,7 +4139,7 @@ summary_data$Error <- ${settings.errorBarType === 'se' ? 'summary_data$SE' : set
 
   const usePattern = settings.patternMode && settings.patternMode !== 'none';
   const isBWPattern = settings.patternMode === 'bw_pattern';
-  const defaultPatterns = ["stripe","crosshatch","circle","dot","grid","wave"];
+  const defaultPatterns = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
   const eduGroupPatterns = Array.isArray(settings.groupPatterns) && settings.groupPatterns.length >= 6
     ? settings.groupPatterns : defaultPatterns;
 
@@ -7809,7 +7809,7 @@ function collectCurrentSettings() {
     patternSpacing: parseFloat(el("patternSpacing")?.value || "0.05"),
     patternAngle: parseFloat(el("patternAngle")?.value || "30"),
     groupPatterns: [1,2,3,4,5,6].map((i, idx) => {
-      const defaults = ["stripe","crosshatch","circle","dot","grid","wave"];
+      const defaults = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
       return el(`groupPattern${i}`)?.value || defaults[idx];
     })
   };
@@ -8603,6 +8603,18 @@ Office.onReady(() => {
 
     if (!usePattern) {
       syncPatternPickerCount();
+      // Restore rows that B&W may have hidden, preserving the user's fillMode selection.
+      const v = document.getElementById("chartType")?.value || "";
+      const PER_CAT_TYPES = ["bar_error_dot","bar","bar_error","box","box_dot","violin","violin_dot","dot"];
+      if (PER_CAT_TYPES.includes(v)) {
+        const fillModeRow = document.getElementById("fillModeRow");
+        if (fillModeRow) fillModeRow.style.display = "flex";
+        const isPerCatSelected = document.querySelector('input[name="fillMode"]:checked')?.value === "per_category";
+        const barInteriorRow = document.getElementById("barInteriorRow");
+        if (barInteriorRow) barInteriorRow.style.display = isPerCatSelected ? "none" : "flex";
+        const groupColorRow = document.getElementById("groupColorRow");
+        if (groupColorRow) groupColorRow.style.display = isPerCatSelected ? "flex" : "none";
+      }
       return;
     }
 
@@ -8612,15 +8624,32 @@ Office.onReady(() => {
     const barInteriorRow = document.getElementById("barInteriorRow");
     if (barInteriorRow) barInteriorRow.style.display = "none";
 
-    // Fill mode row: hide only for B&W (all fills white, per-category irrelevant).
-    //   Color+Pattern → keep visible so user can still toggle per-category colors
+    // Fill mode row: hide for B&W; explicitly restore for Color+Pattern on per-category charts.
+    // Must explicitly show (not just skip hiding) so switching B&W→Color+Pattern recovers the row.
     const fillModeRow = document.getElementById("fillModeRow");
-    if (fillModeRow && isBW) fillModeRow.style.display = "none";
+    const _cv = (document.getElementById("chartType")?.value || "").toLowerCase();
+    const PER_CAT_TYPES = ["bar_error_dot","bar","bar_error","box","box_dot","violin","violin_dot","dot"];
+    if (fillModeRow) {
+      if (isBW) {
+        fillModeRow.style.display = "none";
+      } else if (PER_CAT_TYPES.includes(_cv)) {
+        fillModeRow.style.display = "flex";
+      }
+    }
 
-    // Group Colors row: hide only for B&W (all fills white, group colors irrelevant).
-    //   Color+Pattern → keep visible so user can assign per-group fill colors
+    // Group Colors row: hide for B&W; explicitly restore for Color+Pattern.
+    // Must explicitly show so B&W→Color+Pattern recovers the row.
     const groupColorRow = document.getElementById("groupColorRow");
-    if (groupColorRow && isBW) groupColorRow.style.display = "none";
+    if (groupColorRow) {
+      if (isBW) {
+        groupColorRow.style.display = "none";
+      } else if (GROUPED_CHART_TYPES.includes(_cv)) {
+        groupColorRow.style.display = "flex";
+      } else if (PER_CAT_TYPES.includes(_cv)) {
+        const isPerCatSel = document.querySelector('input[name="fillMode"]:checked')?.value === "per_category";
+        groupColorRow.style.display = isPerCatSel ? "flex" : "none";
+      }
+    }
 
     // Sync pattern picker visibility to numGroups
     syncPatternPickerCount();
@@ -9288,7 +9317,7 @@ Office.onReady(() => {
     // Reset fill pattern to defaults
     const patternMode = document.getElementById("patternMode");
     if (patternMode) { patternMode.value = "none"; patternMode.dispatchEvent(new Event('change')); }
-    const defaultPatterns = ["stripe","crosshatch","circle","dot","grid","wave"];
+    const defaultPatterns = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
     defaultPatterns.forEach((p, i) => { const el = document.getElementById(`groupPattern${i+1}`); if (el) el.value = p; });
     setVal("patternDensity", "0.3");
     setVal("patternSpacing", "0.05");
@@ -16935,7 +16964,7 @@ async function initWebR() {
                         y_axis_hjust=0.5, y_axis_vjust=0.5,
                         add_statistics=FALSE, statistical_test="auto",
                         use_pattern=FALSE, pattern_bw=FALSE,
-                        group_patterns=c("stripe","crosshatch","circle","dot","grid","wave"),
+                        group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
                         pattern_density=0.3, pattern_spacing=0.05, pattern_angle=30) {
 
       # Transform data for negative log scales
@@ -18010,7 +18039,7 @@ async function initWebR() {
                               y_axis_hjust=0.5, y_axis_vjust=0.5,
                               add_statistics=FALSE, statistical_test="auto",
                               use_pattern=FALSE, pattern_bw=FALSE,
-                              group_patterns=c("stripe","crosshatch","circle","dot","grid","wave"),
+                              group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
                               pattern_density=0.3, pattern_spacing=0.05, pattern_angle=30) {
 
       # Transform data for negative log scales
@@ -18080,7 +18109,7 @@ async function initWebR() {
                                   y_axis_hjust=0.5, y_axis_vjust=0.5,
                                   add_statistics=FALSE, statistical_test="auto",
                                   use_pattern=FALSE, pattern_bw=FALSE,
-                                  group_patterns=c("stripe","crosshatch","circle","dot","grid","wave"),
+                                  group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
                                   pattern_density=0.3, pattern_spacing=0.05, pattern_angle=30) {
 
       # Transform data for negative log scales
@@ -18315,7 +18344,7 @@ async function initWebR() {
                                 y_axis_hjust=0.5, y_axis_vjust=0.5,
                                 add_statistics=FALSE, statistical_test="auto",
                                 use_pattern=FALSE, pattern_bw=FALSE,
-                                group_patterns=c("stripe","crosshatch","circle","dot","grid","wave"),
+                                group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
                                 pattern_density=0.3, pattern_spacing=0.05, pattern_angle=30) {
 
       # Transform data for negative log scales
@@ -18537,7 +18566,7 @@ async function initWebR() {
                                       x_axis_hjust=0.5, x_axis_vjust=0.5,
                                       y_axis_hjust=0.5, y_axis_vjust=0.5,
                                       use_pattern=FALSE, pattern_bw=FALSE,
-                                      group_patterns=c("stripe","crosshatch","circle","dot","grid","wave"),
+                                      group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
                                       pattern_density=0.3, pattern_spacing=0.05, pattern_angle=30) {
 
       # Transform data for negative log scales
@@ -18643,7 +18672,7 @@ async function initWebR() {
                                           stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
                                           paired=FALSE, subject_col=NULL,
                                           use_pattern=FALSE, pattern_bw=FALSE,
-                                          group_patterns=c("stripe","crosshatch","circle","dot","grid","wave"),
+                                          group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
                                           pattern_density=0.3, pattern_spacing=0.05, pattern_angle=30) {
 
       # Transform data for negative log scales
@@ -21865,7 +21894,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const patternDensity = o.patternDensity || 0.3;
   const patternSpacing = o.patternSpacing || 0.05;
   const patternAngle = o.patternAngle || 30;
-  const defaultPatterns = ["stripe","crosshatch","circle","dot","grid","wave"];
+  const defaultPatterns = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
   const groupPatterns = Array.isArray(o.groupPatterns) && o.groupPatterns.length >= 6
     ? o.groupPatterns
     : defaultPatterns;
@@ -25752,7 +25781,7 @@ function uiOpts(){
     patternSpacing: parseFloat(el("patternSpacing")?.value || "0.05"),
     patternAngle: parseFloat(el("patternAngle")?.value || "30"),
     groupPatterns: [1,2,3,4,5,6].map((i, idx) => {
-      const defaults = ["stripe","crosshatch","circle","dot","grid","wave"];
+      const defaults = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
       return el(`groupPattern${i}`)?.value || defaults[idx];
     }),
   };
