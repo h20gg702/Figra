@@ -8609,9 +8609,13 @@ Office.onReady(() => {
       if (PER_CAT_TYPES.includes(v)) {
         const fillModeRow = document.getElementById("fillModeRow");
         if (fillModeRow) fillModeRow.style.display = "flex";
-        const isPerCatSelected = document.querySelector('input[name="fillMode"]:checked')?.value === "per_category";
+        // Always restore barInteriorRow — opacity inside it must be accessible in both single and per-category modes.
+        // Only fillColorSubRow inside it toggles; barInteriorRow itself stays visible.
         const barInteriorRow = document.getElementById("barInteriorRow");
-        if (barInteriorRow) barInteriorRow.style.display = isPerCatSelected ? "none" : "flex";
+        if (barInteriorRow) barInteriorRow.style.display = "flex";
+        const isPerCatSelected = document.querySelector('input[name="fillMode"]:checked')?.value === "per_category";
+        const fillColorSubRow = document.getElementById("fillColorSubRow");
+        if (fillColorSubRow) fillColorSubRow.style.display = isPerCatSelected ? "none" : "flex";
         const groupColorRow = document.getElementById("groupColorRow");
         if (groupColorRow) groupColorRow.style.display = isPerCatSelected ? "flex" : "none";
       }
@@ -8619,16 +8623,21 @@ Office.onReady(() => {
     }
 
     // Bar Interior row:
-    //   B&W → hide (fill forced to white, no user control needed)
-    //   Color+Pattern + per-category → hide (category colors own the fill)
-    //   Color+Pattern + single color → show (user sets the fill color)
+    //   B&W → hide entirely (fill forced to white, opacity irrelevant)
+    //   Color+Pattern (any fillMode) → always show so opacity is accessible;
+    //     fillColorSubRow inside it toggles based on fillMode
     const barInteriorRow = document.getElementById("barInteriorRow");
+    const _barCv = (document.getElementById("chartType")?.value || "").toLowerCase();
+    const _PER_CAT = ["bar_error_dot","bar","bar_error","box","box_dot","violin","violin_dot","dot"];
     if (barInteriorRow) {
       if (isBW) {
         barInteriorRow.style.display = "none";
-      } else {
-        const isPerCatSelected = document.querySelector('input[name="fillMode"]:checked')?.value === "per_category";
-        barInteriorRow.style.display = isPerCatSelected ? "none" : "flex";
+      } else if (_PER_CAT.includes(_barCv)) {
+        barInteriorRow.style.display = "flex";
+        // Sync fillColorSubRow: hidden for per-category (colors come from category pickers)
+        const isPerCatSel = document.querySelector('input[name="fillMode"]:checked')?.value === "per_category";
+        const fillColorSubRow = document.getElementById("fillColorSubRow");
+        if (fillColorSubRow) fillColorSubRow.style.display = isPerCatSel ? "none" : "flex";
       }
     }
 
