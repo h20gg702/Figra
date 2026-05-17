@@ -7757,6 +7757,7 @@ function collectCurrentSettings() {
     stackedLabelColor: (el("stackedLabelColor")?.value || el("stackedLabelColorPicker")?.value || "#ffffff").trim(),
     stackedLabelSize: parseFloat(el("stackedLabelSize")?.value) || 14,
     stackedLabelWeight: el("stackedLabelWeight")?.value || "plain",
+    stackedErrorType: el("stackedErrorType")?.value || "none",
 
     // Scatter group toggle and per-group shapes
     scatterGrouped: el("scatterGrouped")?.checked || false,
@@ -18601,6 +18602,7 @@ async function initWebR() {
                                 stroke_color="#1f2937",
                                 alpha=0.9, linewidth=0.5, width=0.8,
                                 stacked_100=FALSE, label_color="#ffffff", label_size=14, label_weight="plain",
+                                error_type="none", error_bar_width=0.2,
                                 group_name="Group", category_name="Category", value_name="Value",
                                 target_font="Arial", title_weight="plain", axis_title_weight="plain", axis_text_weight="plain",
                                 title_size=14, x_axis_title_size=12, y_axis_title_size=12,
@@ -18633,20 +18635,43 @@ async function initWebR() {
 
       bar_position <- if (stacked_100) "fill" else "stack"
 
-      # Summarize: mean per group × category (handles multiple replicates)
-      summary_data <- plot_data %>%
-        dplyr::group_by(group, category) %>%
-        dplyr::summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+      # Summarize: mean (+ error stats) per group × category
+      show_error <- error_type != "none" && !stacked_100
+      if (show_error) {
+        summary_data <- plot_data %>%
+          dplyr::group_by(group, category) %>%
+          dplyr::summarise(
+            mean_val = mean(value, na.rm = TRUE),
+            sd_val   = ifelse(dplyr::n() > 1, sd(value, na.rm = TRUE), 0),
+            se_val   = ifelse(dplyr::n() > 1, sd(value, na.rm = TRUE) / sqrt(dplyr::n()), 0),
+            .groups  = "drop"
+          )
+        summary_data$error_val <- if (error_type == "se") summary_data$se_val else if (error_type == "ci95") 1.96 * summary_data$se_val else summary_data$sd_val
+
+        # Cumulative top of each segment (matching ggplot2 stacking order = factor level order)
+        summary_data <- summary_data %>%
+          dplyr::group_by(category) %>%
+          dplyr::arrange(match(group, group_levels), .by_group = TRUE) %>%
+          dplyr::mutate(cum_top = cumsum(mean_val)) %>%
+          dplyr::ungroup()
+
+        # Use mean_val as value for geom_bar
+        bar_data <- summary_data %>% dplyr::mutate(value = mean_val)
+      } else {
+        summary_data <- plot_data %>%
+          dplyr::group_by(group, category) %>%
+          dplyr::summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
+        bar_data <- summary_data
+      }
 
       if (stacked_100) {
-        # Pre-calculate proportions for label display (after_stat(y) doesn't work with stat="identity" + position_fill)
-        summary_data <- summary_data %>%
+        bar_data <- bar_data %>%
           dplyr::group_by(category) %>%
           dplyr::mutate(prop = value / sum(value, na.rm = TRUE)) %>%
           dplyr::ungroup()
       }
 
-      p <- ggplot(summary_data, aes(x = category, y = value, fill = group)) +
+      p <- ggplot(bar_data, aes(x = category, y = value, fill = group)) +
            geom_bar(stat = "identity", position = bar_position,
                     color = stroke_color, alpha = alpha,
                     linewidth = linewidth, width = width) +
@@ -18660,6 +18685,17 @@ async function initWebR() {
                     size = label_size / .pt,
                     color = label_color, fontface = label_weight) +
           scale_y_continuous(labels = scales::percent)
+      }
+
+      if (show_error) {
+        p <- p +
+          geom_errorbar(data = summary_data,
+                        aes(x = category, ymin = cum_top - error_val, ymax = cum_top + error_val),
+                        position = "identity",
+                        width = error_bar_width,
+                        color = stroke_color,
+                        linewidth = linewidth * 0.8,
+                        inherit.aes = FALSE)
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -21906,6 +21942,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const stackedLabelColor = o.stackedLabelColor || "#ffffff";
   const stackedLabelSize = o.stackedLabelSize || 14;
   const stackedLabelWeight = o.stackedLabelWeight || "plain";
+  const stackedErrorType = o.stackedErrorType || "none";
   const errorBarType = o.errorBarType || 'sd';
   const dotSize = o.dotSize || 4;
   const dotColor = o.dotColor || '#333333';
@@ -24183,7 +24220,8 @@ ${SHARED_STAT_HELPERS_R}
         x_axis_hjust = ${xAxisHjust},
         x_axis_vjust = ${xAxisVjust},
         y_axis_hjust = ${yAxisHjust},
-        y_axis_vjust = ${yAxisVjust}
+        y_axis_vjust = ${yAxisVjust},
+        error_type = "${stackedErrorType}"
       )
     } else if (chart_type == "bar_grouped") {
       # Grouped bar chart - requires 3 columns: Group, Category, Value
@@ -24665,6 +24703,7 @@ ${SHARED_STAT_HELPERS_R}
     stackedLabelColor: (el("stackedLabelColor")?.value || el("stackedLabelColorPicker")?.value || "#ffffff").trim(),
     stackedLabelSize: parseFloat(el("stackedLabelSize")?.value) || 14,
     stackedLabelWeight: el("stackedLabelWeight")?.value || "plain",
+    stackedErrorType: el("stackedErrorType")?.value || "none",
     dataOrder, customOrderGroup, customOrderCategory, numGroups, bins, expWidth: wIn, expHeight: hIn,
     // VBracket extended settings
     vbracketLegendLineLength, vbracketLegendLineWidth, vbracketItemSpacing, vbracketBracketLayerSpacing,
