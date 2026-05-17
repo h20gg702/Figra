@@ -825,6 +825,118 @@
         </div>
       </div>
 
+      <!-- Fill Pattern -->
+      <div class="row" id="patternRow" style="display:none;">
+        <label>Fill Pattern</label>
+        <div style="display:flex; flex-direction:column; gap:6px; width:280px;">
+          <select id="patternMode" style="width:220px; font-size:13px;">
+            <option value="none">Solid fill</option>
+            <option value="color_pattern">Color + Pattern</option>
+            <option value="bw_pattern">Black and White (white fill + black pattern)</option>
+          </select>
+          <!-- Per-group/category pattern selectors -->
+          <div id="patternPickersRow" style="display:none; flex-direction:column; gap:3px;">
+            <div style="font-size:11px; color:#666; margin-bottom:2px;">Pattern per group/category:</div>
+            <div class="pattern-group-item" data-group="1" style="display:flex; align-items:center; gap:6px;">
+              <label id="patternLabel1" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">1st group</label>
+              <select id="groupPattern1" style="flex:1; font-size:12px;">
+                <option value="stripe" selected>╱╱ Stripe</option>
+                <option value="crosshatch">╳╳ Crosshatch</option>
+                <option value="circle">○○ Circle</option>
+                <option value="dot">●● Dot</option>
+                <option value="grid">┼┼ Grid</option>
+                <option value="wave">〰〰 Wave</option>
+                <option value="gradient">▓▒░ Gradient</option>
+                <option value="none">▭ Solid fill</option>
+              </select>
+            </div>
+            <div class="pattern-group-item" data-group="2" style="display:flex; align-items:center; gap:6px;">
+              <label id="patternLabel2" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">2nd group</label>
+              <select id="groupPattern2" style="flex:1; font-size:12px;">
+                <option value="stripe">╱╱ Stripe</option>
+                <option value="crosshatch" selected>╳╳ Crosshatch</option>
+                <option value="circle">○○ Circle</option>
+                <option value="dot">●● Dot</option>
+                <option value="grid">┼┼ Grid</option>
+                <option value="wave">〰〰 Wave</option>
+                <option value="gradient">▓▒░ Gradient</option>
+                <option value="none">None (solid)</option>
+              </select>
+            </div>
+            <div class="pattern-group-item" data-group="3" style="display:none; align-items:center; gap:6px;">
+              <label id="patternLabel3" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">3rd group</label>
+              <select id="groupPattern3" style="flex:1; font-size:12px;">
+                <option value="stripe">╱╱ Stripe</option>
+                <option value="crosshatch">╳╳ Crosshatch</option>
+                <option value="circle" selected>○○ Circle</option>
+                <option value="dot">●● Dot</option>
+                <option value="grid">┼┼ Grid</option>
+                <option value="wave">〰〰 Wave</option>
+                <option value="gradient">▓▒░ Gradient</option>
+                <option value="none">None (solid)</option>
+              </select>
+            </div>
+            <div class="pattern-group-item" data-group="4" style="display:none; align-items:center; gap:6px;">
+              <label id="patternLabel4" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">4th group</label>
+              <select id="groupPattern4" style="flex:1; font-size:12px;">
+                <option value="stripe">╱╱ Stripe</option>
+                <option value="crosshatch">╳╳ Crosshatch</option>
+                <option value="circle">○○ Circle</option>
+                <option value="dot" selected>●● Dot</option>
+                <option value="grid">┼┼ Grid</option>
+                <option value="wave">〰〰 Wave</option>
+                <option value="gradient">▓▒░ Gradient</option>
+                <option value="none">None (solid)</option>
+              </select>
+            </div>
+            <div class="pattern-group-item" data-group="5" style="display:none; align-items:center; gap:6px;">
+              <label id="patternLabel5" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">5th group</label>
+              <select id="groupPattern5" style="flex:1; font-size:12px;">
+                <option value="stripe">╱╱ Stripe</option>
+                <option value="crosshatch">╳╳ Crosshatch</option>
+                <option value="circle">○○ Circle</option>
+                <option value="dot">●● Dot</option>
+                <option value="grid" selected>┼┼ Grid</option>
+                <option value="wave">〰〰 Wave</option>
+                <option value="gradient">▓▒░ Gradient</option>
+                <option value="none">None (solid)</option>
+              </select>
+            </div>
+            <div class="pattern-group-item" data-group="6" style="display:none; align-items:center; gap:6px;">
+              <label id="patternLabel6" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">6th group</label>
+              <select id="groupPattern6" style="flex:1; font-size:12px;">
+                <option value="stripe">╱╱ Stripe</option>
+                <option value="crosshatch">╳╳ Crosshatch</option>
+                <option value="circle">○○ Circle</option>
+                <option value="dot">●● Dot</option>
+                <option value="grid">┼┼ Grid</option>
+                <option value="wave" selected>〰〰 Wave</option>
+                <option value="gradient">▓▒░ Gradient</option>
+                <option value="none">None (solid)</option>
+              </select>
+            </div>
+          </div>
+          <!-- Pattern appearance controls -->
+          <div id="patternAppearanceRow" style="display:none; flex-direction:column; gap:4px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="font-size:12px; width:60px;">Density</label>
+              <input type="range" id="patternDensity" min="0.05" max="0.5" step="0.05" value="0.3" style="flex:1;">
+              <span id="patternDensityVal" style="font-size:12px; width:30px;">0.3</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="font-size:12px; width:60px;">Spacing</label>
+              <input type="range" id="patternSpacing" min="0.02" max="0.15" step="0.01" value="0.05" style="flex:1;">
+              <span id="patternSpacingVal" style="font-size:12px; width:30px;">0.05</span>
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <label style="font-size:12px; width:60px;">Angle</label>
+              <input type="number" id="patternAngle" min="0" max="360" value="30" style="width:60px;">
+              <span style="font-size:12px; color:#666;">° (stripe/crosshatch)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Group Colors -->
       <div class="row" id="groupColorRow" style="display:none;">
         <label id="groupColorRowLabel">Group Colors</label>
