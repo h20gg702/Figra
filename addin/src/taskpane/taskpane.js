@@ -8618,11 +8618,19 @@ Office.onReady(() => {
       return;
     }
 
-    // Bar Interior row: hide for both B&W and Color+Pattern.
-    //   B&W → fill forced to white (no user color control needed)
-    //   Color+Pattern → group/per-category colors own the fill; bar interior not used
+    // Bar Interior row:
+    //   B&W → hide (fill forced to white, no user control needed)
+    //   Color+Pattern + per-category → hide (category colors own the fill)
+    //   Color+Pattern + single color → show (user sets the fill color)
     const barInteriorRow = document.getElementById("barInteriorRow");
-    if (barInteriorRow) barInteriorRow.style.display = "none";
+    if (barInteriorRow) {
+      if (isBW) {
+        barInteriorRow.style.display = "none";
+      } else {
+        const isPerCatSelected = document.querySelector('input[name="fillMode"]:checked')?.value === "per_category";
+        barInteriorRow.style.display = isPerCatSelected ? "none" : "flex";
+      }
+    }
 
     // Fill mode row: hide for B&W; explicitly restore for Color+Pattern on per-category charts.
     // Must explicitly show (not just skip hiding) so switching B&W→Color+Pattern recovers the row.
