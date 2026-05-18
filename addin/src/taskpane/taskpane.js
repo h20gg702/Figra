@@ -4241,7 +4241,8 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
     aes(ymin = Mean - Error, ymax = Mean + Error),
     position = position_dodge(width = ${settings.dodgeWidth}),
     width = 0.2,
-    linewidth = ${settings.lineWidth}
+    linewidth = ${settings.lineWidth},
+    show.legend = FALSE
   ) +
 
 `;
@@ -4253,6 +4254,8 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
   geom_point(
     data = dat,
     aes(x = ${xColName}, y = ${yColName}, fill = ${groupColName}),
+    inherit.aes = FALSE,
+    show.legend = FALSE,
     position = position_jitterdodge(
       dodge.width = ${settings.dodgeWidth},
       jitter.width = 0.15,
@@ -4302,7 +4305,7 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
   scale_pattern_angle_manual(values = c(${angleValsEdu})) +
   scale_pattern_density_manual(values = c(${densityValsEdu})) +
   guides(
-    fill = guide_legend(override.aes = list(pattern = c(${patValsEdu}))),
+    fill = guide_legend(override.aes = list(pattern = c(${patValsEdu}), pattern_density = c(${densityValsEdu}), pattern_spacing = 0.02)),
     pattern = 'none',
     pattern_angle = 'none',
     pattern_density = 'none'
@@ -8552,6 +8555,15 @@ Office.onReady(() => {
       const el = document.getElementById(id);
       if (el) el.style.display = show;
     });
+    // Hide error bar dropdown in 100% mode (proportions make SD/SE meaningless)
+    const errRow = document.getElementById("stackedErrorTypeRow");
+    if (errRow) {
+      errRow.style.display = (isStacked && !is100) ? "flex" : "none";
+      if (is100) {
+        const sel = document.getElementById("stackedErrorType");
+        if (sel) sel.value = "none";
+      }
+    }
   }
 
   function updateStatisticsAvailability() {
@@ -9046,6 +9058,8 @@ Office.onReady(() => {
     const fillColorSubRow = document.getElementById("fillColorSubRow");
     const stackedBarOptions = document.getElementById("stackedBarOptions");
     if (stackedBarOptions) stackedBarOptions.style.display = v === "bar_stacked" ? "block" : "none";
+    const stackedErrorTypeRow = document.getElementById("stackedErrorTypeRow");
+    if (stackedErrorTypeRow) stackedErrorTypeRow.style.display = v === "bar_stacked" ? "flex" : "none";
     updateStackedLabelColorVisibility();
 
     if (!lx || !ly) return;
@@ -18566,7 +18580,7 @@ async function initWebR() {
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
              scale_pattern_density_manual(values = density_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals))),
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)),
                     pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot(plot_data, aes(x = category, y = value, fill = group)) +
@@ -18634,44 +18648,29 @@ async function initWebR() {
       if (length(fill_colors) < n_groups) fill_colors <- rep(fill_colors, length.out = n_groups)
 
       bar_position <- if (stacked_100) "fill" else "stack"
-
-      # Summarize: mean (+ error stats) per group × category
       show_error <- error_type != "none" && !stacked_100
+
+      # Summarize: mean per group × category (always compute stats columns)
+      summary_data <- plot_data %>%
+        dplyr::group_by(group, category) %>%
+        dplyr::summarise(
+          mean_val = mean(value, na.rm = TRUE),
+          sd_val   = ifelse(dplyr::n() > 1, sd(value, na.rm = TRUE), 0),
+          se_val   = ifelse(dplyr::n() > 1, sd(value, na.rm = TRUE) / sqrt(dplyr::n()), 0),
+          .groups  = "drop"
+        )
       if (show_error) {
-        summary_data <- plot_data %>%
-          dplyr::group_by(group, category) %>%
-          dplyr::summarise(
-            mean_val = mean(value, na.rm = TRUE),
-            sd_val   = ifelse(dplyr::n() > 1, sd(value, na.rm = TRUE), 0),
-            se_val   = ifelse(dplyr::n() > 1, sd(value, na.rm = TRUE) / sqrt(dplyr::n()), 0),
-            .groups  = "drop"
-          )
         summary_data$error_val <- if (error_type == "se") summary_data$se_val else if (error_type == "ci95") 1.96 * summary_data$se_val else summary_data$sd_val
-
-        # Cumulative top of each segment (matching ggplot2 stacking order = factor level order)
-        summary_data <- summary_data %>%
-          dplyr::group_by(category) %>%
-          dplyr::arrange(match(group, group_levels), .by_group = TRUE) %>%
-          dplyr::mutate(cum_top = cumsum(mean_val)) %>%
-          dplyr::ungroup()
-
-        # Use mean_val as value for geom_bar
-        bar_data <- summary_data %>% dplyr::mutate(value = mean_val)
-      } else {
-        summary_data <- plot_data %>%
-          dplyr::group_by(group, category) %>%
-          dplyr::summarise(value = mean(value, na.rm = TRUE), .groups = "drop")
-        bar_data <- summary_data
       }
 
       if (stacked_100) {
-        bar_data <- bar_data %>%
+        summary_data <- summary_data %>%
           dplyr::group_by(category) %>%
-          dplyr::mutate(prop = value / sum(value, na.rm = TRUE)) %>%
+          dplyr::mutate(prop = mean_val / sum(mean_val, na.rm = TRUE)) %>%
           dplyr::ungroup()
       }
 
-      p <- ggplot(bar_data, aes(x = category, y = value, fill = group)) +
+      p <- ggplot(summary_data, aes(x = category, y = mean_val, fill = group)) +
            geom_bar(stat = "identity", position = bar_position,
                     color = stroke_color, alpha = alpha,
                     linewidth = linewidth, width = width) +
@@ -18688,14 +18687,36 @@ async function initWebR() {
       }
 
       if (show_error) {
-        p <- p +
-          geom_errorbar(data = summary_data,
-                        aes(x = category, ymin = cum_top - error_val, ymax = cum_top + error_val),
-                        position = "identity",
-                        width = error_bar_width,
-                        color = stroke_color,
-                        linewidth = linewidth * 0.8,
-                        inherit.aes = FALSE)
+        tryCatch({
+          # Extract actual stacked segment-top positions from ggplot2
+          p_built  <- ggplot_build(p)
+          bar_pos  <- as.data.frame(p_built$data[[1]])
+          cat_levs <- levels(plot_data$category)
+          # Map x integer → category name
+          bar_pos$cat_name <- cat_levs[as.integer(round(bar_pos$x))]
+          # Map fill hex color → group name (bar_pos$group is a composite ID, not fill level)
+          fill_lower <- tolower(fill_colors[1:n_groups])
+          bar_pos$grp_name <- group_levels[match(tolower(bar_pos$fill), fill_lower)]
+          bar_pos <- bar_pos[!is.na(bar_pos$cat_name) & !is.na(bar_pos$grp_name), ]
+          sum_err <- summary_data
+          sum_err$cat_name <- as.character(sum_err$category)
+          sum_err$grp_name <- as.character(sum_err$group)
+          err_df <- merge(bar_pos[, c("cat_name","grp_name","ymax")],
+                          sum_err[, c("cat_name","grp_name","error_val")],
+                          by = c("cat_name","grp_name"))
+          if (nrow(err_df) > 0) {
+            p <- p +
+              geom_errorbar(data = err_df,
+                            aes(x = cat_name, ymin = ymax - error_val, ymax = ymax + error_val),
+                            position = "identity",
+                            width = error_bar_width,
+                            color = stroke_color,
+                            linewidth = linewidth * 0.8,
+                            inherit.aes = FALSE)
+          }
+        }, error = function(e) {
+          cat("Warning: could not add stacked error bars:", e$message, "\\n")
+        })
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -18780,12 +18801,12 @@ async function initWebR() {
                      pattern_spacing = pattern_spacing) +
              geom_errorbar(aes(ymin = mean_val - error_val, ymax = mean_val + error_val),
                           position = position_dodge(width = dodge_width),
-                          width = 0.25, linewidth = linewidth * 0.8) +
+                          width = 0.25, linewidth = linewidth * 0.8, show.legend = FALSE) +
              scale_fill_manual(values = bar_fills, name = actual_group_name) +
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
              scale_pattern_density_manual(values = density_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals))), pattern = "none", pattern_angle = "none", pattern_density = "none")
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)), pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot(plot_data, aes(x = category, y = mean_val, fill = group)) +
              geom_col(position = position_dodge(width = dodge_width),
@@ -18922,15 +18943,15 @@ async function initWebR() {
                      pattern_spacing = pattern_spacing) +
              geom_errorbar(aes(ymin = mean_val - error_val, ymax = mean_val + error_val),
                           position = position_dodge(width = dodge_width),
-                          width = 0.25, linewidth = linewidth * 0.8, color = bar_colour) +
+                          width = 0.25, linewidth = linewidth * 0.8, color = bar_colour, show.legend = FALSE) +
              geom_point(data = plot_data, aes(x = category, y = value),
                        position = position_jitterdodge(dodge.width = dodge_width, jitter.width = jitter_width, jitter.height = 0),
-                       size = dot_size, alpha = dot_alpha, shape = dot_shape, color = dot_color) +
+                       size = dot_size, alpha = dot_alpha, shape = dot_shape, color = dot_color, show.legend = FALSE) +
              scale_fill_manual(values = bar_fills, name = actual_group_name) +
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
              scale_pattern_density_manual(values = density_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals))),
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)),
                     pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot(summary_data, aes(x = category, y = mean_val, fill = group)) +
@@ -25960,6 +25981,7 @@ function uiOpts(){
     stackedLabelColor: (el("stackedLabelColor")?.value || el("stackedLabelColorPicker")?.value || "#ffffff").trim(),
     stackedLabelSize: parseFloat(el("stackedLabelSize")?.value) || 14,
     stackedLabelWeight: el("stackedLabelWeight")?.value || "plain",
+    stackedErrorType: el("stackedErrorType")?.value || "none",
 
     // Fill pattern settings
     patternMode: el("patternMode")?.value || "none",
