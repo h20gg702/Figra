@@ -4305,7 +4305,7 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
   scale_pattern_angle_manual(values = c(${angleValsEdu})) +
   scale_pattern_density_manual(values = c(${densityValsEdu})) +
   guides(
-    fill = guide_legend(override.aes = list(pattern = c(${patValsEdu}), pattern_density = c(${densityValsEdu}), pattern_spacing = 0.02)),
+    fill = guide_legend(override.aes = list(pattern = c(${patValsEdu}), pattern_angle = c(${angleValsEdu}), pattern_density = c(${densityValsEdu}), pattern_spacing = 0.02)),
     pattern = 'none',
     pattern_angle = 'none',
     pattern_density = 'none'
@@ -18580,7 +18580,7 @@ async function initWebR() {
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
              scale_pattern_density_manual(values = density_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)),
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_angle = unname(angle_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)),
                     pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot(plot_data, aes(x = category, y = value, fill = group)) +
@@ -18806,7 +18806,7 @@ async function initWebR() {
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
              scale_pattern_density_manual(values = density_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)), pattern = "none", pattern_angle = "none", pattern_density = "none")
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_angle = unname(angle_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)), pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot(plot_data, aes(x = category, y = mean_val, fill = group)) +
              geom_col(position = position_dodge(width = dodge_width),
@@ -18951,7 +18951,7 @@ async function initWebR() {
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
              scale_pattern_density_manual(values = density_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)),
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_angle = unname(angle_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)),
                     pattern = "none", pattern_angle = "none", pattern_density = "none")
       } else {
         p <- ggplot(summary_data, aes(x = category, y = mean_val, fill = group)) +
