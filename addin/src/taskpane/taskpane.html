@@ -850,7 +850,7 @@
             <div style="display:flex; align-items:center; gap:6px; margin-bottom:2px;">
               <span style="font-size:11px; color:#666; width:90px;">Pattern per group:</span>
               <span style="font-size:11px; color:#666; flex:1;">Pattern</span>
-              <span style="font-size:11px; color:#666; width:44px; text-align:center;">Density</span>
+              <span style="font-size:11px; color:#666; width:44px; text-align:center;">Spacing</span>
             </div>
             <div class="pattern-group-item" data-group="1" style="display:flex; align-items:center; gap:6px;">
               <label id="patternLabel1" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">1st group</label>
@@ -859,13 +859,12 @@
                 <option value="stripe_v">║║║ Vertical</option>
                 <option value="stripe" selected>╱╱ Diagonal</option>
                 <option value="crosshatch">╳╳ Crosshatch</option>
-                <option value="circle">○○ Circle</option>
-                <option value="weave">⊞⊞ Weave</option>
-                <option value="regular_polygon">◆◆ Polygon</option>
-                <option value="wave">〰〰 Wave</option>
+                <option value="circle">○○ Open circle</option>
+                <option value="pch">●● Filled circle</option>
+
                 <option value="none">▭ Solid fill</option>
               </select>
-              <input type="number" id="groupDensity1" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
+              <input type="number" id="groupDensity1" min="0.01" max="0.15" step="0.01" value="0.05" style="width:44px; font-size:12px;" title="Spacing — lower = more stripes/dots per bar (0.01–0.15)">
             </div>
             <div class="pattern-group-item" data-group="2" style="display:flex; align-items:center; gap:6px;">
               <label id="patternLabel2" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">2nd group</label>
@@ -874,13 +873,12 @@
                 <option value="stripe_v">║║║ Vertical</option>
                 <option value="stripe">╱╱ Diagonal</option>
                 <option value="crosshatch" selected>╳╳ Crosshatch</option>
-                <option value="circle">○○ Circle</option>
-                <option value="weave">⊞⊞ Weave</option>
-                <option value="regular_polygon">◆◆ Polygon</option>
-                <option value="wave">〰〰 Wave</option>
+                <option value="circle">○○ Open circle</option>
+                <option value="pch">●● Filled circle</option>
+
                 <option value="none">▭ Solid fill</option>
               </select>
-              <input type="number" id="groupDensity2" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
+              <input type="number" id="groupDensity2" min="0.01" max="0.15" step="0.01" value="0.05" style="width:44px; font-size:12px;" title="Spacing — lower = more stripes/dots per bar (0.01–0.15)">
             </div>
             <div class="pattern-group-item" data-group="3" style="display:none; align-items:center; gap:6px;">
               <label id="patternLabel3" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">3rd group</label>
@@ -889,13 +887,12 @@
                 <option value="stripe_v">║║║ Vertical</option>
                 <option value="stripe">╱╱ Diagonal</option>
                 <option value="crosshatch">╳╳ Crosshatch</option>
-                <option value="circle" selected>○○ Circle</option>
-                <option value="weave">⊞⊞ Weave</option>
-                <option value="regular_polygon">◆◆ Polygon</option>
-                <option value="wave">〰〰 Wave</option>
+                <option value="circle" selected>○○ Open circle</option>
+                <option value="pch">●● Dots</option>
+
                 <option value="none">▭ Solid fill</option>
               </select>
-              <input type="number" id="groupDensity3" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
+              <input type="number" id="groupDensity3" min="0.01" max="0.15" step="0.01" value="0.05" style="width:44px; font-size:12px;" title="Spacing — lower = more stripes/dots per bar (0.01–0.15)">
             </div>
             <div class="pattern-group-item" data-group="4" style="display:none; align-items:center; gap:6px;">
               <label id="patternLabel4" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">4th group</label>
@@ -905,55 +902,47 @@
                 <option value="stripe">╱╱ Diagonal</option>
                 <option value="crosshatch">╳╳ Crosshatch</option>
                 <option value="circle">○○ Circle</option>
-                <option value="weave" selected>⊞⊞ Weave</option>
-                <option value="regular_polygon">◆◆ Polygon</option>
-                <option value="wave">〰〰 Wave</option>
+                <option value="pch" selected>●● Filled circle</option>
+
                 <option value="none">▭ Solid fill</option>
               </select>
-              <input type="number" id="groupDensity4" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
+              <input type="number" id="groupDensity4" min="0.01" max="0.15" step="0.01" value="0.05" style="width:44px; font-size:12px;" title="Spacing — lower = more stripes/dots per bar (0.01–0.15)">
             </div>
             <div class="pattern-group-item" data-group="5" style="display:none; align-items:center; gap:6px;">
               <label id="patternLabel5" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">5th group</label>
               <select id="groupPattern5" style="flex:1; font-size:12px;">
-                <option value="stripe_h">═══ Horizontal</option>
+                <option value="stripe_h" selected>═══ Horizontal</option>
                 <option value="stripe_v">║║║ Vertical</option>
                 <option value="stripe">╱╱ Diagonal</option>
                 <option value="crosshatch">╳╳ Crosshatch</option>
-                <option value="circle">○○ Circle</option>
-                <option value="weave">⊞⊞ Weave</option>
-                <option value="regular_polygon" selected>◆◆ Polygon</option>
-                <option value="wave">〰〰 Wave</option>
+                <option value="circle">○○ Open circle</option>
+                <option value="pch">●● Filled circle</option>
+
                 <option value="none">▭ Solid fill</option>
               </select>
-              <input type="number" id="groupDensity5" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
+              <input type="number" id="groupDensity5" min="0.01" max="0.15" step="0.01" value="0.05" style="width:44px; font-size:12px;" title="Spacing — lower = more stripes/dots per bar (0.01–0.15)">
             </div>
             <div class="pattern-group-item" data-group="6" style="display:none; align-items:center; gap:6px;">
               <label id="patternLabel6" style="width:90px; font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">6th group</label>
               <select id="groupPattern6" style="flex:1; font-size:12px;">
                 <option value="stripe_h">═══ Horizontal</option>
-                <option value="stripe_v">║║║ Vertical</option>
+                <option value="stripe_v" selected>║║║ Vertical</option>
                 <option value="stripe">╱╱ Diagonal</option>
                 <option value="crosshatch">╳╳ Crosshatch</option>
-                <option value="circle">○○ Circle</option>
-                <option value="weave">⊞⊞ Weave</option>
-                <option value="regular_polygon">◆◆ Polygon</option>
-                <option value="wave" selected>〰〰 Wave</option>
+                <option value="circle">○○ Open circle</option>
+                <option value="pch">●● Filled circle</option>
+
                 <option value="none">▭ Solid fill</option>
               </select>
-              <input type="number" id="groupDensity6" min="0.05" max="0.9" step="0.05" value="0.3" style="width:44px; font-size:12px;" title="Pattern density (0.05–0.9)">
+              <input type="number" id="groupDensity6" min="0.01" max="0.15" step="0.01" value="0.05" style="width:44px; font-size:12px;" title="Spacing — lower = more stripes/dots per bar (0.01–0.15)">
             </div>
           </div>
           <!-- Pattern appearance controls -->
           <div id="patternAppearanceRow" style="display:none; flex-direction:column; gap:4px;">
-            <div style="display:none; align-items:center; gap:8px;">
-              <label style="font-size:12px; width:60px;">Density</label>
-              <input type="range" id="patternDensity" min="0.05" max="0.5" step="0.05" value="0.3" style="flex:1;">
-              <span id="patternDensityVal" style="font-size:12px; width:30px;">0.3</span>
-            </div>
             <div style="display:flex; align-items:center; gap:8px;">
-              <label style="font-size:12px; width:60px;">Spacing</label>
-              <input type="range" id="patternSpacing" min="0.02" max="0.15" step="0.01" value="0.05" style="flex:1;">
-              <span id="patternSpacingVal" style="font-size:12px; width:30px;">0.05</span>
+              <label style="font-size:12px; width:60px;">Density</label>
+              <input type="range" id="patternSpacing" min="0.1" max="0.9" step="0.05" value="0.3" style="flex:1;">
+              <span id="patternSpacingVal" style="font-size:12px; width:30px;">0.3</span>
             </div>
             <div style="display:none; align-items:center; gap:8px;">
               <label style="font-size:12px; width:60px;">Angle</label>
@@ -1624,6 +1613,11 @@
       </div>
 
       <!-- Legend Section -->
+      <div class="row" id="showLegendRow" style="display:none">
+        <label for="showLegend">Show legend</label>
+        <input type="checkbox" id="showLegend">
+      </div>
+      <div id="legendDetailsSection">
       <div class="row">
         <label for="showLegendTitle">Show legend title</label>
         <input type="checkbox" id="showLegendTitle" checked>
@@ -1644,6 +1638,7 @@
         <label for="legendTextSize">Legend text size</label>
         <input id="legendTextSize" type="number" min="3" max="36" value="16" style="width:80px" />
       </div>
+      </div><!-- end legendDetailsSection -->
 
       <!-- Axis Title Weight (applies to both X and Y axis titles) -->
       <div class="row">

@@ -1107,6 +1107,7 @@ async function loadFromFigure() {
 
         // Restore data
         window.lastProcessedData = [metadata.data.headers, ...metadata.data.rows];
+        window.lastOriginalHeaders = metadata.data.headers;
 
         // Restore chart configuration
         if (metadata.chart.chartType) {
@@ -2313,9 +2314,17 @@ function generateSubsetRCodeFromData(chartType, opts) {
         const colName = `col${colIdx + 1}`;
 
         const colValues = dataRows.map(row => row[colIdx]);
-        const isNumeric = colValues.every(v => v === null || v === '' || !isNaN(v));
+        const hasBooleans = colValues.some(v => typeof v === 'boolean');
+        const isNumeric = !hasBooleans && colValues.every(v => v === null || v === '' || !isNaN(v));
 
-        if (isNumeric) {
+        if (hasBooleans) {
+          const valArr = colValues.map(v => {
+            if (v === null || v === '') return 'NA';
+            if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+            return `'${String(v).replace(/'/g, "\\'")}'`;
+          });
+          dataFrameCode += `  ${colName} = c(${chunkRValues(valArr, '    ')})`;
+        } else if (isNumeric) {
           const valArr = colValues.map(v => v === null || v === '' ? 'NA' : v);
           dataFrameCode += `  ${colName} = c(${chunkRValues(valArr, '    ')})`;
         } else {
@@ -2330,9 +2339,17 @@ function generateSubsetRCodeFromData(chartType, opts) {
       const numCols = data[0].length;
       for (let colIdx = 0; colIdx < numCols; colIdx++) {
         const colValues = data.map(row => row[colIdx]);
-        const isNumeric = colValues.every(v => v === null || v === '' || !isNaN(v));
+        const hasBooleans = colValues.some(v => typeof v === 'boolean');
+        const isNumeric = !hasBooleans && colValues.every(v => v === null || v === '' || !isNaN(v));
 
-        if (isNumeric) {
+        if (hasBooleans) {
+          const valArr = colValues.map(v => {
+            if (v === null || v === '') return 'NA';
+            if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+            return `'${String(v).replace(/'/g, "\\'")}'`;
+          });
+          dataFrameCode += `  V${colIdx + 1} = c(${chunkRValues(valArr, '    ')})`;
+        } else if (isNumeric) {
           const valArr = colValues.map(v => v === null || v === '' ? 'NA' : v);
           dataFrameCode += `  V${colIdx + 1} = c(${chunkRValues(valArr, '    ')})`;
         } else {
@@ -2630,9 +2647,19 @@ function extractRelevantRCode() {
         // Use simple safe column names (col1, col2, col3...)
         const colName = `col${colIdx + 1}`;
         const colValues = dataRows.map(row => row[colIdx]);
-        const isNumeric = colValues.every(v => v === null || v === '' || !isNaN(v));
+        const hasBooleans = colValues.some(v => typeof v === 'boolean');
+        const isNumeric = !hasBooleans && colValues.every(v => v === null || v === '' || !isNaN(v));
 
-        if (isNumeric) {
+        if (hasBooleans) {
+          // Boolean column → R TRUE/FALSE
+          const valArr = colValues.map(v => {
+            if (v === null || v === '') return 'NA';
+            if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
+            const escaped = String(v).replace(/'/g, "\\'");
+            return `'${escaped}'`;
+          });
+          dataFrame += `  ${colName} = c(${chunkRValues(valArr, '    ')})`;
+        } else if (isNumeric) {
           // Numeric column
           const valArr = colValues.map(v => v === null || v === '' ? 'NA' : v);
           dataFrame += `  ${colName} = c(${chunkRValues(valArr, '    ')})`;
@@ -2867,13 +2894,29 @@ library(ggpattern)  # For fill patterns` : ''}
 
     const isPerCat = settings.fillMode === 'per_category';
     const bwPattern = settings.patternMode === 'bw_pattern';
+    // Normalize showLegendTitle — collectCurrentSettings stores it as string "true"/"false"
+    const showLegendTitleOn = settings.showLegendTitle !== false && settings.showLegendTitle !== "false";
+    // Default legend title: use original column header when no custom title entered
+    const xColHeaderRaw = (window.lastOriginalHeaders || [])[settings.xColIndex - 1] || '';
+    const legendNameR = settings.legendTitle
+      ? convertToRPlotmath(settings.legendTitle)
+      : (xColHeaderRaw ? convertToRPlotmath(xColHeaderRaw) : 'NULL');
     // No trailing + — the template at line "  ${geomCode} +" provides it
+    // When showLegend=true in single-color mode, inject fill aesthetic + scale_fill_manual with repeated color
+    const singleFillR = `'${settings.fillColor || '#4C78A8'}'`;
+    // When showLegendTitle=off, still set a real name (prevents ggplot2 showing aes variable "col1");
+    // the theme block suppresses the title display via legend.title = element_blank()
+    const scaleNameArg = showLegendTitleOn
+      ? `, name = ${legendNameR}`
+      : (legendNameR !== 'NULL' ? `, name = ${legendNameR}` : `, name = ''`);
     const scaleAndGuide = isPerCat
-      ? `\n  scale_fill_manual(values = ${groupColors}) +\n  guides(fill = 'none')`
-      : '';
+      ? `\n  scale_fill_manual(values = ${groupColors}${scaleNameArg})${settings.showLegend ? '' : " +\n  guides(fill = 'none')"}`
+      : (settings.showLegend
+        ? `\n  scale_fill_manual(values = rep(${singleFillR}, length(unique(dat$${`col${settings.xColIndex || 1}`})))${scaleNameArg})`
+        : '');
     // For pattern mode: inject scale_fill_manual when per-category colors apply (not B&W — B&W forces white)
     const patternFillScale = (isPerCat && !bwPattern)
-      ? `\n  scale_fill_manual(values = ${groupColors}) +`
+      ? `\n  scale_fill_manual(values = ${groupColors}${scaleNameArg}) +`
       : '';
     // For pattern mode: include fill aes only when per-category AND not B&W (B&W forces white via scalar)
     const patFillAes = (isPerCat && !bwPattern) ? `, fill = ${`col${settings.xColIndex || 1}`}` : '';
@@ -2881,9 +2924,11 @@ library(ggpattern)  # For fill patterns` : ''}
 
     const singleBarPatFill = bwPattern ? "'black'" : "'grey30'";
     const singleBarFill = bwPattern ? "'white'" : `'${settings.fillColor || '#4C78A8'}'`;
-    const singleBarPatSpacing = settings.patternSpacing || 0.05;
+    const singleBarPatSpacing = settings.patternSpacing || 0.3;
+    // When per-category colors are used, omit scalar fill from geom so aes(fill) + scale_fill_manual applies
+    const geomFillParam = (isPerCat && !bwPattern) ? '' : `fill = ${singleBarFill}, `;
     // Build per-category pattern, angle, and density cycles (resolve stripe_h/stripe_v)
-    const _defaultPats = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
+    const _defaultPats = ["stripe","crosshatch","circle","pch","stripe_h","stripe_v"];
     const _rawSinglePats = Array.isArray(settings.groupPatterns) && settings.groupPatterns.length >= 6
       ? settings.groupPatterns : _defaultPats;
     const _singleBarDefaultAngle = settings.patternAngle || 30;
@@ -2897,51 +2942,53 @@ library(ggpattern)  # For fill patterns` : ''}
 
     if (chartType === 'bar') {
       if (usePattern) {
-        geomCode = `geom_bar_pattern(stat = 'identity', aes(pattern = ${xAes}, pattern_angle = ${xAes}, pattern_density = ${xAes}${patFillAes}),
-    fill = ${singleBarFill}, color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9},
+        geomCode = `geom_bar_pattern(stat = 'identity', aes(pattern = ${xAes}, pattern_angle = ${xAes}, pattern_spacing = ${xAes}${patFillAes}),
+    ${geomFillParam}color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9},
     width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7},
     pattern_fill = ${singleBarPatFill}, pattern_colour = ${singleBarPatFill},
-    pattern_spacing = ${singleBarPatSpacing}) +${patternFillScale}
-  scale_pattern_manual(values = pat_vals) +
+    pattern_density = ${settings.patternSpacing || 0.3}) +${patternFillScale}
+  scale_pattern_manual(values = pat_vals${scaleNameArg}) +
   scale_pattern_angle_manual(values = angle_vals) +
-  scale_pattern_density_manual(values = density_vals) +
-  guides(fill = 'none', pattern = 'none', pattern_angle = 'none', pattern_density = 'none')`;
+  scale_pattern_spacing_manual(values = spacing_vals) +\n  ${settings.showLegend ? `guides(fill = guide_legend(override.aes = list(pattern = pat_vals, pattern_angle = angle_vals, pattern_spacing = spacing_vals, pattern_density = ${settings.patternSpacing || 0.3}, pattern_fill = ${singleBarPatFill}, pattern_colour = ${singleBarPatFill})), pattern = 'none', pattern_angle = 'none', pattern_spacing = 'none')` : `guides(fill = 'none', pattern = 'none', pattern_angle = 'none', pattern_spacing = 'none')`}`;
       } else if (isPerCat) {
         geomCode = `geom_bar(stat = 'identity', aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide}`;
       } else {
-        geomCode = `geom_bar(stat = 'identity', fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7})`;
+        geomCode = settings.showLegend
+          ? `geom_bar(stat = 'identity', aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide}`
+          : `geom_bar(stat = 'identity', fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7})`;
       }
     } else if (chartType === 'bar_error') {
       if (usePattern) {
-        geomCode = `geom_col_pattern(aes(pattern = ${xAes}, pattern_angle = ${xAes}, pattern_density = ${xAes}${patFillAes}),
-    fill = ${singleBarFill}, color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9},
+        geomCode = `geom_col_pattern(aes(pattern = ${xAes}, pattern_angle = ${xAes}, pattern_spacing = ${xAes}${patFillAes}),
+    ${geomFillParam}color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9},
     width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7},
     pattern_fill = ${singleBarPatFill}, pattern_colour = ${singleBarPatFill},
-    pattern_spacing = ${singleBarPatSpacing}) +${patternFillScale}
-  scale_pattern_manual(values = pat_vals) +
+    pattern_density = ${settings.patternSpacing || 0.3}) +${patternFillScale}
+  scale_pattern_manual(values = pat_vals${scaleNameArg}) +
   scale_pattern_angle_manual(values = angle_vals) +
-  scale_pattern_density_manual(values = density_vals) +
-  guides(fill = 'none', pattern = 'none', pattern_angle = 'none', pattern_density = 'none') +
+  scale_pattern_spacing_manual(values = spacing_vals) +\n  ${settings.showLegend ? `guides(fill = guide_legend(override.aes = list(pattern = pat_vals, pattern_angle = angle_vals, pattern_spacing = spacing_vals, pattern_density = ${settings.patternSpacing || 0.3}, pattern_fill = ${singleBarPatFill}, pattern_colour = ${singleBarPatFill})), pattern = 'none', pattern_angle = 'none', pattern_spacing = 'none')` : `guides(fill = 'none', pattern = 'none', pattern_angle = 'none', pattern_spacing = 'none')`} +
   geom_errorbar(aes(ymin = col${settings.yColIndex || 2} - col${settings.errorColIndex || 3}, ymax = col${settings.yColIndex || 2} + col${settings.errorColIndex || 3}), width = 0.2, linewidth = ${settings.lineWidth || 0.7})`;
       } else if (isPerCat) {
         geomCode = `geom_col(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide} +
   geom_errorbar(aes(ymin = col${settings.yColIndex || 2} - col${settings.errorColIndex || 3}, ymax = col${settings.yColIndex || 2} + col${settings.errorColIndex || 3}), width = 0.2, linewidth = ${settings.lineWidth || 0.7})`;
       } else {
-        geomCode = `geom_col(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +
+        geomCode = settings.showLegend
+          ? `geom_col(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide} +
+  geom_errorbar(aes(ymin = col${settings.yColIndex || 2} - col${settings.errorColIndex || 3}, ymax = col${settings.yColIndex || 2} + col${settings.errorColIndex || 3}), width = 0.2, linewidth = ${settings.lineWidth || 0.7})`
+          : `geom_col(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +
   geom_errorbar(aes(ymin = col${settings.yColIndex || 2} - col${settings.errorColIndex || 3}, ymax = col${settings.yColIndex || 2} + col${settings.errorColIndex || 3}), width = 0.2, linewidth = ${settings.lineWidth || 0.7})`;
       }
     } else if (chartType === 'bar_error_dot') {
       const errorType = settings.errorBarType === 'se' ? 'se' : (settings.errorBarType === 'ci95' ? 'ci95' : 'sd');
       if (usePattern) {
-        geomCode = `stat_summary(aes(pattern = ${xAes}, pattern_angle = ${xAes}, pattern_density = ${xAes}${patFillAes}), fun = mean, geom = 'bar_pattern',
-    fill = ${singleBarFill}, color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9},
+        geomCode = `stat_summary(aes(pattern = ${xAes}, pattern_angle = ${xAes}, pattern_spacing = ${xAes}${patFillAes}), fun = mean, geom = 'bar_pattern',
+    ${geomFillParam}color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9},
     width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7},
     pattern_fill = ${singleBarPatFill}, pattern_colour = ${singleBarPatFill},
-    pattern_spacing = ${singleBarPatSpacing}) +${patternFillScale}
-  scale_pattern_manual(values = pat_vals) +
+    pattern_density = ${settings.patternSpacing || 0.3}) +${patternFillScale}
+  scale_pattern_manual(values = pat_vals${scaleNameArg}) +
   scale_pattern_angle_manual(values = angle_vals) +
-  scale_pattern_density_manual(values = density_vals) +
-  guides(fill = 'none', pattern = 'none', pattern_angle = 'none', pattern_density = 'none') +
+  scale_pattern_spacing_manual(values = spacing_vals) +\n  ${settings.showLegend ? `guides(fill = guide_legend(override.aes = list(pattern = pat_vals, pattern_angle = angle_vals, pattern_spacing = spacing_vals, pattern_density = ${settings.patternSpacing || 0.3}, pattern_fill = ${singleBarPatFill}, pattern_colour = ${singleBarPatFill})), pattern = 'none', pattern_angle = 'none', pattern_spacing = 'none')` : `guides(fill = 'none', pattern = 'none', pattern_angle = 'none', pattern_spacing = 'none')`} +
   stat_summary(fun.data = mean_${errorType}, geom = 'errorbar', width = 0.2, linewidth = ${settings.lineWidth || 0.7}) +
   geom_point(position = position_jitter(width = ${(settings.barWidth || 0.4) * 0.15}, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 1}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16})`;
       } else if (isPerCat) {
@@ -2949,7 +2996,11 @@ library(ggpattern)  # For fill patterns` : ''}
   stat_summary(fun.data = mean_${errorType}, geom = 'errorbar', width = 0.2, linewidth = ${settings.lineWidth || 0.7}) +
   geom_point(position = position_jitter(width = ${(settings.barWidth || 0.4) * 0.15}, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 1}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16})`;
       } else {
-        geomCode = `stat_summary(fun = mean, geom = 'bar', fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +
+        geomCode = settings.showLegend
+          ? `stat_summary(aes(fill = ${xAes}), fun = mean, geom = 'bar', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +${scaleAndGuide} +
+  stat_summary(fun.data = mean_${errorType}, geom = 'errorbar', width = 0.2, linewidth = ${settings.lineWidth || 0.7}) +
+  geom_point(position = position_jitter(width = ${(settings.barWidth || 0.4) * 0.15}, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 1}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16})`
+          : `stat_summary(fun = mean, geom = 'bar', fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}, width = ${settings.barWidth || 0.4}, linewidth = ${settings.lineWidth || 0.7}) +
   stat_summary(fun.data = mean_${errorType}, geom = 'errorbar', width = 0.2, linewidth = ${settings.lineWidth || 0.7}) +
   geom_point(position = position_jitter(width = ${(settings.barWidth || 0.4) * 0.15}, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 1}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16})`;
       }
@@ -2959,7 +3010,9 @@ library(ggpattern)  # For fill patterns` : ''}
       if (isPerCat) {
         geomCode = `geom_boxplot(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}) +${scaleAndGuide}`;
       } else {
-        geomCode = `geom_boxplot(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9})`;
+        geomCode = settings.showLegend
+          ? `geom_boxplot(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}) +${scaleAndGuide}`
+          : `geom_boxplot(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9})`;
       }
       if (chartType === 'box_dot') {
         additionalGeoms = `  geom_point(position = position_jitter(width = 0.15, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.6}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16}) +\n`;
@@ -2968,17 +3021,26 @@ library(ggpattern)  # For fill patterns` : ''}
       if (isPerCat) {
         geomCode = `geom_violin(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}) +${scaleAndGuide}`;
       } else {
-        geomCode = `geom_violin(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9})`;
+        geomCode = settings.showLegend
+          ? `geom_violin(aes(fill = ${xAes}), color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9}) +${scaleAndGuide}`
+          : `geom_violin(fill = '${settings.fillColor || '#4C78A8'}', color = '${settings.strokeColor || '#1f2937'}', alpha = ${settings.fillAlpha || 0.9})`;
       }
       if (chartType === 'violin_dot') {
         additionalGeoms = `  geom_point(position = position_jitter(width = 0.15, height = 0), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.6}, color = '${settings.dotColor || '#000000'}', shape = ${settings.dotShape || 16}) +\n`;
       }
     } else if (chartType === 'dot') {
+      const colorNameArg = showLegendTitleOn ? `, name = ${legendNameR}` : `, name = NULL`;
       if (isPerCat) {
-        const scaleColor = `\n  scale_color_manual(values = ${groupColors}) +\n  guides(color = 'none')`;
+        const scaleColor = `\n  scale_color_manual(values = ${groupColors}${colorNameArg})${settings.showLegend ? '' : " +\n  guides(color = 'none')"}`;
         geomCode = `geom_point(aes(color = ${xAes}), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}, shape = ${settings.dotShape || 16}) +${scaleColor}`;
       } else {
-        geomCode = `geom_point(color = '${settings.dotColor || '#4C78A8'}', size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}, shape = ${settings.dotShape || 16})`;
+        if (settings.showLegend) {
+          const singleDotColorR = `'${settings.dotColor || '#4C78A8'}'`;
+          const scaleColorSingle = `\n  scale_color_manual(values = rep(${singleDotColorR}, length(unique(dat$${xAes})))${colorNameArg})`;
+          geomCode = `geom_point(aes(color = ${xAes}), size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}, shape = ${settings.dotShape || 16}) +${scaleColorSingle}`;
+        } else {
+          geomCode = `geom_point(color = '${settings.dotColor || '#4C78A8'}', size = ${settings.dotSize || 3}, alpha = ${settings.dotAlpha || 0.9}, shape = ${settings.dotShape || 16})`;
+        }
       }
     } else {
       geomCode = `geom_point(color = '${settings.fillColor || '#4C78A8'}', size = 3, alpha = ${settings.fillAlpha || 0.9})`;
@@ -3081,7 +3143,7 @@ cat_levels <- levels(factor(dat$${xAes}))
 n_cats <- length(cat_levels)
 pat_vals <- setNames(pat_cycle[((seq_len(n_cats) - 1) %% length(pat_cycle)) + 1], cat_levels)
 angle_vals <- setNames(angle_cycle[((seq_len(n_cats) - 1) %% length(angle_cycle)) + 1], cat_levels)
-density_vals <- setNames(density_cycle[((seq_len(n_cats) - 1) %% length(density_cycle)) + 1], cat_levels)
+spacing_vals <- setNames(density_cycle[((seq_len(n_cats) - 1) %% length(density_cycle)) + 1], cat_levels)
 
 `;
     }
@@ -3107,7 +3169,7 @@ ${additionalGeoms}  labs(title = ${titleLabel}, x = ${xLabel}, y = ${yLabel}) +
     axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.xAxisRotation && settings.xAxisRotation != 0) ? `, angle = ${settings.xAxisRotation}, hjust = ${settings.xAxisHjust}, vjust = ${settings.xAxisVjust}` : ''}),
     axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.yAxisRotation && settings.yAxisRotation != 0) ? `, angle = ${settings.yAxisRotation}, hjust = ${settings.yAxisHjust}, vjust = ${settings.yAxisVjust}` : ''}),
     legend.text = element_text(size = ${settings.legendTextSize}),
-    legend.title = element_text(size = ${settings.legendTextSize})
+    legend.title = ${showLegendTitleOn ? `element_text(size = ${settings.legendTextSize})` : 'element_blank()'}
   )
 `;
 
@@ -4038,6 +4100,14 @@ function generateGroupedBarCode(chartType, settings, groupColors) {
   const yColName = `col${settings.yColIndex}`;
   const errorColName = hasErrorBars && settings.errorColIndex ? `col${settings.errorColIndex}` : null;
 
+  // Derive legend title from original column headers (no hardcoded fallback)
+  const origHeaders = window.lastOriginalHeaders || [];
+  const groupHeaderRaw = origHeaders[settings.groupColIndex - 1] || settings.selectedGroupColumn || '';
+  const groupLegendName = groupHeaderRaw ? `'${groupHeaderRaw.replace(/'/g, "\\'")}'` : 'NULL';
+  const showLegendTitleOn = settings.showLegendTitle !== false && settings.showLegendTitle !== "false";
+  // When title hidden: pass empty string so ggplot2 doesn't show the aes variable name; theme hides the space
+  const groupScaleName = showLegendTitleOn ? groupLegendName : `''`;
+
   let code = '';
 
   // Add factor ordering if custom order is set
@@ -4182,7 +4252,7 @@ summary_data$Error <- ${settings.errorBarType === 'se' ? 'summary_data$SE' : set
 
   const usePattern = settings.patternMode && settings.patternMode !== 'none';
   const isBWPattern = settings.patternMode === 'bw_pattern';
-  const defaultPatterns = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
+  const defaultPatterns = ["stripe","crosshatch","circle","pch","stripe_h","stripe_v"];
   const rawGroupPatterns = Array.isArray(settings.groupPatterns) && settings.groupPatterns.length >= 6
     ? settings.groupPatterns : defaultPatterns;
   const eduGroupPatterns = rawGroupPatterns.map(p => (p === 'stripe_h' || p === 'stripe_v') ? 'stripe' : p);
@@ -4200,7 +4270,7 @@ summary_data$Error <- ${settings.errorBarType === 'se' ? 'summary_data$SE' : set
     code += `# ============ Create Plot ============
 
 # Create the base plot with fill patterns
-p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group, pattern = Group, pattern_angle = Group, pattern_density = Group)) +
+p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group, pattern = Group, pattern_angle = Group, pattern_spacing = Group)) +
 
   # Add patterned bars
   geom_bar_pattern(
@@ -4212,7 +4282,7 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group, pattern = Gr
     linewidth = ${settings.lineWidth},
     pattern_fill = ${patFill},
     pattern_colour = ${patFill},
-    pattern_spacing = ${settings.patternSpacing || 0.05}
+    pattern_density = ${settings.patternSpacing || 0.3}
   ) +
 
 `;
@@ -4287,7 +4357,7 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
     axis.text.x = element_text(size = ${settings.xAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.xAxisRotation && settings.xAxisRotation != 0) ? `, angle = ${settings.xAxisRotation}, hjust = ${settings.xAxisHjust}, vjust = ${settings.xAxisVjust}` : ''}),
     axis.text.y = element_text(size = ${settings.yAxisTextSize}, color = 'black', face = '${settings.axisTextWeight}'${(settings.yAxisRotation && settings.yAxisRotation != 0) ? `, angle = ${settings.yAxisRotation}, hjust = ${settings.yAxisHjust}, vjust = ${settings.yAxisVjust}` : ''}),
     legend.text = element_text(size = ${settings.legendTextSize}),
-    legend.title = element_text(size = ${settings.legendTextSize})
+    legend.title = ${showLegendTitleOn ? `element_text(size = ${settings.legendTextSize})` : 'element_blank()'}
   )
 
 # Add labels
@@ -4299,21 +4369,17 @@ p <- ggplot(summary_data, aes(x = Category, y = Mean, fill = Group)) +
     const angleValsEdu = eduGroupAngles.slice(0, numGroupsEdu).join(', ');
     const densityValsEdu = eduGroupDensities.slice(0, numGroupsEdu).join(', ');
     const fillValsEdu = isBWPattern ? `rep('white', ${numGroupsEdu})` : groupColors;
+    const patFill = isBWPattern ? "'black'" : "'grey30'";
     code += `  # Set fill colors and patterns (merged into one legend)
-  scale_fill_manual(values = ${fillValsEdu}, name = '${settings.selectedGroupColumn || 'Group'}') +
-  scale_pattern_manual(values = c(${patValsEdu}), name = '${settings.selectedGroupColumn || 'Group'}') +
+  scale_fill_manual(values = ${fillValsEdu}, name = ${groupScaleName}) +
+  scale_pattern_manual(values = c(${patValsEdu}), name = ${groupScaleName}) +
   scale_pattern_angle_manual(values = c(${angleValsEdu})) +
-  scale_pattern_density_manual(values = c(${densityValsEdu})) +
-  guides(
-    fill = guide_legend(override.aes = list(pattern = c(${patValsEdu}), pattern_angle = c(${angleValsEdu}), pattern_density = c(${densityValsEdu}), pattern_spacing = 0.02)),
-    pattern = 'none',
-    pattern_angle = 'none',
-    pattern_density = 'none'
-  ) +
+  scale_pattern_spacing_manual(values = c(${densityValsEdu})) +
+  guides(\n    fill = guide_legend(override.aes = list(pattern = c(${patValsEdu}), pattern_angle = c(${angleValsEdu}), pattern_spacing = c(${densityValsEdu}), pattern_density = ${settings.patternSpacing || 0.3}, pattern_fill = ${patFill}, pattern_colour = ${patFill})),\n    pattern = 'none',\n    pattern_angle = 'none',\n    pattern_spacing = 'none'\n  ) +
 ${themeBlockBar}`;
   } else {
     code += `  # Set colors
-  scale_fill_manual(values = ${groupColors}, name = '${settings.selectedGroupColumn || 'Group'}') +
+  scale_fill_manual(values = ${groupColors}, name = ${groupScaleName}) +
 ${themeBlockBar}`;
   }
 
@@ -7748,6 +7814,7 @@ function collectCurrentSettings() {
     showXAxisText: el("showXAxisText")?.checked !== false ? "true" : "false",
     showYAxisText: el("showYAxisText")?.checked !== false ? "true" : "false",
     showLegendTitle: el("showLegendTitle")?.checked !== false ? "true" : "false",
+    showLegend: el("showLegend")?.checked || false,
 
     // Label text content
     titleText: el("titleText")?.value || "",
@@ -7876,7 +7943,7 @@ function collectCurrentSettings() {
     patternSpacing: parseFloat(el("patternSpacing")?.value || "0.05"),
     patternAngle: parseFloat(el("patternAngle")?.value || "30"),
     groupPatterns: [1,2,3,4,5,6].map((i, idx) => {
-      const defaults = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
+      const defaults = ["stripe","crosshatch","circle","pch","stripe_h","stripe_v"];
       return el(`groupPattern${i}`)?.value || defaults[idx];
     }),
     groupDensities: [1,2,3,4,5,6].map(i => parseFloat(el(`groupDensity${i}`)?.value || "0.3"))
@@ -7949,8 +8016,14 @@ async function saveSettingsToSheet() {
       newSheet.getRange("A1").values = [["Setting"]];
       newSheet.getRange("B1").values = [["Value"]];
 
-      // Convert settings object to array
-      const settingsArray = Object.entries(settings).map(([key, value]) => [key, value]);
+      // Convert settings object to array — serialize arrays/objects to JSON strings
+      // so Excel Online (which is stricter than desktop) can write them as cell values.
+      const settingsArray = Object.entries(settings).map(([key, value]) => [
+        key,
+        Array.isArray(value) || (value !== null && typeof value === 'object')
+          ? JSON.stringify(value)
+          : (value === null || value === undefined ? "" : value)
+      ]);
 
       // Write settings data
       const dataRange = newSheet.getRange(`A2:B${settingsArray.length + 1}`);
@@ -8037,11 +8110,16 @@ async function loadSettingsFromSheet() {
 
       const values = usedRange.values;
 
-      // Skip header row and convert to object
+      // Skip header row and convert to object; parse JSON arrays/objects back
       const settings = {};
       for (let i = 1; i < values.length; i++) {
         const [key, value] = values[i];
-        if (key) settings[key] = value;
+        if (!key) continue;
+        if (typeof value === 'string' && (value.startsWith('[') || value.startsWith('{'))) {
+          try { settings[key] = JSON.parse(value); } catch (_) { settings[key] = value; }
+        } else {
+          settings[key] = value;
+        }
       }
 
       // Apply settings to UI
@@ -8152,6 +8230,7 @@ function applySettingsToUI(settings) {
   if (settings.showXAxisText !== undefined) setChecked("showXAxisText", settings.showXAxisText);
   if (settings.showYAxisText !== undefined) setChecked("showYAxisText", settings.showYAxisText);
   if (settings.showLegendTitle !== undefined) setChecked("showLegendTitle", settings.showLegendTitle);
+  if (settings.showLegend !== undefined) setChecked("showLegend", settings.showLegend);
 
   // Title and axis label text
   setValue("titleText", settings.titleText);
@@ -9263,9 +9342,25 @@ Office.onReady(() => {
     // Update group color labels for new chart type
     updateGroupColorLabels();
 
+    // Show/hide legend toggle for 8 regular (non-grouped) chart types
+    const LEGEND_TOGGLE_CHART_TYPES = ["bar", "bar_error", "bar_error_dot", "box", "box_dot", "violin", "violin_dot", "dot"];
+    const showLegendRow = document.getElementById("showLegendRow");
+    if (showLegendRow) showLegendRow.style.display = LEGEND_TOGGLE_CHART_TYPES.includes(v) ? "" : "none";
+    updateLegendDetailsVisibility();
+
     // Pattern visibility runs LAST — ensures B&W/Color+Pattern mode always wins
     // regardless of what the above functions set for barInteriorRow, groupColorRow, fillModeRow
     updatePatternVisibility();
+  }
+
+  function updateLegendDetailsVisibility() {
+    const LEGEND_TOGGLE_CHART_TYPES = ["bar", "bar_error", "bar_error_dot", "box", "box_dot", "violin", "violin_dot", "dot"];
+    const chartType = document.getElementById("chartType")?.value || "";
+    const isRegular = LEGEND_TOGGLE_CHART_TYPES.includes(chartType);
+    const legendOn = document.getElementById("showLegend")?.checked;
+    const section = document.getElementById("legendDetailsSection");
+    if (!section) return;
+    section.style.display = (isRegular && !legendOn) ? "none" : "";
   }
 
   // IC50 Analysis visibility control
@@ -9433,11 +9528,11 @@ Office.onReady(() => {
     // Reset fill pattern to defaults
     const patternMode = document.getElementById("patternMode");
     if (patternMode) { patternMode.value = "none"; patternMode.dispatchEvent(new Event('change')); }
-    const defaultPatterns = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
+    const defaultPatterns = ["stripe","crosshatch","circle","pch","stripe_h","stripe_v"];
     defaultPatterns.forEach((p, i) => { const el = document.getElementById(`groupPattern${i+1}`); if (el) el.value = p; });
-    [1,2,3,4,5,6].forEach(i => { const el = document.getElementById(`groupDensity${i}`); if (el) el.value = "0.3"; });
+    [1,2,3,4,5,6].forEach(i => { const el = document.getElementById(`groupDensity${i}`); if (el) el.value = "0.05"; });
     setVal("patternDensity", "0.3");
-    setVal("patternSpacing", "0.05");
+    setVal("patternSpacing", "0.3");
     setVal("patternAngle",   "30");
     const densityVal = document.getElementById("patternDensityVal");
     const spacingVal = document.getElementById("patternSpacingVal");
@@ -10370,6 +10465,11 @@ Office.onReady(() => {
   // Trigger on initial page load to handle default selected chart type
   handleChartTypeChange();
   updatePairedModeUI();
+
+  // Show/hide legend details section when showLegend checkbox changes
+  document.getElementById("showLegend")?.addEventListener("change", function() {
+    updateLegendDetailsVisibility();
+  });
 
   // Set up statistics checkbox listener to update detailed controls and VBracket visibility
   document.getElementById("addStatistics")?.addEventListener("change", function() {
@@ -12478,9 +12578,14 @@ async function getGroupedBarStatisticalResultsText() {
 
     if (statText && statText !== "NO_RESULTS" && statText !== "EMPTY_RESULTS" && statText.trim() !== "") {
       return statText;
-    } else {
-      return `No statistical results available (status: ${statText})`;
     }
+    // Fallback: use JS-cached results captured immediately after plot generation
+    // (guards against online Excel environments where R global env may not persist)
+    if (window.lastCachedStatResults && window.lastCachedStatResults.trim() !== "") {
+      console.log("📊 Using JS-cached stat results (R env may have been reset)");
+      return window.lastCachedStatResults;
+    }
+    return `No statistical results available (status: ${statText})`;
   } catch (error) {
     console.error("Get grouped bar statistical results error:", error);
     return `ERROR: ${error.message}`;
@@ -12548,14 +12653,15 @@ async function getLineStatisticalResultsText() {
     console.log("DEBUG: Full stat text length =", statText ? statText.length : 0);
 
     if (statText && statText !== "NO_RESULTS" && statText !== "EMPTY_RESULTS" && statText.trim() !== "") {
-      // Return the detailed statistical results from R
       console.log("DEBUG: Returning stat text with length", statText.length);
       return statText;
-    } else {
-      // Debug: Show what we got
-      console.log("DEBUG: Failed to get results. Status:", statText);
-      return `No statistical results available (status: ${statText})`;
     }
+    if (window.lastCachedStatResults && window.lastCachedStatResults.trim() !== "") {
+      console.log("📊 Using JS-cached stat results for line plot");
+      return window.lastCachedStatResults;
+    }
+    console.log("DEBUG: Failed to get results. Status:", statText);
+    return `No statistical results available (status: ${statText})`;
 
   } catch (error) {
     console.error("Get line statistical results error:", error);
@@ -17025,7 +17131,8 @@ async function initWebR() {
                         x_axis_rotation=0, y_axis_rotation=0,
                         x_axis_hjust=0.5, x_axis_vjust=0.5,
                         y_axis_hjust=0.5, y_axis_vjust=0.5,
-                        add_statistics=FALSE, statistical_test="auto") {
+                        add_statistics=FALSE, statistical_test="auto",
+                        show_legend=FALSE, legend_title=NULL) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -17049,8 +17156,8 @@ async function initWebR() {
         p <- ggplot(plot_data, aes(x=group, y=value, fill=group)) +
              geom_boxplot(color=color, linewidth=linewidth, alpha=alpha, width=width,
                          outlier.shape=16, outlier.alpha=0.5) +
-             scale_fill_manual(values=cat_colors) +
-             guides(fill="none")
+             scale_fill_manual(values=cat_colors, name=legend_title) +
+             if (!show_legend) guides(fill="none")
 
         # Add statistical analysis if requested and we have multiple groups
         if (add_statistics && length(unique(plot_data$group)) > 1) {
@@ -17083,8 +17190,9 @@ async function initWebR() {
                         y_axis_hjust=0.5, y_axis_vjust=0.5,
                         add_statistics=FALSE, statistical_test="auto",
                         use_pattern=FALSE, pattern_bw=FALSE,
-                        group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                        group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                        group_patterns=c("stripe","crosshatch","circle","pch","stripe_h","stripe_v"),
+                        group_spacings=c(0.05,0.05,0.05,0.05,0.05,0.05), pattern_density=0.3, group_angles=c(30,30,30,30,30,30),
+                        show_legend=FALSE, legend_title=NULL) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -17105,40 +17213,42 @@ async function initWebR() {
         names(bar_fills) <- cat_levels
         names(pat_vals) <- cat_levels
         angle_vals <- setNames(group_angles[((seq_len(n_cats) - 1) %% length(group_angles)) + 1], cat_levels)
-        density_vals <- setNames(group_densities[((seq_len(n_cats) - 1) %% length(group_densities)) + 1], cat_levels)
+        spacing_vals <- setNames(group_spacings[((seq_len(n_cats) - 1) %% length(group_spacings)) + 1], cat_levels)
         if (is.null(y_col) || ncol(dat) == 1) {
-          p <- ggplot(dat, aes(x=factor(dat[[x_col]]), fill=factor(dat[[x_col]]), pattern=factor(dat[[x_col]]), pattern_angle=factor(dat[[x_col]]), pattern_density=factor(dat[[x_col]]))) +
+          p <- ggplot(dat, aes(x=factor(dat[[x_col]]), fill=factor(dat[[x_col]]), pattern=factor(dat[[x_col]]), pattern_angle=factor(dat[[x_col]]), pattern_spacing=factor(dat[[x_col]]))) +
                geom_bar_pattern(colour=bar_colour, linewidth=linewidth, alpha=alpha, width=width,
                  pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30",
-                 pattern_spacing=pattern_spacing) +
-               scale_fill_manual(values=bar_fills) +
-               scale_pattern_manual(values=pat_vals) +
+                 pattern_density=pattern_density) +
+               scale_fill_manual(values=bar_fills, name=legend_title) +
+               scale_pattern_manual(values=pat_vals, name=legend_title) +
                scale_pattern_angle_manual(values=angle_vals) +
-               scale_pattern_density_manual(values=density_vals) +
-               guides(fill="none", pattern="none", pattern_angle="none", pattern_density="none")
+               scale_pattern_spacing_manual(values=spacing_vals) +
+               if (!show_legend) guides(fill="none", pattern="none", pattern_angle="none", pattern_spacing="none") else
+               guides(fill=guide_legend(override.aes=list(pattern=unname(pat_vals), pattern_angle=unname(angle_vals), pattern_spacing=unname(spacing_vals), pattern_density=pattern_density, pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30")), pattern="none", pattern_angle="none", pattern_spacing="none")
         } else {
-          p <- ggplot(dat, aes(x=factor(dat[[x_col]]), y=dat[[y_col]], fill=factor(dat[[x_col]]), pattern=factor(dat[[x_col]]), pattern_angle=factor(dat[[x_col]]), pattern_density=factor(dat[[x_col]]))) +
+          p <- ggplot(dat, aes(x=factor(dat[[x_col]]), y=dat[[y_col]], fill=factor(dat[[x_col]]), pattern=factor(dat[[x_col]]), pattern_angle=factor(dat[[x_col]]), pattern_spacing=factor(dat[[x_col]]))) +
                geom_col_pattern(colour=bar_colour, linewidth=linewidth, alpha=alpha, width=width,
                  pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30",
-                 pattern_spacing=pattern_spacing) +
-               scale_fill_manual(values=bar_fills) +
-               scale_pattern_manual(values=pat_vals) +
+                 pattern_density=pattern_density) +
+               scale_fill_manual(values=bar_fills, name=legend_title) +
+               scale_pattern_manual(values=pat_vals, name=legend_title) +
                scale_pattern_angle_manual(values=angle_vals) +
-               scale_pattern_density_manual(values=density_vals) +
-               guides(fill="none", pattern="none", pattern_angle="none", pattern_density="none")
+               scale_pattern_spacing_manual(values=spacing_vals) +
+               if (!show_legend) guides(fill="none", pattern="none", pattern_angle="none", pattern_spacing="none") else
+               guides(fill=guide_legend(override.aes=list(pattern=unname(pat_vals), pattern_angle=unname(angle_vals), pattern_spacing=unname(spacing_vals), pattern_density=pattern_density, pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30")), pattern="none", pattern_angle="none", pattern_spacing="none")
         }
       } else if (is.null(y_col) || ncol(dat) == 1) {
         # Single column: frequency bar chart with per-category colors
         p <- ggplot(dat, aes(x=factor(dat[[x_col]]), fill=factor(dat[[x_col]]))) +
              geom_bar(color=color, linewidth=linewidth, alpha=alpha, width=width) +
-             scale_fill_manual(values=cat_colors) +
-             guides(fill="none")
+             scale_fill_manual(values=cat_colors, name=legend_title) +
+             if (!show_legend) guides(fill="none")
       } else {
         # Two columns: height bar chart with per-category colors
         p <- ggplot(dat, aes(x=factor(dat[[x_col]]), y=dat[[y_col]], fill=factor(dat[[x_col]]))) +
              geom_col(color=color, linewidth=linewidth, alpha=alpha, width=width) +
-             scale_fill_manual(values=cat_colors) +
-             guides(fill="none")
+             scale_fill_manual(values=cat_colors, name=legend_title) +
+             if (!show_legend) guides(fill="none")
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
@@ -17163,7 +17273,8 @@ async function initWebR() {
                         x_axis_rotation=0, y_axis_rotation=0,
                         x_axis_hjust=0.5, x_axis_vjust=0.5,
                         y_axis_hjust=0.5, y_axis_vjust=0.5,
-                        add_statistics=FALSE, statistical_test="auto") {
+                        add_statistics=FALSE, statistical_test="auto",
+                        show_legend=FALSE, legend_title=NULL) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -17179,13 +17290,13 @@ async function initWebR() {
         names(cat_colors) <- cat_levels
         p <- ggplot(dat, aes(x=factor(dat[[x_col]]), y=dat[[y_col]], color=factor(dat[[x_col]]))) +
              geom_point(size=size, alpha=alpha, shape=shape) +
-             scale_color_manual(values=cat_colors) +
-             guides(color="none")
+             scale_color_manual(values=cat_colors, name=legend_title) +
+             if (!show_legend) guides(color="none")
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
-                      title_text, x_text, y_text, 
+                      title_text, x_text, y_text,
                       show_title, show_x_label, show_y_label,
                       x_scale, y_scale,
                       theme_name,
@@ -18164,8 +18275,9 @@ async function initWebR() {
                               y_axis_hjust=0.5, y_axis_vjust=0.5,
                               add_statistics=FALSE, statistical_test="auto",
                               use_pattern=FALSE, pattern_bw=FALSE,
-                              group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                              group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                              group_patterns=c("stripe","crosshatch","circle","pch","stripe_h","stripe_v"),
+                              group_spacings=c(0.05,0.05,0.05,0.05,0.05,0.05), pattern_density=0.3, group_angles=c(30,30,30,30,30,30),
+                              show_legend=FALSE, legend_title=NULL) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18190,31 +18302,32 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else color
         pat_vals <- setNames(group_patterns[((seq_len(n_cats) - 1) %% length(group_patterns)) + 1], cat_levels)
         angle_vals <- setNames(group_angles[((seq_len(n_cats) - 1) %% length(group_angles)) + 1], cat_levels)
-        density_vals <- setNames(group_densities[((seq_len(n_cats) - 1) %% length(group_densities)) + 1], cat_levels)
-        p <- ggplot(df, aes(x=category, y=mean_val, fill=category, pattern=category, pattern_angle=category, pattern_density=category)) +
+        spacing_vals <- setNames(group_spacings[((seq_len(n_cats) - 1) %% length(group_spacings)) + 1], cat_levels)
+        p <- ggplot(df, aes(x=category, y=mean_val, fill=category, pattern=category, pattern_angle=category, pattern_spacing=category)) +
              geom_col_pattern(colour=bar_colour, linewidth=linewidth, alpha=alpha, width=width,
                pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30",
-               pattern_spacing=pattern_spacing) +
+                 pattern_density=pattern_density) +
              geom_errorbar(aes(ymin=mean_val-error, ymax=mean_val+error),
                           width=errorbar_width, color=bar_colour, linewidth=linewidth*0.8) +
-             scale_fill_manual(values=bar_fills) +
-             scale_pattern_manual(values=pat_vals) +
+             scale_fill_manual(values=bar_fills, name=legend_title) +
+             scale_pattern_manual(values=pat_vals, name=legend_title) +
              scale_pattern_angle_manual(values=angle_vals) +
-             scale_pattern_density_manual(values=density_vals) +
-             guides(fill="none", pattern="none", pattern_angle="none", pattern_density="none")
+             scale_pattern_spacing_manual(values=spacing_vals) +
+             if (!show_legend) guides(fill="none", pattern="none", pattern_angle="none", pattern_spacing="none") else
+             guides(fill=guide_legend(override.aes=list(pattern=unname(pat_vals), pattern_angle=unname(angle_vals), pattern_spacing=unname(spacing_vals), pattern_density=pattern_density, pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30")), pattern="none", pattern_angle="none", pattern_spacing="none")
       } else {
         # Create bar plot with error bars
         p <- ggplot(df, aes(x=category, y=mean_val, fill=category)) +
              geom_col(color=color, linewidth=linewidth, alpha=alpha, width=width) +
              geom_errorbar(aes(ymin=mean_val-error, ymax=mean_val+error),
                           width=errorbar_width, color=color, linewidth=linewidth*0.8) +
-             scale_fill_manual(values=cat_colors) +
-             guides(fill="none")
+             scale_fill_manual(values=cat_colors, name=legend_title) +
+             if (!show_legend) guides(fill="none")
       }
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
-                      title_text, x_text, y_text, 
+                      title_text, x_text, y_text,
                       show_title, show_x_label, show_y_label,
                       x_scale, y_scale,
                       theme_name,
@@ -18238,8 +18351,9 @@ async function initWebR() {
                                   y_axis_hjust=0.5, y_axis_vjust=0.5,
                                   add_statistics=FALSE, statistical_test="auto",
                                   use_pattern=FALSE, pattern_bw=FALSE,
-                                  group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                                  group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                                  group_patterns=c("stripe","crosshatch","circle","pch","stripe_h","stripe_v"),
+                                  group_spacings=c(0.05,0.05,0.05,0.05,0.05,0.05), pattern_density=0.3, group_angles=c(30,30,30,30,30,30),
+                                  show_legend=FALSE, legend_title=NULL) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18324,28 +18438,29 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else color
         pat_vals <- setNames(group_patterns[((seq_len(length(cat_levels)) - 1) %% length(group_patterns)) + 1], cat_levels)
         angle_vals <- setNames(group_angles[((seq_len(length(cat_levels)) - 1) %% length(group_angles)) + 1], cat_levels)
-        density_vals <- setNames(group_densities[((seq_len(length(cat_levels)) - 1) %% length(group_densities)) + 1], cat_levels)
+        spacing_vals <- setNames(group_spacings[((seq_len(length(cat_levels)) - 1) %% length(group_spacings)) + 1], cat_levels)
         p <- ggplot() +
-             geom_col_pattern(data = summary_df, aes(x = category, y = mean_val, fill = category, pattern = category, pattern_angle = category, pattern_density = category),
+             geom_col_pattern(data = summary_df, aes(x = category, y = mean_val, fill = category, pattern = category, pattern_angle = category, pattern_spacing = category),
                      colour=bar_colour, linewidth=linewidth, alpha=alpha, width=width,
                      pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30",
-                     pattern_spacing=pattern_spacing) +
-             scale_fill_manual(values = bar_fills) +
-             scale_pattern_manual(values = pat_vals) +
+                 pattern_density=pattern_density) +
+             scale_fill_manual(values = bar_fills, name = legend_title) +
+             scale_pattern_manual(values = pat_vals, name = legend_title) +
              scale_pattern_angle_manual(values = angle_vals) +
-             scale_pattern_density_manual(values = density_vals) +
+             scale_pattern_spacing_manual(values = spacing_vals) +
              geom_errorbar(data = summary_df, aes(x = category, ymin = mean_val - error_val, ymax = mean_val + error_val),
                           width = errorbar_width, color = bar_colour, linewidth = linewidth * 0.8) +
              geom_point(data = df, aes(x = category, y = value),
                        position = position_jitter(width = jitter_width, height = 0),
                        size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape) +
-             guides(fill = "none", pattern = "none", pattern_angle = "none", pattern_density = "none")
+             (if (!show_legend) guides(fill = "none", pattern = "none", pattern_angle = "none", pattern_spacing = "none") else
+             guides(fill=guide_legend(override.aes=list(pattern=unname(pat_vals), pattern_angle=unname(angle_vals), pattern_spacing=unname(spacing_vals), pattern_density=pattern_density, pattern_fill=if(pattern_bw)"black" else "grey30", pattern_colour=if(pattern_bw)"black" else "grey30")), pattern="none", pattern_angle="none", pattern_spacing="none"))
       } else {
         p <- ggplot() +
              # Bar layer (means) - per-category fill colors
              geom_col(data = summary_df, aes(x = category, y = mean_val, fill = category),
                      color = color, linewidth = linewidth, alpha = alpha, width = width) +
-             scale_fill_manual(values = cat_colors) +
+             scale_fill_manual(values = cat_colors, name = legend_title) +
              # Error bar layer
              geom_errorbar(data = summary_df, aes(x = category, ymin = mean_val - error_val, ymax = mean_val + error_val),
                           width = errorbar_width, color = color, linewidth = linewidth * 0.8) +
@@ -18353,7 +18468,7 @@ async function initWebR() {
              geom_point(data = df, aes(x = category, y = value),
                        position = position_jitter(width = jitter_width, height = 0),
                        size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape) +
-             guides(fill = "none")
+             if (!show_legend) guides(fill = "none")
       }
 
       # Add statistical analysis if requested and we have multiple groups
@@ -18401,7 +18516,8 @@ async function initWebR() {
                             x_axis_rotation=0, y_axis_rotation=0,
                             x_axis_hjust=0.5, x_axis_vjust=0.5,
                             y_axis_hjust=0.5, y_axis_vjust=0.5,
-                            add_statistics=FALSE, statistical_test="auto") {
+                            add_statistics=FALSE, statistical_test="auto",
+                            show_legend=FALSE, legend_title=NULL) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18411,25 +18527,25 @@ async function initWebR() {
         category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
-      
+
       # For box_dot, always use column names unless user specifically entered text
       # Strip quotes and check if it's meaningful text
       x_clean <- gsub('^["\\\']|["\\\']$', '', x_text)  # Remove surrounding quotes
       y_clean <- gsub('^["\\\']|["\\\']$', '', y_text)  # Remove surrounding quotes
-      
+
       # Use column names by default, unless user entered meaningful custom text
       if (is.null(x_clean) || x_clean == "" || x_clean == "NULL") {
         x_text <- names(dat)[x_col]
       } else {
         x_text <- x_clean  # Use the cleaned custom text
       }
-      
+
       if (is.null(y_clean) || y_clean == "" || y_clean == "NULL") {
         y_text <- names(dat)[y_col]
       } else {
         y_text <- y_clean  # Use the cleaned custom text
       }
-      
+
       # Build per-category color mapping
       cat_levels <- levels(df$category)
       cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
@@ -18443,8 +18559,8 @@ async function initWebR() {
            # Individual data points (jittered horizontally only)
            geom_point(position = position_jitter(width = jitter_width, height = 0),
                      size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape) +
-           scale_fill_manual(values = cat_colors) +
-           guides(fill = "none")
+           scale_fill_manual(values = cat_colors, name = legend_title) +
+           if (!show_legend) guides(fill = "none")
 
       # Add statistical analysis if requested and we have multiple groups
       if (add_statistics && length(unique(df$category)) > 1) {
@@ -18479,8 +18595,8 @@ async function initWebR() {
                                 y_axis_hjust=0.5, y_axis_vjust=0.5,
                                 add_statistics=FALSE, statistical_test="auto",
                                 use_pattern=FALSE, pattern_bw=FALSE,
-                                group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                                group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                                group_patterns=c("stripe","crosshatch","circle","pch","stripe_h","stripe_v"),
+                                group_spacings=c(0.05,0.05,0.05,0.05,0.05,0.05), pattern_density=0.3, group_angles=c(30,30,30,30,30,30)) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18569,19 +18685,19 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else stroke_color
         pat_vals <- setNames(group_patterns[((seq_len(n_groups) - 1) %% length(group_patterns)) + 1], group_levels)
         angle_vals <- setNames(group_angles[((seq_len(n_groups) - 1) %% length(group_angles)) + 1], group_levels)
-        density_vals <- setNames(group_densities[((seq_len(n_groups) - 1) %% length(group_densities)) + 1], group_levels)
-        p <- ggplot(plot_data, aes(x = category, y = value, fill = group, pattern = group, pattern_angle = group, pattern_density = group)) +
+        spacing_vals <- setNames(group_spacings[((seq_len(n_groups) - 1) %% length(group_spacings)) + 1], group_levels)
+        p <- ggplot(plot_data, aes(x = category, y = value, fill = group, pattern = group, pattern_angle = group, pattern_spacing = group)) +
              geom_col_pattern(position = position_dodge(width = dodge_width), width = width,
                      alpha = alpha, linewidth = linewidth, colour = bar_colour,
                      pattern_fill = if(pattern_bw)"black" else "grey30",
                      pattern_colour = if(pattern_bw)"black" else "grey30",
-                     pattern_spacing = pattern_spacing) +
+                     pattern_density = pattern_density) +
              scale_fill_manual(values = bar_fills, name = actual_group_name) +
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
-             scale_pattern_density_manual(values = density_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_angle = unname(angle_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)),
-                    pattern = "none", pattern_angle = "none", pattern_density = "none")
+             scale_pattern_spacing_manual(values = spacing_vals) +
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_angle = unname(angle_vals), pattern_spacing = unname(spacing_vals), pattern_density = pattern_density)),
+                    pattern = "none", pattern_angle = "none", pattern_spacing = "none")
       } else {
         p <- ggplot(plot_data, aes(x = category, y = value, fill = group)) +
              geom_col(position = position_dodge(width = dodge_width),
@@ -18746,8 +18862,8 @@ async function initWebR() {
                                       x_axis_hjust=0.5, x_axis_vjust=0.5,
                                       y_axis_hjust=0.5, y_axis_vjust=0.5,
                                       use_pattern=FALSE, pattern_bw=FALSE,
-                                      group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                                      group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                                      group_patterns=c("stripe","crosshatch","circle","pch","stripe_h","stripe_v"),
+                                      group_spacings=c(0.05,0.05,0.05,0.05,0.05,0.05), pattern_density=0.3, group_angles=c(30,30,30,30,30,30)) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18792,21 +18908,21 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else stroke_color
         pat_vals <- setNames(group_patterns[((seq_len(n_groups) - 1) %% length(group_patterns)) + 1], group_levels)
         angle_vals <- setNames(group_angles[((seq_len(n_groups) - 1) %% length(group_angles)) + 1], group_levels)
-        density_vals <- setNames(group_densities[((seq_len(n_groups) - 1) %% length(group_densities)) + 1], group_levels)
+        spacing_vals <- setNames(group_spacings[((seq_len(n_groups) - 1) %% length(group_spacings)) + 1], group_levels)
         pat_fill <- if (pattern_bw) "black" else "grey30"
-        p <- ggplot(plot_data, aes(x = category, y = mean_val, fill = group, pattern = group, pattern_angle = group, pattern_density = group)) +
+        p <- ggplot(plot_data, aes(x = category, y = mean_val, fill = group, pattern = group, pattern_angle = group, pattern_spacing = group)) +
              geom_col_pattern(position = position_dodge(width = dodge_width),
                      width = width, alpha = alpha, linewidth = linewidth, colour = bar_colour,
                      pattern_fill = pat_fill, pattern_colour = pat_fill,
-                     pattern_spacing = pattern_spacing) +
+                     pattern_density = pattern_density) +
              geom_errorbar(aes(ymin = mean_val - error_val, ymax = mean_val + error_val),
                           position = position_dodge(width = dodge_width),
                           width = 0.25, linewidth = linewidth * 0.8, show.legend = FALSE) +
              scale_fill_manual(values = bar_fills, name = actual_group_name) +
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
-             scale_pattern_density_manual(values = density_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_angle = unname(angle_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)), pattern = "none", pattern_angle = "none", pattern_density = "none")
+             scale_pattern_spacing_manual(values = spacing_vals) +
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_angle = unname(angle_vals), pattern_spacing = unname(spacing_vals), pattern_density = pattern_density)), pattern = "none", pattern_angle = "none", pattern_spacing = "none")
       } else {
         p <- ggplot(plot_data, aes(x = category, y = mean_val, fill = group)) +
              geom_col(position = position_dodge(width = dodge_width),
@@ -18856,8 +18972,8 @@ async function initWebR() {
                                           stat_symbol_type="stars", custom_symbol_05="*", custom_symbol_01="**", custom_symbol_001="***", custom_symbol_ns="ns",
                                           paired=FALSE, subject_col=NULL,
                                           use_pattern=FALSE, pattern_bw=FALSE,
-                                          group_patterns=c("stripe","crosshatch","circle","weave","regular_polygon","wave"),
-                                          group_densities=c(0.3,0.3,0.3,0.3,0.3,0.3), pattern_spacing=0.05, group_angles=c(30,30,30,30,30,30)) {
+                                          group_patterns=c("stripe","crosshatch","circle","pch","stripe_h","stripe_v"),
+                                          group_spacings=c(0.05,0.05,0.05,0.05,0.05,0.05), pattern_density=0.3, group_angles=c(30,30,30,30,30,30)) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -18934,13 +19050,13 @@ async function initWebR() {
         bar_colour <- if (pattern_bw) "black" else stroke_color
         pat_vals <- setNames(group_patterns[((seq_len(n_groups) - 1) %% length(group_patterns)) + 1], group_levels)
         angle_vals <- setNames(group_angles[((seq_len(n_groups) - 1) %% length(group_angles)) + 1], group_levels)
-        density_vals <- setNames(group_densities[((seq_len(n_groups) - 1) %% length(group_densities)) + 1], group_levels)
-        p <- ggplot(summary_data, aes(x = category, y = mean_val, fill = group, pattern = group, pattern_angle = group, pattern_density = group)) +
+        spacing_vals <- setNames(group_spacings[((seq_len(n_groups) - 1) %% length(group_spacings)) + 1], group_levels)
+        p <- ggplot(summary_data, aes(x = category, y = mean_val, fill = group, pattern = group, pattern_angle = group, pattern_spacing = group)) +
              geom_col_pattern(position = position_dodge(width = dodge_width), width = width,
                      alpha = alpha, linewidth = linewidth, colour = bar_colour,
                      pattern_fill = if(pattern_bw)"black" else "grey30",
                      pattern_colour = if(pattern_bw)"black" else "grey30",
-                     pattern_spacing = pattern_spacing) +
+                     pattern_density = pattern_density) +
              geom_errorbar(aes(ymin = mean_val - error_val, ymax = mean_val + error_val),
                           position = position_dodge(width = dodge_width),
                           width = 0.25, linewidth = linewidth * 0.8, color = bar_colour, show.legend = FALSE) +
@@ -18950,9 +19066,9 @@ async function initWebR() {
              scale_fill_manual(values = bar_fills, name = actual_group_name) +
              scale_pattern_manual(values = pat_vals, name = actual_group_name) +
              scale_pattern_angle_manual(values = angle_vals) +
-             scale_pattern_density_manual(values = density_vals) +
-             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_angle = unname(angle_vals), pattern_density = unname(density_vals), pattern_spacing = 0.02)),
-                    pattern = "none", pattern_angle = "none", pattern_density = "none")
+             scale_pattern_spacing_manual(values = spacing_vals) +
+             guides(fill = guide_legend(override.aes = list(pattern = unname(pat_vals), pattern_angle = unname(angle_vals), pattern_spacing = unname(spacing_vals), pattern_density = pattern_density)),
+                    pattern = "none", pattern_angle = "none", pattern_spacing = "none")
       } else {
         p <- ggplot(summary_data, aes(x = category, y = mean_val, fill = group)) +
              geom_col(position = position_dodge(width = dodge_width),
@@ -19144,6 +19260,19 @@ async function initWebR() {
                 }
               }
             }
+          }
+        }
+
+        # Warn if statistics were impossible due to each X-category having only 1 group
+        if (length(stat_text_results) == 0 && add_statistics) {
+          all_single_group <- all(sapply(categories_to_test, function(cv) {
+            length(unique(plot_data$group[plot_data$category == cv & !is.na(plot_data$value)])) <= 1
+          }))
+          if (all_single_group) {
+            cat("\\n⚠️ Statistics could not run: each X-axis category has only 1 group.\\n")
+            cat("   Grouped bar statistics require multiple groups within each X-category.\\n")
+            cat("   Your data has the same values in both the Group and X columns.\\n")
+            cat("   → Try 'Bar + error + dots' chart type with your HIV type column as X-axis.\\n\\n")
           }
         }
 
@@ -20118,7 +20247,8 @@ async function initWebR() {
                            theme_name="bw",
                            x_axis_rotation=0, y_axis_rotation=0,
                            x_axis_hjust=0.5, x_axis_vjust=0.5,
-                           y_axis_hjust=0.5, y_axis_vjust=0.5) {
+                           y_axis_hjust=0.5, y_axis_vjust=0.5,
+                           show_legend=FALSE, legend_title=NULL) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -20128,7 +20258,7 @@ async function initWebR() {
         category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
-      
+
       # Build per-category color mapping
       cat_levels <- levels(df$category)
       cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
@@ -20136,8 +20266,8 @@ async function initWebR() {
 
       p <- ggplot(df, aes(x = category, y = value, fill = category)) +
            geom_violin(color = color, linewidth = linewidth, alpha = alpha, width = width) +
-           scale_fill_manual(values = cat_colors) +
-           guides(fill = "none")
+           scale_fill_manual(values = cat_colors, name = legend_title) +
+           if (!show_legend) guides(fill = "none")
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
@@ -20162,7 +20292,8 @@ async function initWebR() {
                                theme_name="bw",
                                x_axis_rotation=0, y_axis_rotation=0,
                                x_axis_hjust=0.5, x_axis_vjust=0.5,
-                               y_axis_hjust=0.5, y_axis_vjust=0.5) {
+                               y_axis_hjust=0.5, y_axis_vjust=0.5,
+                               show_legend=FALSE, legend_title=NULL) {
 
       # Transform data for negative log scales
       dat <- sato_transform_data(dat, x_col, y_col, x_scale, y_scale)
@@ -20172,7 +20303,7 @@ async function initWebR() {
         category = if(is.factor(dat[[x_col]])) dat[[x_col]] else factor(dat[[x_col]]),
         value = as.numeric(dat[[y_col]])
       )
-      
+
       # Build per-category color mapping
       cat_levels <- levels(df$category)
       cat_colors <- fill_colors[((seq_len(length(cat_levels)) - 1) %% length(fill_colors)) + 1]
@@ -20184,8 +20315,8 @@ async function initWebR() {
            # Individual data points (jittered horizontally only)
            geom_point(position = position_jitter(width = jitter_width, height = 0),
                      size = dot_size, alpha = dot_alpha, color = dot_color, shape = dot_shape) +
-           scale_fill_manual(values = cat_colors) +
-           guides(fill = "none")
+           scale_fill_manual(values = cat_colors, name = legend_title) +
+           if (!show_legend) guides(fill = "none")
 
       sato_apply_theme(p, target_font, title_weight, axis_title_weight, axis_text_weight,
                       title_size, x_axis_title_size, y_axis_title_size, x_axis_text_size, y_axis_text_size, legend_text_size,
@@ -21983,8 +22114,16 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const showXAxisText = o.showXAxisText !== false ? 'TRUE' : 'FALSE';
   const showYAxisText = o.showYAxisText !== false ? 'TRUE' : 'FALSE';
   const showLegendTitle = o.showLegendTitle !== false ? 'TRUE' : 'FALSE';
+  const showLegend = o.showLegend ? 'TRUE' : 'FALSE';
   const legendTitle = (o.legendTitle || '').trim();
   const escapedLegendTitle = legendTitle.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // When no custom legend title, fall back to the X-column header (matches educational R code behavior)
+  const xColHeaderRawForLegend = legendTitle ? '' : ((window.lastOriginalHeaders || [])[xColIndex - 1] || '');
+  const xColHeaderForLegend = xColHeaderRawForLegend.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  // R-expression form of the legend title: uses convertToRPlotmath so ~2~ → expression('H'['2']*'O')
+  const rLegendTitleR = legendTitle
+    ? convertToRPlotmath(legendTitle)
+    : (xColHeaderRawForLegend ? convertToRPlotmath(xColHeaderRawForLegend) : 'NULL');
   let xScale = o.xScale || 'linear';
   const yScale = o.yScale || 'linear';
 
@@ -22084,7 +22223,7 @@ const fontStack = buildCompleteFontStack(effectiveFont);
   const patternDensity = o.patternDensity || 0.3;
   const patternSpacing = o.patternSpacing || 0.05;
   const patternAngle = o.patternAngle || 30;
-  const defaultPatterns = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
+  const defaultPatterns = ["stripe","crosshatch","circle","pch","stripe_h","stripe_v"];
   const groupPatterns = Array.isArray(o.groupPatterns) && o.groupPatterns.length >= 6
     ? o.groupPatterns
     : defaultPatterns;
@@ -23402,7 +23541,9 @@ ${SHARED_STAT_HELPERS_R}
         x_axis_hjust = ${xAxisHjust},
         x_axis_vjust = ${xAxisVjust},
         y_axis_hjust = ${yAxisHjust},
-        y_axis_vjust = ${yAxisVjust}
+        y_axis_vjust = ${yAxisVjust},
+        show_legend = ${showLegend},
+        legend_title = ${showLegend === 'TRUE' && showLegendTitle === 'TRUE' ? rLegendTitleR : 'NULL'}
       )
 
       # Add statistics if enabled by user
@@ -23444,7 +23585,9 @@ ${SHARED_STAT_HELPERS_R}
         x_axis_hjust = ${xAxisHjust},
         x_axis_vjust = ${xAxisVjust},
         y_axis_hjust = ${yAxisHjust},
-        y_axis_vjust = ${yAxisVjust}
+        y_axis_vjust = ${yAxisVjust},
+        show_legend = ${showLegend},
+        legend_title = ${showLegend === 'TRUE' && showLegendTitle === 'TRUE' ? rLegendTitleR : 'NULL'}
       )
 
       # Add statistics if enabled by user
@@ -23482,7 +23625,9 @@ ${SHARED_STAT_HELPERS_R}
         x_axis_hjust = ${xAxisHjust},
         x_axis_vjust = ${xAxisVjust},
         y_axis_hjust = ${yAxisHjust},
-        y_axis_vjust = ${yAxisVjust}
+        y_axis_vjust = ${yAxisVjust},
+        show_legend = ${showLegend},
+        legend_title = ${showLegend === 'TRUE' && showLegendTitle === 'TRUE' ? rLegendTitleR : 'NULL'}
       )
 
       # ADD STATISTICS FOR VIOLIN (only if enabled)
@@ -23524,7 +23669,9 @@ ${SHARED_STAT_HELPERS_R}
         x_axis_hjust = ${xAxisHjust},
         x_axis_vjust = ${xAxisVjust},
         y_axis_hjust = ${yAxisHjust},
-        y_axis_vjust = ${yAxisVjust}
+        y_axis_vjust = ${yAxisVjust},
+        show_legend = ${showLegend},
+        legend_title = ${showLegend === 'TRUE' && showLegendTitle === 'TRUE' ? rLegendTitleR : 'NULL'}
       )
 
       # ADD STATISTICS FOR VIOLIN_DOT (only if enabled)
@@ -23686,7 +23833,9 @@ ${SHARED_STAT_HELPERS_R}
         y_axis_hjust = ${yAxisHjust},
         y_axis_vjust = ${yAxisVjust},
         add_statistics = ${addStatistics ? 'TRUE' : 'FALSE'},
-        statistical_test = "${statisticalTest}"
+        statistical_test = "${statisticalTest}",
+        show_legend = ${showLegend},
+        legend_title = ${showLegend === 'TRUE' && showLegendTitle === 'TRUE' ? rLegendTitleR : 'NULL'}
       )
     } else if (chart_type == "scatter") {
       p <- sato_scatter(
@@ -23766,9 +23915,11 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        group_densities = c(${resolvedGroupDensities.join(', ')}),
-        pattern_spacing = ${patternSpacing},
-        group_angles = c(${resolvedGroupAngles.join(', ')})
+        group_spacings = c(${resolvedGroupDensities.join(', ')}),
+        pattern_density = ${patternSpacing},
+        group_angles = c(${resolvedGroupAngles.join(', ')}),
+        show_legend = ${showLegend},
+        legend_title = ${showLegend === 'TRUE' && showLegendTitle === 'TRUE' ? rLegendTitleR : 'NULL'}
       )
 
       # Table-style Y-axis labels (left-aligned) - only for rotation=90
@@ -23846,9 +23997,11 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        group_densities = c(${resolvedGroupDensities.join(', ')}),
-        pattern_spacing = ${patternSpacing},
-        group_angles = c(${resolvedGroupAngles.join(', ')})
+        group_spacings = c(${resolvedGroupDensities.join(', ')}),
+        pattern_density = ${patternSpacing},
+        group_angles = c(${resolvedGroupAngles.join(', ')}),
+        show_legend = ${showLegend},
+        legend_title = ${showLegend === 'TRUE' && showLegendTitle === 'TRUE' ? rLegendTitleR : 'NULL'}
       )
     } else if (chart_type == "bar_error_dot") {
       cat("🔥🔥🔥 CALLING BAR ERROR DOT FUNCTION 🔥🔥🔥\\n")
@@ -23893,9 +24046,11 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        group_densities = c(${resolvedGroupDensities.join(', ')}),
-        pattern_spacing = ${patternSpacing},
-        group_angles = c(${resolvedGroupAngles.join(', ')})
+        group_spacings = c(${resolvedGroupDensities.join(', ')}),
+        pattern_density = ${patternSpacing},
+        group_angles = c(${resolvedGroupAngles.join(', ')}),
+        show_legend = ${showLegend},
+        legend_title = ${showLegend === 'TRUE' && showLegendTitle === 'TRUE' ? rLegendTitleR : 'NULL'}
       )
 
       # Add statistics if enabled by user
@@ -24288,8 +24443,8 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        group_densities = c(${resolvedGroupDensities.join(', ')}),
-        pattern_spacing = ${patternSpacing},
+        group_spacings = c(${resolvedGroupDensities.join(', ')}),
+        pattern_density = ${patternSpacing},
         group_angles = c(${resolvedGroupAngles.join(', ')})
       )
     } else if (chart_type == "bar_grouped_error") {
@@ -24338,8 +24493,8 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        group_densities = c(${resolvedGroupDensities.join(', ')}),
-        pattern_spacing = ${patternSpacing},
+        group_spacings = c(${resolvedGroupDensities.join(', ')}),
+        pattern_density = ${patternSpacing},
         group_angles = c(${resolvedGroupAngles.join(', ')})
       )
     } else if (chart_type == "bar_grouped_error_dot") {
@@ -24408,8 +24563,8 @@ ${SHARED_STAT_HELPERS_R}
         use_pattern = ${patternMode !== 'none' ? 'TRUE' : 'FALSE'},
         pattern_bw = ${patternMode === 'bw_pattern' ? 'TRUE' : 'FALSE'},
         group_patterns = c(${resolvedGroupPatterns.map(p => `"${p}"`).join(', ')}),
-        group_densities = c(${resolvedGroupDensities.join(', ')}),
-        pattern_spacing = ${patternSpacing},
+        group_spacings = c(${resolvedGroupDensities.join(', ')}),
+        pattern_density = ${patternSpacing},
         group_angles = c(${resolvedGroupAngles.join(', ')})
       )
     } else if (chart_type == "ic50_grouped_dose_response") {
@@ -24657,15 +24812,10 @@ ${SHARED_STAT_HELPERS_R}
     # Legend title control
     if (exists("p") && !is.null(p)) {
       show_legend_title <- ${showLegendTitle}
-      legend_title_text <- "${escapedLegendTitle}"
       if (!show_legend_title) {
         p <- p + theme(legend.title = element_blank())
-      } else if (nchar(trimws(legend_title_text)) > 0) {
-        formatted_legend_title <- tryCatch(
-          parse(text = legend_title_text)[[1]],
-          error = function(e) legend_title_text
-        )
-        p <- p + labs(fill = formatted_legend_title, color = formatted_legend_title, shape = formatted_legend_title)
+      } else if (${legendTitle ? 'TRUE' : 'FALSE'}) {
+        p <- p + labs(fill = ${legendTitle ? convertToRPlotmath(legendTitle) : 'NULL'}, color = ${legendTitle ? convertToRPlotmath(legendTitle) : 'NULL'}, shape = ${legendTitle ? convertToRPlotmath(legendTitle) : 'NULL'})
       }
     }
 
@@ -24706,6 +24856,7 @@ ${SHARED_STAT_HELPERS_R}
     showXAxisText: showXAxisText === 'TRUE',
     showYAxisText: showYAxisText === 'TRUE',
     showLegendTitle: showLegendTitle === 'TRUE',
+    showLegend: showLegend === 'TRUE',
     legendTitle,
     fontFamily: rFontName, titleSize, xAxisTitleSize, yAxisTitleSize,
     xAxisTextSize, yAxisTextSize, legendTextSize, titleWeight, axisTitleWeight, axisTextWeight,
@@ -24956,6 +25107,30 @@ ${SHARED_STAT_HELPERS_R}
     console.error("SVG rendering failed:", e);
     setStatus("SVG rendering error: " + e.message);
     throw e;
+  }
+
+  // Cache stat results in JS immediately after R finishes — guards against
+  // online Excel environments where the R global env may not persist between evalR calls.
+  try {
+    const _statR = await webR.evalR(`{
+      if (exists("grouped_bar_stat_results") && nchar(grouped_bar_stat_results) > 0) {
+        grouped_bar_stat_results
+      } else if (exists("line_plot_stat_results") && nchar(line_plot_stat_results) > 0) {
+        line_plot_stat_results
+      } else if (exists("stat_results") && nchar(stat_results) > 0) {
+        stat_results
+      } else {
+        ""
+      }
+    }`);
+    const _statJS = await _statR.toJs();
+    const _statText = Array.isArray(_statJS?.values) ? _statJS.values[0] : String(_statJS || "");
+    window.lastCachedStatResults = _statText || "";
+    window.lastCachedStatChartType = chartType;
+    console.log("📊 Cached stat results length:", window.lastCachedStatResults.length);
+  } catch (_e) {
+    window.lastCachedStatResults = "";
+    console.log("Could not cache stat results:", _e.message);
   }
 
   return {
@@ -25908,6 +26083,7 @@ function uiOpts(){
     showYAxisText: el("showYAxisText")?.checked !== false,
     showLegendTitle: el("showLegendTitle")?.checked !== false,
     legendTitle: (el("legendTitle")?.value || "").trim(),
+    showLegend: el("showLegend")?.checked || false,
 
     xMin: numVal("xMin"), xMax: numVal("xMax"),
     yMin: numVal("yMin"), yMax: numVal("yMax"),
@@ -25989,7 +26165,7 @@ function uiOpts(){
     patternSpacing: parseFloat(el("patternSpacing")?.value || "0.05"),
     patternAngle: parseFloat(el("patternAngle")?.value || "30"),
     groupPatterns: [1,2,3,4,5,6].map((i, idx) => {
-      const defaults = ["stripe","crosshatch","circle","weave","regular_polygon","wave"];
+      const defaults = ["stripe","crosshatch","circle","pch","stripe_h","stripe_v"];
       return el(`groupPattern${i}`)?.value || defaults[idx];
     }),
     groupDensities: [1,2,3,4,5,6].map(i => parseFloat(el(`groupDensity${i}`)?.value || "0.3")),
