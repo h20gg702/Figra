@@ -679,27 +679,31 @@ async function extractJpegMetadata(jpegBlob) {
   return null;
 }
 
-// ========= TIFF Metadata (ImageDescription tag 270 via UTIF) =========
+// ========= TIFF Metadata (binary append: \x00FIGRA_TIFF_META: + JSON) =========
+// UTIF.encodeImage() produces a valid TIFF; we append metadata after the binary.
+// On extraction, we scan backward from the end for the marker.
+
+const TIFF_META_MARKER = '\x00FIGRA_TIFF_META:';
 
 async function embedTiffWithMetadata(canvas, metadataObj) {
   const w = canvas.width, h = canvas.height;
   const ctx = canvas.getContext('2d');
   const rgba = ctx.getImageData(0, 0, w, h).data;
+  const tiffBytes = UTIF.encodeImage(rgba, w, h);
   const json = JSON.stringify(metadataObj);
-  // UTIF.encode takes array of IFDs; tag 270 = ImageDescription
-  const tiffBytes = UTIF.encode([{ 270: [json] }], rgba, w, h);
-  return new Blob([tiffBytes], { type: 'image/tiff' });
+  const suffix = new TextEncoder().encode(TIFF_META_MARKER + json);
+  const combined = new Uint8Array(tiffBytes.byteLength + suffix.length);
+  combined.set(new Uint8Array(tiffBytes), 0);
+  combined.set(suffix, tiffBytes.byteLength);
+  return new Blob([combined], { type: 'image/tiff' });
 }
 
 async function extractTiffMetadata(tiffBlob) {
   const bytes = new Uint8Array(await tiffBlob.arrayBuffer());
-  const ifds = UTIF.decode(bytes.buffer);
-  if (!ifds || ifds.length === 0) return null;
-  // Tag 270 is stored as "t270" in decoded IFD
-  const desc = ifds[0]['t270'];
-  if (!desc) return null;
-  const text = Array.isArray(desc) ? desc[0] : desc;
-  try { return JSON.parse(text); } catch (_) { return null; }
+  const text = new TextDecoder().decode(bytes);
+  const idx = text.lastIndexOf(TIFF_META_MARKER);
+  if (idx === -1) return null;
+  try { return JSON.parse(text.slice(idx + TIFF_META_MARKER.length)); } catch (_) { return null; }
 }
 
 // ========= PDF Metadata (Keywords field via pdf-lib) =========
@@ -994,7 +998,7 @@ async function saveFigureWithMetadata() {
         if (fmt === 'jpeg') {
           // Draw existing PNG onto a canvas, export as JPEG
           const img = new Image();
-          await new Promise(res => { img.onload = res; img.src = pngBlobUrl; });
+          await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = pngBlobUrl; });
           const c = document.createElement('canvas');
           c.width = img.naturalWidth; c.height = img.naturalHeight;
           c.getContext('2d').drawImage(img, 0, 0);
@@ -1003,7 +1007,7 @@ async function saveFigureWithMetadata() {
           blob = await embedJpegMetadata(new Blob([jpegBytes], { type: 'image/jpeg' }), metadata);
         } else if (fmt === 'tiff') {
           const img = new Image();
-          await new Promise(res => { img.onload = res; img.src = pngBlobUrl; });
+          await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = pngBlobUrl; });
           const c = document.createElement('canvas');
           c.width = img.naturalWidth; c.height = img.naturalHeight;
           c.getContext('2d').drawImage(img, 0, 0);
