@@ -10778,12 +10778,12 @@ Office.onReady(() => {
   // 基本操作 - 修正版ハンドラーを使用
   document.getElementById("load")?.addEventListener("click", () => {
     sendGA4Event("load_data");
-    showCompatibilityNotice(null, []);
+    document.getElementById("compatibilityNotice").style.display = "none";
     loadHeadersFromSelection();
   });
 
   document.getElementById("loadBeta")?.addEventListener("click", async () => {
-    showCompatibilityNotice(null, []);
+    document.getElementById("compatibilityNotice").style.display = "none";
     try {
       setStatus("⏳ Beta load: initializing R...");
 
