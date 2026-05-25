@@ -187,7 +187,9 @@ function showCompatibilityNotice(savedVersion, missingFeatures) {
   const content = document.getElementById("compatibilityNoticeContent");
   if (!panel || !content) return;
 
-  if (!missingFeatures || missingFeatures.length === 0) {
+  const versionMismatch = !savedVersion || savedVersion !== ADDIN_VERSION;
+
+  if (!versionMismatch && (!missingFeatures || missingFeatures.length === 0)) {
     panel.style.display = "none";
     return;
   }
@@ -203,15 +205,21 @@ function showCompatibilityNotice(savedVersion, missingFeatures) {
     byTab[f.tab].push(f);
   }
 
-  let html = `<div style="margin-bottom:6px;">${versionLine} The following options were added after this figure was created — defaults will be used for them:</div>`;
-  for (const [tab, features] of Object.entries(byTab)) {
-    html += `<div style="margin-top:5px;"><strong style="color:#1e40af;">${tab}</strong><ul style="margin:2px 0 0 16px;padding:0;">`;
-    for (const f of features) {
-      html += `<li style="margin:2px 0;" title="${f.description}"><strong>${f.label}</strong> <span style="color:#6b7280;font-size:11px;">— ${f.description}</span></li>`;
+  let html = `<div style="margin-bottom:6px;">${versionLine}</div>`;
+
+  if (missingFeatures && missingFeatures.length > 0) {
+    html += `<div style="margin-bottom:4px;">The following options were added after this figure was created — defaults will be used for them:</div>`;
+    for (const [tab, features] of Object.entries(byTab)) {
+      html += `<div style="margin-top:5px;"><strong style="color:#1e40af;">${tab}</strong><ul style="margin:2px 0 0 16px;padding:0;">`;
+      for (const f of features) {
+        html += `<li style="margin:2px 0;" title="${f.description}"><strong>${f.label}</strong> <span style="color:#6b7280;font-size:11px;">— ${f.description}</span></li>`;
+      }
+      html += `</ul></div>`;
     }
-    html += `</ul></div>`;
+  } else {
+    html += `<div style="color:#92400e;">Reproducibility is not guaranteed across different versions. Check your settings carefully before re-exporting.</div>`;
   }
-  html += `<div style="margin-top:6px;color:#6b7280;font-size:11px;">Review these settings before clicking Preview to make sure your figure looks as intended.</div>`;
+  html += `<div style="margin-top:6px;color:#6b7280;font-size:11px;">Review settings before clicking Preview.</div>`;
 
   content.innerHTML = html;
   panel.style.display = "block";
@@ -1262,6 +1270,7 @@ async function loadFromFigure() {
 
         // Check version compatibility
         const savedVersion = metadata.addinVersion || null;
+        const versionMismatch = !savedVersion || savedVersion !== ADDIN_VERSION;
         console.log(savedVersion
           ? (savedVersion === ADDIN_VERSION
               ? `✅ Version match: ${savedVersion}`
