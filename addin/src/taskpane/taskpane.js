@@ -631,6 +631,116 @@ async function embedPngMetadata(pngBlob, metadataObj, dpi = 96) {
   return new Blob([newData], { type: 'image/png' });
 }
 
+// ========= JPEG Metadata (COM marker FF FE) =========
+
+async function embedJpegMetadata(jpegBlob, metadataObj) {
+  const bytes = new Uint8Array(await jpegBlob.arrayBuffer());
+  const json = JSON.stringify(metadataObj);
+  const jsonBytes = new TextEncoder().encode(json);
+  // COM marker: FF FE + 2-byte big-endian length (length field includes itself = 2 + jsonBytes)
+  const markerLen = 2 + jsonBytes.length;
+  const com = new Uint8Array(4 + jsonBytes.length);
+  com[0] = 0xFF; com[1] = 0xFE;
+  com[2] = (markerLen >> 8) & 0xFF;
+  com[3] = markerLen & 0xFF;
+  com.set(jsonBytes, 4);
+  // Insert after SOI (FF D8, first 2 bytes)
+  const out = new Uint8Array(bytes.length + com.length);
+  out.set(bytes.slice(0, 2), 0);
+  out.set(com, 2);
+  out.set(bytes.slice(2), 2 + com.length);
+  return new Blob([out], { type: 'image/jpeg' });
+}
+
+async function extractJpegMetadata(jpegBlob) {
+  const bytes = new Uint8Array(await jpegBlob.arrayBuffer());
+  if (bytes[0] !== 0xFF || bytes[1] !== 0xD8) throw new Error('Not a valid JPEG');
+  let offset = 2;
+  while (offset < bytes.length - 3) {
+    if (bytes[offset] !== 0xFF) break;
+    const marker = bytes[offset + 1];
+    if (marker === 0xFE) { // COM marker
+      const len = (bytes[offset + 2] << 8) | bytes[offset + 3];
+      const text = new TextDecoder().decode(bytes.slice(offset + 4, offset + 2 + len));
+      try { return JSON.parse(text); } catch (_) {}
+    }
+    if (marker === 0xDA || marker === 0xD9) break; // SOS or EOI
+    const len = (bytes[offset + 2] << 8) | bytes[offset + 3];
+    offset += 2 + len;
+  }
+  return null;
+}
+
+// ========= TIFF Metadata (ImageDescription tag 270 via UTIF) =========
+
+async function embedTiffWithMetadata(canvas, metadataObj) {
+  const w = canvas.width, h = canvas.height;
+  const ctx = canvas.getContext('2d');
+  const rgba = ctx.getImageData(0, 0, w, h).data;
+  const json = JSON.stringify(metadataObj);
+  // UTIF.encode takes array of IFDs; tag 270 = ImageDescription
+  const tiffBytes = UTIF.encode([{ 270: [json] }], rgba, w, h);
+  return new Blob([tiffBytes], { type: 'image/tiff' });
+}
+
+async function extractTiffMetadata(tiffBlob) {
+  const bytes = new Uint8Array(await tiffBlob.arrayBuffer());
+  const ifds = UTIF.decode(bytes.buffer);
+  if (!ifds || ifds.length === 0) return null;
+  // Tag 270 is stored as "t270" in decoded IFD
+  const desc = ifds[0]['t270'];
+  if (!desc) return null;
+  const text = Array.isArray(desc) ? desc[0] : desc;
+  try { return JSON.parse(text); } catch (_) { return null; }
+}
+
+// ========= PDF Metadata (Keywords field via pdf-lib) =========
+
+async function embedPdfMetadata(pdfBytes, metadataObj) {
+  const doc = await PDFDocument.load(pdfBytes);
+  const json = JSON.stringify(metadataObj);
+  const encoded = btoa(unescape(encodeURIComponent(json)));
+  doc.setKeywords(['FIGRA_META:' + encoded]);
+  doc.setCreator('Figra');
+  doc.setProducer('Figra (ggplot2/webR)');
+  return await doc.save();
+}
+
+async function extractPdfMetadata(pdfBlob) {
+  const bytes = await pdfBlob.arrayBuffer();
+  const doc = await PDFDocument.load(bytes);
+  const keywords = doc.getKeywords() || '';
+  const token = keywords.split(',').map(k => k.trim()).find(k => k.startsWith('FIGRA_META:'));
+  if (!token) return null;
+  const encoded = token.slice('FIGRA_META:'.length);
+  try {
+    const json = decodeURIComponent(escape(atob(encoded)));
+    return JSON.parse(json);
+  } catch (_) { return null; }
+}
+
+// ========= PDF Vector Export (R pdf() device) =========
+
+async function exportAsPdf(metadata, wIn, hIn) {
+  setStatus("Generating vector PDF (R rendering)...");
+  await window.webR.evalRVoid(`
+    tryCatch({
+      grDevices::pdf('/tmp/figra_plot.pdf', width=${wIn}, height=${hIn})
+      if (exists('figra_last_plot') && !is.null(figra_last_plot)) {
+        print(figra_last_plot)
+      } else {
+        plot.new(); text(0.5, 0.5, 'No plot available', cex=1.5)
+      }
+      grDevices::dev.off()
+      cat('PDF written OK\\n')
+    }, error = function(e) {
+      cat('PDF error:', conditionMessage(e), '\\n')
+    })
+  `);
+  const pdfBytes = await window.webR.FS.readFile('/tmp/figra_plot.pdf');
+  return await embedPdfMetadata(pdfBytes, metadata);
+}
+
 
 // ========= Debug Helper =========
 function debugLog(message) {
@@ -819,79 +929,113 @@ async function saveFigureWithMetadata() {
       }
     }
 
-    // 3. Embed metadata into PNG iTXt chunk + pHYs DPI chunk
-    const saveDpi = lastRender?.meta?.dpi || 300;
-    const pngWithMetadata = await embedPngMetadata(pngBlob, metadata, saveDpi);
-    debugLog("Step 6: Metadata embedded (" + pngWithMetadata.size + " bytes)");
+    // 3. Build default filename stem from title
+    const titleText = document.getElementById("titleText")?.value?.trim() || "plot";
+    const filenameStem = titleText.replace(/[^\w\-]+/g, "_");
+    debugLog("Step 6: Filename stem: " + filenameStem);
 
-    // 4. Build default filename from title
-    const title = document.getElementById("titleText")?.value?.trim() || "plot";
-    const defaultFilename = title.replace(/[^\w\-]+/g, "_") + ".png";
-    debugLog("Step 7: Default filename: " + defaultFilename);
-
-    // 5. Create blob URL and show unified save dialog
-    const blobUrl = URL.createObjectURL(pngWithMetadata);
-    debugLog("Step 8: Blob URL created");
-
+    // 4. Show save dialog — format selection happens here
     const imgElement = document.getElementById("saveImagePreview");
     const filenameInput = document.getElementById("suggestedFilename");
+    const formatSelect = document.getElementById("saveFormat");
     const instructionsEl = document.getElementById("saveInstructions");
     const dialog = document.getElementById("saveImageDialog");
     const closeBtn = document.getElementById("closeSaveImageDialog");
     const downloadBtn = document.getElementById("downloadFigureBtn");
 
-    // Populate filename field
-    filenameInput.value = defaultFilename;
+    // Show PNG preview (always available immediately)
+    const saveDpi = lastRender?.meta?.dpi || 300;
+    const pngWithMetadata = await embedPngMetadata(pngBlob, metadata, saveDpi);
+    const pngBlobUrl = URL.createObjectURL(pngWithMetadata);
+    imgElement.src = pngBlobUrl;
+    imgElement.draggable = true;
+
+    // Set initial filename based on current format selection
+    const updateFilename = () => {
+      const fmt = formatSelect?.value || 'png';
+      const ext = fmt === 'jpeg' ? '.jpg' : fmt === 'tiff' ? '.tiff' : fmt === 'pdf' ? '.pdf' : '.png';
+      filenameInput.value = filenameStem + ext;
+    };
+    updateFilename();
+    formatSelect?.addEventListener('change', updateFilename);
 
     // Detect platform for instructions
     const isMac = (typeof Office !== "undefined" && Office.context?.platform === "Mac");
     if (isMac) {
-      instructionsEl.innerHTML = "🖱️ <strong>Drag</strong> the image below to your Desktop or a folder — the filename above will be used.<br>Or right-click the image and choose <strong>Save Image As…</strong>.";
+      instructionsEl.innerHTML = "🖱️ <strong>Drag</strong> the image (PNG) to your Desktop, or use <strong>⬇ Download</strong> for any format.";
     } else {
-      instructionsEl.innerHTML = "Click <strong>⬇ Download</strong> to save with the filename above.<br>Or right-click the image and choose <strong>Save Image As…</strong>.";
+      instructionsEl.innerHTML = "Select a format and click <strong>⬇ Download</strong>. PNG preview shown above.";
     }
 
-    // Set image
-    imgElement.src = blobUrl;
-    imgElement.draggable = true;
     imgElement.ondragstart = (e) => {
-      const fname = filenameInput.value.trim() || defaultFilename;
-      const finalName = fname.toLowerCase().endsWith('.png') ? fname : fname + '.png';
-      debugLog("Drag started as: " + finalName);
+      const finalName = filenameInput.value.trim() || (filenameStem + '.png');
       try {
         e.dataTransfer.effectAllowed = "copy";
-        e.dataTransfer.setData("DownloadURL", `image/png:${finalName}:${blobUrl}`);
-      } catch (err) {
-        debugLog("DataTransfer error: " + err.message);
-      }
+        e.dataTransfer.setData("DownloadURL", `image/png:${finalName}:${pngBlobUrl}`);
+      } catch (err) { debugLog("DataTransfer error: " + err.message); }
     };
 
-    // Download button handler
-    const handleDownload = () => {
-      const fname = filenameInput.value.trim() || defaultFilename;
-      const finalName = fname.toLowerCase().endsWith('.png') ? fname : fname + '.png';
-      const a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = finalName;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setStatus(`✅ Downloading: ${finalName}`);
-      debugLog("Download triggered: " + finalName);
+    // Download button handler — dispatches to appropriate format
+    const handleDownload = async () => {
+      const fmt = formatSelect?.value || 'png';
+      const fname = filenameInput.value.trim() || (filenameStem + '.' + fmt);
+      downloadBtn.disabled = true;
+      downloadBtn.textContent = '⏳ Preparing...';
+      try {
+        let blob;
+        if (fmt === 'jpeg') {
+          // Draw existing PNG onto a canvas, export as JPEG
+          const img = new Image();
+          await new Promise(res => { img.onload = res; img.src = pngBlobUrl; });
+          const c = document.createElement('canvas');
+          c.width = img.naturalWidth; c.height = img.naturalHeight;
+          c.getContext('2d').drawImage(img, 0, 0);
+          const jpegB64 = c.toDataURL('image/jpeg', 0.95).split(',')[1];
+          const jpegBytes = Uint8Array.from(atob(jpegB64), ch => ch.charCodeAt(0));
+          blob = await embedJpegMetadata(new Blob([jpegBytes], { type: 'image/jpeg' }), metadata);
+        } else if (fmt === 'tiff') {
+          const img = new Image();
+          await new Promise(res => { img.onload = res; img.src = pngBlobUrl; });
+          const c = document.createElement('canvas');
+          c.width = img.naturalWidth; c.height = img.naturalHeight;
+          c.getContext('2d').drawImage(img, 0, 0);
+          blob = await embedTiffWithMetadata(c, metadata);
+        } else if (fmt === 'pdf') {
+          const wIn = lastRender?.meta?.width || 6;
+          const hIn = lastRender?.meta?.height || 4;
+          const pdfBytes = await exportAsPdf(metadata, wIn, hIn);
+          blob = new Blob([pdfBytes], { type: 'application/pdf' });
+        } else {
+          blob = pngWithMetadata; // PNG — already prepared
+        }
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = fname;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        setStatus(`✅ Downloading: ${fname}`);
+      } catch (err) {
+        console.error('Download error:', err);
+        setStatus('❌ Download failed: ' + err.message);
+      } finally {
+        downloadBtn.disabled = false;
+        downloadBtn.textContent = '⬇ Download';
+      }
     };
 
     // Show dialog
     dialog.style.display = "block";
-    debugLog("Step 9: ✅ Save dialog displayed");
+    debugLog("Step 7: ✅ Save dialog displayed");
 
     // Handle close
     const handleClose = () => {
       dialog.style.display = "none";
-      URL.revokeObjectURL(blobUrl);
+      URL.revokeObjectURL(pngBlobUrl);
+      formatSelect?.removeEventListener('change', updateFilename);
       closeBtn.removeEventListener("click", handleClose);
       downloadBtn.removeEventListener("click", handleDownload);
       imgElement.ondragstart = null;
-      debugLog("Dialog closed, blob URL revoked");
+      debugLog("Dialog closed");
     };
 
     closeBtn.addEventListener("click", handleClose);
@@ -1045,7 +1189,7 @@ async function loadFromFigure() {
     // Create file input
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/png,.json";
+    input.accept = "image/png,.json,image/jpeg,.jpg,.jpeg,image/tiff,.tif,.tiff,.pdf,application/pdf";
 
     input.onchange = async (e) => {
       try {
@@ -1056,40 +1200,59 @@ async function loadFromFigure() {
 
         let metadata = null;
 
-        // Check file type
-        if (file.name.endsWith('.json')) {
-          // Load from JSON file
+        // Check file type and extract metadata accordingly
+        const fname = file.name.toLowerCase();
+        if (fname.endsWith('.json')) {
           const text = await file.text();
           metadata = JSON.parse(text);
           setStatus(`Metadata loaded from JSON file`);
+        } else if (fname.match(/\.(jpg|jpeg)$/)) {
+          try {
+            metadata = await extractJpegMetadata(file);
+          } catch (e) {
+            setStatus("❌ Error extracting metadata from JPEG: " + e.message);
+            return;
+          }
+          if (!metadata || !metadata.data) {
+            setStatus("❌ This JPEG was not created by Figra (no metadata found).");
+            return;
+          }
+        } else if (fname.match(/\.(tif|tiff)$/)) {
+          try {
+            metadata = await extractTiffMetadata(file);
+          } catch (e) {
+            setStatus("❌ Error extracting metadata from TIFF: " + e.message);
+            return;
+          }
+          if (!metadata || !metadata.data) {
+            setStatus("❌ This TIFF was not created by Figra (no metadata found).");
+            return;
+          }
+        } else if (fname.endsWith('.pdf')) {
+          try {
+            metadata = await extractPdfMetadata(file);
+          } catch (e) {
+            setStatus("❌ Error extracting metadata from PDF: " + e.message);
+            return;
+          }
+          if (!metadata || !metadata.data) {
+            setStatus("❌ This PDF was not created by Figra (no metadata found).");
+            return;
+          }
         } else {
-          // Extract metadata from PNG iTXt chunk
+          // Default: PNG with iTXt chunk
           console.log("🔍 DEBUG: Loading PNG file, size:", file.size, "bytes");
-          console.log("🔍 DEBUG: Platform:", navigator.platform, "UserAgent:", navigator.userAgent);
-
           try {
             metadata = await extractPngMetadata(file);
-            console.log("🔍 DEBUG: Metadata extracted successfully");
             console.log("🔍 DEBUG: Metadata keys:", metadata ? Object.keys(metadata) : "null");
-            console.log("🔍 DEBUG: Data headers:", metadata?.data?.headers);
-            console.log("🔍 DEBUG: Data rows count:", metadata?.data?.rows?.length);
-            console.log("🔍 DEBUG: Has statisticalResults:", !!metadata?.statisticalResults);
-            console.log("🔍 DEBUG: StatisticalResults length:", metadata?.statisticalResults?.length || 0);
-            // Font settings debug
             console.log("📂 LOAD - Settings from metadata:");
             console.log("  fontFamily:", metadata?.settings?.fontFamily);
-            console.log("  family (legacy):", metadata?.settings?.family);
             console.log("  titleWeight:", metadata?.settings?.titleWeight);
-            console.log("  axisTitleWeight:", metadata?.settings?.axisTitleWeight);
-            console.log("  axisTextWeight:", metadata?.settings?.axisTextWeight);
-            console.log("  axisWeight (legacy):", metadata?.settings?.axisWeight);
           } catch (e) {
             console.error("🔍 DEBUG: Error extracting metadata:", e);
             setStatus("❌ Error extracting metadata from PNG: " + e.message);
             return;
           }
-
-          // Check if this is an Figra PNG
           if (!metadata || !metadata.data) {
             console.error("🔍 DEBUG: Invalid metadata - missing data field");
             setStatus("❌ This PNG was not created by Figra (no metadata found) or saved by un-supported environment like Mac.");
@@ -11262,6 +11425,8 @@ Office.onReady(() => {
   // 起動時の軽い初期化（失敗は無視）
   getSelectedValues().then(() => loadHeadersFromSelection()).catch(() => {});
 });import { Canvg } from "canvg";
+import * as UTIF from "utif";
+import { PDFDocument } from "pdf-lib";
 
 // Excel × WebR（R in WebAssembly）— カスタマイズ対応版
 let webR, webrReady = false;
@@ -25959,7 +26124,7 @@ async function runRtoPng(csvText, rCode, _opts = {}) {
                            header = TRUE, check.names = FALSE)
     tf <- tempfile(fileext = ".svg")
     svglite::svglite(tf, width = ${wIn}, height = ${hIn}, bg = "white")
-    try({ ${rCode} }, silent = TRUE)   # ★ rCode 内では family="${primaryFam}" を使うのが望ましい
+    try({ figra_last_plot <- { ${rCode} } }, silent = TRUE)
     grDevices::dev.off()
     paste(readLines(tf, warn = FALSE), collapse = "\\n")
   `;

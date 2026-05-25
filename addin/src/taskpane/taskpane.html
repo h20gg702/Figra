@@ -391,6 +391,15 @@
     <div style="background:#fff; margin:40px auto; padding:20px; max-width:800px; border-radius:8px;">
       <h3 style="margin-top:0;">Save Figure</h3>
       <p style="font-size:12px; color:#555; background:#fff8e1; border-left:3px solid #f9a825; padding:6px 10px; border-radius:4px; margin:0 0 12px;">💡 <strong>Windows / Excel Online users:</strong> use the <strong>⬇ Download</strong> button below.</p>
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+        <label style="font-size:13px; font-weight:600; white-space:nowrap;">Format:</label>
+        <select id="saveFormat" style="font-size:13px; padding:5px 8px; border:1px solid #ccc; border-radius:6px;">
+          <option value="png">PNG (lossless, with metadata)</option>
+          <option value="jpeg">JPEG (lossy, with metadata)</option>
+          <option value="tiff">TIFF (lossless, with metadata)</option>
+          <option value="pdf">PDF — vector (with metadata)</option>
+        </select>
+      </div>
       <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
         <label style="font-size:13px; font-weight:600; white-space:nowrap;">Filename:</label>
         <input type="text" id="suggestedFilename" style="flex:1; font-size:13px; padding:5px 8px; border:1px solid #ccc; border-radius:6px;" />
