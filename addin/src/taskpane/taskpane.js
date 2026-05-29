@@ -735,21 +735,42 @@ async function extractPdfMetadata(pdfBlob) {
 
 async function exportAsPdf(metadata, wIn, hIn) {
   setStatus("Generating vector PDF (R rendering)...");
-  await window.webR.evalRVoid(`
+  const result = await webR.evalR(`
     tryCatch({
-      grDevices::pdf('/tmp/figra_plot.pdf', width=${wIn}, height=${hIn})
+      grDevices::pdf('/tmp/figra_plot.pdf', width=${wIn}, height=${hIn}, family='Helvetica')
       if (exists('figra_last_plot') && !is.null(figra_last_plot)) {
-        print(figra_last_plot)
+        # Override font to Helvetica — R pdf() device only supports PostScript fonts.
+        # element_text(family=) only changes family; size/weight/color inherit from existing theme.
+        pdf_theme <- ggplot2::theme(
+          text            = ggplot2::element_text(family = 'Helvetica'),
+          plot.title      = ggplot2::element_text(family = 'Helvetica'),
+          axis.title      = ggplot2::element_text(family = 'Helvetica'),
+          axis.title.x    = ggplot2::element_text(family = 'Helvetica'),
+          axis.title.y    = ggplot2::element_text(family = 'Helvetica'),
+          axis.text       = ggplot2::element_text(family = 'Helvetica'),
+          axis.text.x     = ggplot2::element_text(family = 'Helvetica'),
+          axis.text.y     = ggplot2::element_text(family = 'Helvetica'),
+          legend.text     = ggplot2::element_text(family = 'Helvetica'),
+          legend.title    = ggplot2::element_text(family = 'Helvetica'),
+          strip.text      = ggplot2::element_text(family = 'Helvetica')
+        )
+        print(figra_last_plot + pdf_theme)
       } else {
         plot.new(); text(0.5, 0.5, 'No plot available', cex=1.5)
       }
       grDevices::dev.off()
-      cat('PDF written OK\\n')
+      if (file.exists('/tmp/figra_plot.pdf')) 'ok' else 'missing'
     }, error = function(e) {
-      cat('PDF error:', conditionMessage(e), '\\n')
+      tryCatch(grDevices::dev.off(), error = function(e2) NULL)
+      paste0('error:', conditionMessage(e))
     })
   `);
-  const pdfBytes = await window.webR.FS.readFile('/tmp/figra_plot.pdf');
+  const status = String((await result.toJs())?.values?.[0] ?? '');
+  console.log('[PDF export] R status:', status);
+  if (status.startsWith('error') || status === 'missing') {
+    throw new Error('PDF generation failed in R: ' + status);
+  }
+  const pdfBytes = await webR.FS.readFile('/tmp/figra_plot.pdf');
   return await embedPdfMetadata(pdfBytes, metadata);
 }
 
@@ -8425,6 +8446,7 @@ function applySettingsToUI(settings) {
 
   // Statistics
   setChecked("addStatistics", settings.addStatistics);
+  setChecked("addStatisticsDataTab", settings.addStatistics);
   setChecked("pairedSamples", settings.pairedSamples);
   if (settings.subjectColumn !== undefined) {
     const subjectSel = document.getElementById("subjectColumn");
@@ -25011,6 +25033,7 @@ ${SHARED_STAT_HELPERS_R}
 
     ${showXAxisText === 'FALSE' ? 'p <- p + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())' : '# axis.text.x visible'}
     ${showYAxisText === 'FALSE' ? 'p <- p + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())' : '# axis.text.y visible'}
+    figra_last_plot <<- p
     print(p)
 
     # Draw vbracket legend directly after print(p) — bypasses annotation_custom/svglite NPC issue.
@@ -26137,7 +26160,13 @@ async function runRtoPng(csvText, rCode, _opts = {}) {
                            header = TRUE, check.names = FALSE)
     tf <- tempfile(fileext = ".svg")
     svglite::svglite(tf, width = ${wIn}, height = ${hIn}, bg = "white")
-    try({ figra_last_plot <- { ${rCode} } }, silent = TRUE)
+    .figra_p <- tryCatch({
+${rCode}
+    }, error = function(e) { cat("FIGRA_PLOT_ERROR:", conditionMessage(e), "\\n"); NULL })
+    if (!is.null(.figra_p)) {
+      figra_last_plot <<- .figra_p
+      print(.figra_p)
+    }
     grDevices::dev.off()
     paste(readLines(tf, warn = FALSE), collapse = "\\n")
   `;
